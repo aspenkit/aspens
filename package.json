@@ -1,0 +1,25 @@
+{
+  "name": "aspens",
+  "version": "0.0.1",
+  "description": "CLI for managing shared AI coding config across repos",
+  "type": "module",
+  "bin": {
+    "aspens": "./bin/cli.js"
+  },
+  "main": "./src/index.js",
+  "keywords": ["claude-code", "orchestrator", "cli", "documentation", "skills"],
+  "license": "MIT",
+  "scripts": {
+    "test": "echo 'No tests yet — see tests/ directory' && exit 0",
+    "start": "node bin/cli.js",
+    "lint": "echo 'No linter configured yet' && exit 0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "@clack/prompts": "^0.8.0",
+    "picocolors": "^1.1.0"
+  }
+}
