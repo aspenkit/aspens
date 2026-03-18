@@ -1,12 +1,16 @@
 {
   "name": "aspens",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "CLI for managing shared AI coding config across repos",
   "type": "module",
   "bin": {
     "aspens": "./bin/cli.js"
   },
   "main": "./src/index.js",
+  "files": [
+    "bin/",
+    "src/"
+  ],
   "keywords": [
     "claude-code",
     "orchestrator",
