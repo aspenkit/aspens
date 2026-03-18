@@ -1,0 +1,48 @@
+language: en-US
+tone_instructions: Be concise and direct. Focus on actionable feedback.
+early_access: false
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_placeholder: "@coderabbitai summary"
+  auto_title_placeholder: "@coderabbitai"
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  sequence_diagrams: true
+  changed_files_summary: true
+  labeling_instructions: []
+  path_filters: []
+  path_instructions:
+    - path: "src/lib/runner.js"
+      instructions: "Handles Claude CLI invocation via stream-json. Pay attention to stream event parsing and token usage tracking."
+    - path: "src/commands/**"
+      instructions: "CLI commands that orchestrate Claude calls. Check for proper error handling and token tracking."
+    - path: "src/templates/**"
+      instructions: "User-facing skill/agent/hook templates. Review for clarity and correctness."
+  abort_on_close: true
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    ignore_title_keywords: []
+    drafts: false
+    base_branches:
+      - main
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  opt_out: false
+  learnings:
+    scope: auto
+  issues:
+    scope: auto
+  jira:
+    project_keys: []
+  linear:
+    team_keys: []
+  pull_requests:
+    scope: auto
