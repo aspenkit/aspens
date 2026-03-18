@@ -64,14 +64,15 @@ export async function customizeCommand(what, options) {
     const prompt = `${systemPrompt}\n\n---\n\n## Agent to Customize\nPath: ${agent.relativePath}\n\n\`\`\`\n${agent.content}\n\`\`\`\n\n## Project Context\n${projectContext}`;
 
     try {
-      const output = await runClaude(prompt, {
+      const { text } = await runClaude(prompt, {
         timeout: timeoutMs,
         allowedTools: READ_ONLY_TOOLS,
         verbose,
+        model: options.model || null,
         onActivity: verbose ? (msg) => agentSpinner.message(pc.dim(msg)) : null,
       });
 
-      const files = parseFileOutput(output);
+      const files = parseFileOutput(text);
       if (files.length > 0) {
         allFiles.push(...files);
         agentSpinner.stop(pc.green(`${agent.name} customized`));

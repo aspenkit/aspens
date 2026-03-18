@@ -1,5 +1,5 @@
 import { execSync, spawn } from 'child_process';
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname, normalize } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -28,11 +28,11 @@ function checkClaude() {
 
 /**
  * Execute a prompt via Claude Code CLI (claude -p).
- * Returns a promise that resolves to the raw text output.
- * Async to avoid blocking the event loop (allows spinners to animate).
+ * Always uses stream-json for token tracking.
+ * Returns { text, usage } where usage has output_tokens, tool_uses, tool_result_chars.
  */
 export function runClaude(prompt, options = {}) {
-  const { timeout = 300000, allowedTools = null, disableTools = false, verbose = false, onActivity = null } = options;
+  const { timeout = 300000, allowedTools = null, disableTools = false, verbose = false, onActivity = null, model = null } = options;
 
   checkClaude();
 
@@ -43,9 +43,11 @@ export function runClaude(prompt, options = {}) {
     toolFlags = ['--allowedTools', allowedTools.join(',')];
   }
 
-  // Use stream-json in verbose mode to show tool calls in real time
-  const outputFormat = verbose ? 'stream-json' : 'text';
-  const args = ['-p', ...toolFlags, '--output-format', outputFormat];
+  const modelFlags = model ? ['--model', model] : [];
+
+  // Always use stream-json so we can extract token usage
+  // Claude CLI requires --verbose when using stream-json with -p
+  const args = ['-p', '--verbose', ...toolFlags, ...modelFlags, '--output-format', 'stream-json'];
 
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, {
@@ -54,28 +56,24 @@ export function runClaude(prompt, options = {}) {
 
     const chunks = [];
     const errChunks = [];
+    let lineBuffer = '';
 
-    if (verbose) {
-      // In verbose/stream-json mode, parse each line for tool activity
-      let lineBuffer = '';
-      child.stdout.on('data', (data) => {
-        chunks.push(data);
+    child.stdout.on('data', (data) => {
+      chunks.push(data);
+
+      // Parse stream events for verbose activity display
+      if (verbose && onActivity) {
         lineBuffer += data.toString('utf8');
         const lines = lineBuffer.split('\n');
-        lineBuffer = lines.pop(); // keep incomplete line in buffer
+        lineBuffer = lines.pop();
         for (const line of lines) {
           if (!line.trim()) continue;
           try {
-            const event = JSON.parse(line);
-            handleStreamEvent(event, onActivity);
-          } catch {
-            // not JSON, ignore
-          }
+            handleStreamEvent(JSON.parse(line), onActivity);
+          } catch { /* not JSON */ }
         }
-      });
-    } else {
-      child.stdout.on('data', (data) => chunks.push(data));
-    }
+      }
+    });
 
     child.stderr.on('data', (data) => errChunks.push(data));
 
@@ -93,8 +91,8 @@ export function runClaude(prompt, options = {}) {
       if (timedOut || signal === 'SIGTERM' || signal === 'SIGKILL') {
         reject(new Error(`Claude timed out after ${timeout / 1000}s. Try a smaller repo or increase --timeout.`));
       } else if (code === 0) {
-        const result = verbose ? extractTextFromStream(stdout) : stdout;
-        resolve(result);
+        const { text, usage } = extractResultFromStream(stdout);
+        resolve({ text, usage });
       } else if (stderr.includes('rate limit')) {
         reject(new Error('Claude rate limit hit. Wait a moment and try again.'));
       } else {
@@ -214,33 +212,65 @@ function handleStreamEvent(event, onActivity) {
 }
 
 /**
- * Extract the final text result from stream-json output.
- * stream-json outputs one JSON object per line; the final assistant message has the result.
+ * Extract text and token usage from stream-json output.
+ * Returns { text, usage }
  */
-function extractTextFromStream(rawOutput) {
+export function extractResultFromStream(rawOutput) {
   const lines = rawOutput.split('\n').filter(l => l.trim());
   const textParts = [];
+  let usage = { output_tokens: 0, tool_uses: 0, tool_result_chars: 0 };
+
+  // Write raw events to debug file if ASPENS_DEBUG is set
+  if (process.env.ASPENS_DEBUG) {
+    try {
+      writeFileSync('/tmp/aspens-debug-stream.json', rawOutput);
+    } catch {}
+  }
 
   for (const line of lines) {
     try {
       const event = JSON.parse(line);
-      // Look for result message or assistant text blocks
-      if (event.type === 'result' && event.result) {
-        return event.result;
+
+      // Result event — has final text and cumulative usage
+      if (event.type === 'result') {
+        if (event.usage) {
+          usage.output_tokens = event.usage.output_tokens || 0;
+        }
+        if (event.result) {
+          return { text: event.result, usage };
+        }
       }
+
+      // Accumulate text from assistant messages and count tool uses
       if (event.type === 'assistant' && event.message?.content) {
         for (const block of event.message.content) {
           if (block.type === 'text') {
             textParts.push(block.text);
+          } else if (block.type === 'tool_use') {
+            usage.tool_uses++;
           }
         }
+      }
+
+      // Measure tool results (what Claude read from the repo)
+      if (event.type === 'user' && Array.isArray(event.message?.content)) {
+        for (const block of event.message.content) {
+          if (block.type === 'tool_result' && typeof block.content === 'string') {
+            usage.tool_result_chars += block.content.length;
+          }
+        }
+      }
+
+      // Capture output usage from any event that has it
+      if (event.usage) {
+        usage.output_tokens = event.usage.output_tokens || 0;
       }
     } catch {
       // not JSON
     }
   }
 
-  return textParts.join('\n');
+  return { text: textParts.join('\n'), usage };
 }
 
 /**

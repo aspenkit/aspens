@@ -122,12 +122,13 @@ ${truncate(claudeMdContent, 5000)}
   const syncSpinner = p.spinner();
   syncSpinner.start('Analyzing changes and updating skills...');
 
-  let output;
+  let result;
   try {
-    output = await runClaude(fullPrompt, {
+    result = await runClaude(fullPrompt, {
       timeout: timeoutMs,
       allowedTools: READ_ONLY_TOOLS,
       verbose,
+      model: options.model || null,
       onActivity: verbose ? (msg) => syncSpinner.message(pc.dim(msg)) : null,
     });
   } catch (err) {
@@ -137,7 +138,7 @@ ${truncate(claudeMdContent, 5000)}
   }
 
   // Step 6: Parse output
-  const files = parseFileOutput(output);
+  const files = parseFileOutput(result.text);
 
   if (files.length === 0) {
     syncSpinner.stop('No updates needed');
@@ -331,6 +332,20 @@ function installGitHook(repoPath) {
   const hookCommand = `
 # aspens doc sync — auto-update skills after commit
 # Installed by: aspens doc sync --install-hook
+
+# Cooldown: skip if last sync was less than 5 minutes ago
+ASPENS_LOCK="/tmp/aspens-sync-\$(git rev-parse --show-toplevel | shasum | cut -c1-8).lock"
+if [ -f "\$ASPENS_LOCK" ]; then
+  LAST_RUN=\$(cat "\$ASPENS_LOCK" 2>/dev/null || echo 0)
+  NOW=\$(date +%s)
+  if [ \$((NOW - LAST_RUN)) -lt 300 ]; then
+    exit 0  # Too soon since last sync
+  fi
+fi
+echo \$(date +%s) > "\$ASPENS_LOCK"
+
+# Clean up stale lock files older than 1 hour
+find /tmp -maxdepth 1 -name "aspens-sync-*.lock" -mmin +60 -delete 2>/dev/null
 
 # Run in background so commit isn't blocked
 npx aspens doc sync --commits 1 "\$(git rev-parse --show-toplevel)" &

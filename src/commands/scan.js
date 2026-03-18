@@ -62,6 +62,13 @@ export function scanCommand(path, options) {
     console.log();
   }
 
+  // Size
+  if (result.size) {
+    console.log(pc.bold('  Repo size'));
+    console.log(pc.dim('    ') + `${result.size.sourceFiles} source files (~${result.size.estimatedLines.toLocaleString()} lines) — ${result.size.category}`);
+    console.log();
+  }
+
   // Status
   const claude = result.hasClaudeConfig ? pc.green('yes') : pc.dim('no');
   const claudeMd = result.hasClaudeMd ? pc.green('yes') : pc.dim('no');

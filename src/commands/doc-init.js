@@ -1,4 +1,5 @@
-import { resolve } from 'path';
+import { resolve, join } from 'path';
+import { existsSync } from 'fs';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
@@ -8,19 +9,50 @@ import { writeSkillFiles } from '../lib/skill-writer.js';
 // Read-only tools — Claude explores the repo itself
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
-function makeClaudeOptions(timeoutMs, verbose, spinner) {
+// Auto-scale timeout based on repo size
+function autoTimeout(scan, userTimeout) {
+  if (userTimeout) {
+    const parsed = parseInt(userTimeout) * 1000;
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  const defaults = { 'small': 120000, 'medium': 300000, 'large': 600000, 'very-large': 900000 };
+  return defaults[scan.size?.category] || 300000;
+}
+
+function makeClaudeOptions(timeoutMs, verbose, model, spinner) {
   return {
     timeout: timeoutMs,
     allowedTools: READ_ONLY_TOOLS,
     verbose,
+    model: model || null,
     onActivity: verbose && spinner ? (msg) => spinner.message(pc.dim(msg)) : null,
   };
 }
 
+// Track token usage across all calls
+const tokenTracker = { promptTokens: 0, toolResultTokens: 0, output: 0, toolUses: 0, calls: 0 };
+
+function trackUsage(usage, promptLength) {
+  if (usage) {
+    tokenTracker.promptTokens += Math.ceil((promptLength || 0) / 4);
+    tokenTracker.toolResultTokens += Math.ceil((usage.tool_result_chars || 0) / 4);
+    tokenTracker.output += usage.output_tokens || 0;
+    tokenTracker.toolUses += usage.tool_uses || 0;
+    tokenTracker.calls++;
+  }
+}
+
 export async function docInitCommand(path, options) {
   const repoPath = resolve(path);
-  const timeoutMs = parseInt(options.timeout) * 1000 || 300000;
   const verbose = !!options.verbose;
+  const model = options.model || null;
+
+  // Reset token tracker for this run
+  tokenTracker.promptTokens = 0;
+  tokenTracker.toolResultTokens = 0;
+  tokenTracker.output = 0;
+  tokenTracker.toolUses = 0;
+  tokenTracker.calls = 0;
 
   p.intro(pc.cyan('aspens doc init'));
 
@@ -40,6 +72,11 @@ export async function docInitCommand(path, options) {
   }
   if (scan.domains.length > 0) {
     console.log(pc.dim('  Domains: ') + scan.domains.map(d => d.name).join(', '));
+  }
+  const timeoutMs = autoTimeout(scan, options.timeout);
+  if (scan.size) {
+    console.log(pc.dim('  Size: ') + `${scan.size.sourceFiles} source files (${scan.size.category})`);
+    console.log(pc.dim('  Timeout: ') + `${timeoutMs / 1000}s per call` + (model ? pc.dim(` | Model: ${model}`) : ''));
   }
   console.log();
 
@@ -89,13 +126,24 @@ export async function docInitCommand(path, options) {
     p.log.info('No domains detected — generating base skill only.');
     mode = 'base-only';
   } else {
+    // Smart defaults based on repo size
+    const isLarge = scan.size && (scan.size.category === 'large' || scan.size.category === 'very-large');
+    const domainCount = scan.domains.length;
+
+    let defaultMode = 'all-at-once';
+    if (isLarge || domainCount > 6) defaultMode = 'chunked';
+
+    // Estimate Claude calls for each mode
+    const chunkedCalls = domainCount + 2; // base + N domains + CLAUDE.md
+
     const modeChoice = await p.select({
-      message: `${scan.domains.length} domains detected. Generate skills:`,
+      message: `${domainCount} domains detected. Generate skills:`,
+      initialValue: defaultMode,
       options: [
-        { value: 'all-at-once', label: 'All at once', hint: 'faster, single Claude call' },
-        { value: 'chunked', label: 'One domain at a time', hint: 'reliable, works for large repos' },
-        { value: 'pick', label: 'Pick specific domains' },
-        { value: 'base-only', label: 'Base skill only', hint: 'skip domain skills' },
+        { value: 'all-at-once', label: 'All at once', hint: isLarge ? 'may timeout on this repo — 1 call' : 'faster — 1 Claude call' },
+        { value: 'chunked', label: 'One domain at a time', hint: `reliable — ${chunkedCalls} Claude calls` },
+        { value: 'pick', label: 'Pick specific domains', hint: 'choose which domains to generate' },
+        { value: 'base-only', label: 'Base skill only', hint: '2 Claude calls' },
       ],
     });
 
@@ -129,13 +177,16 @@ export async function docInitCommand(path, options) {
   let allFiles = [];
 
   if (mode === 'all-at-once') {
-    allFiles = await generateAllAtOnce(repoPath, scan, timeoutMs, existingDocsStrategy, verbose);
+    allFiles = await generateAllAtOnce(repoPath, scan, timeoutMs, existingDocsStrategy, verbose, model);
   } else {
-    allFiles = await generateChunked(repoPath, scan, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose);
+    allFiles = await generateChunked(repoPath, scan, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model);
   }
 
   if (allFiles.length === 0) {
     p.log.error('No skill files generated.');
+    if (tokenTracker.calls > 0) {
+      console.log(pc.dim(`  ${tokenTracker.calls} Claude call(s) made, but no parseable output.`));
+    }
     process.exit(1);
   }
 
@@ -154,6 +205,7 @@ export async function docInitCommand(path, options) {
       console.log(pc.bold(`\n--- ${file.path} ---`));
       console.log(pc.dim(file.content));
     }
+    showTokenSummary();
     p.outro('Dry run complete');
     return;
   }
@@ -189,12 +241,30 @@ export async function docInitCommand(path, options) {
     console.log(`  ${icon} ${result.path}${status}`);
   }
 
+  showTokenSummary();
+
   console.log();
   p.outro(
     `${pc.green(`${created} created`)}` +
     (overwritten ? `, ${pc.yellow(`${overwritten} overwritten`)}` : '') +
     (skipped ? `, ${pc.dim(`${skipped} skipped`)}` : '')
   );
+}
+
+function showTokenSummary() {
+  if (tokenTracker.calls > 0) {
+    const parts = [
+      `${tokenTracker.calls} call(s)`,
+      `~${tokenTracker.promptTokens.toLocaleString()} prompt`,
+      `~${tokenTracker.toolResultTokens.toLocaleString()} tool reads`,
+      `${tokenTracker.output.toLocaleString()} output`,
+    ];
+    if (tokenTracker.toolUses > 0) {
+      parts.push(`${tokenTracker.toolUses} tool calls`);
+    }
+    console.log();
+    console.log(pc.dim(`  ${parts.join(' | ')}`));
+  }
 }
 
 // --- Generation modes ---
@@ -215,7 +285,7 @@ function buildStrategyInstruction(strategy) {
   return '';
 }
 
-async function generateAllAtOnce(repoPath, scan, timeoutMs, strategy, verbose) {
+async function generateAllAtOnce(repoPath, scan, timeoutMs, strategy, verbose, model) {
   const today = new Date().toISOString().split('T')[0];
   const systemPrompt = loadPrompt('doc-init');
   const scanSummary = buildScanSummary(scan);
@@ -226,8 +296,13 @@ async function generateAllAtOnce(repoPath, scan, timeoutMs, strategy, verbose) {
   claudeSpinner.start('Exploring repo and generating skills...');
 
   try {
-    const output = await runClaude(fullPrompt, makeClaudeOptions(timeoutMs, verbose, claudeSpinner));
-    const files = parseFileOutput(output);
+    const { text, usage } = await runClaude(fullPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeSpinner));
+    trackUsage(usage, fullPrompt.length);
+    let files = parseFileOutput(text);
+    // Enforce skip-existing: filter out CLAUDE.md if it already exists
+    if (strategy === 'skip-existing' && existsSync(join(repoPath, 'CLAUDE.md'))) {
+      files = files.filter(f => f.path !== 'CLAUDE.md');
+    }
     claudeSpinner.stop(`Generated ${pc.bold(files.length)} files`);
     return files;
   } catch (err) {
@@ -241,12 +316,13 @@ async function generateAllAtOnce(repoPath, scan, timeoutMs, strategy, verbose) {
     if (p.isCancel(retry) || !retry) {
       process.exit(1);
     }
-    return generateChunked(repoPath, scan, scan.domains, false, timeoutMs, strategy, verbose);
+    return generateChunked(repoPath, scan, scan.domains, false, timeoutMs, strategy, verbose, model);
   }
 }
 
-async function generateChunked(repoPath, scan, domains, baseOnly, timeoutMs, strategy, verbose) {
+async function generateChunked(repoPath, scan, domains, baseOnly, timeoutMs, strategy, verbose, model) {
   const allFiles = [];
+  const skippedDomains = [];
   const today = new Date().toISOString().split('T')[0];
   const scanSummary = buildScanSummary(scan);
 
@@ -260,8 +336,9 @@ async function generateChunked(repoPath, scan, domains, baseOnly, timeoutMs, str
 
   let baseSkillContent = null;
   try {
-    const output = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, baseSpinner));
-    const files = parseFileOutput(output);
+    const { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
+    trackUsage(usage, basePrompt.length);
+    const files = parseFileOutput(text);
     allFiles.push(...files);
     baseSkillContent = files.find(f => f.path.includes('/base/'))?.content;
     baseSpinner.stop(pc.green('Base skill generated'));
@@ -283,8 +360,9 @@ async function generateChunked(repoPath, scan, domains, baseOnly, timeoutMs, str
       }) + strategyNote + `\n\n---\n\nRepository path: ${repoPath}\nToday's date is ${today}.\n\n## Base skill (for context)\n\`\`\`\n${baseSkillContent || 'Not available'}\n\`\`\`\n\n${domainInfo}`;
 
       try {
-        const output = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, domainSpinner));
-        const files = parseFileOutput(output);
+        const { text, usage } = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, domainSpinner));
+        trackUsage(usage, domainPrompt.length);
+        const files = parseFileOutput(text);
         if (files.length > 0) {
           allFiles.push(...files);
           domainSpinner.stop(pc.green(`${domain.name} skill generated`));
@@ -292,13 +370,23 @@ async function generateChunked(repoPath, scan, domains, baseOnly, timeoutMs, str
           domainSpinner.stop(pc.dim(`${domain.name} — skipped (not enough substance)`));
         }
       } catch (err) {
-        domainSpinner.stop(pc.yellow(`${domain.name} — failed: ${err.message}`));
+        domainSpinner.stop(pc.yellow(`${domain.name} — timed out or failed`));
+        skippedDomains.push(domain.name);
       }
     }
   }
 
-  // 3. Generate CLAUDE.md
-  if (allFiles.length > 0) {
+  // Show skipped domains so user can retry
+  if (skippedDomains.length > 0) {
+    console.log();
+    p.log.warn(`${skippedDomains.length} domain(s) skipped: ${skippedDomains.join(', ')}`);
+    console.log(pc.dim('  Retry with: aspens doc init --mode chunked --timeout 600'));
+    console.log(pc.dim('  Or pick just these: aspens doc init (select "Pick specific domains")'));
+  }
+
+  // 3. Generate CLAUDE.md (skip if it already exists and strategy says so)
+  const claudeMdExists = existsSync(join(repoPath, 'CLAUDE.md'));
+  if (allFiles.length > 0 && !(strategy === 'skip-existing' && claudeMdExists)) {
     const claudeMdSpinner = p.spinner();
     claudeMdSpinner.start('Generating CLAUDE.md...');
 
@@ -312,8 +400,9 @@ async function generateChunked(repoPath, scan, domains, baseOnly, timeoutMs, str
       `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}`;
 
     try {
-      const output = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, claudeMdSpinner));
-      const files = parseFileOutput(output);
+      const { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner));
+      trackUsage(usage, claudeMdPrompt.length);
+      const files = parseFileOutput(text);
       allFiles.push(...files);
       claudeMdSpinner.stop(pc.green('CLAUDE.md generated'));
     } catch (err) {

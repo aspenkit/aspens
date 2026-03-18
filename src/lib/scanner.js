@@ -19,8 +19,50 @@ export function scanRepo(repoPath) {
   };
 
   result.repoType = inferRepoType(result);
+  result.size = estimateRepoSize(repoPath);
 
   return result;
+}
+
+// --- Repo Size Estimation ---
+
+function estimateRepoSize(repoPath) {
+  let sourceFiles = 0;
+  let totalLines = 0;
+
+  function walk(dir, depth) {
+    if (depth > 5) return; // don't go too deep
+    let entries;
+    try { entries = readdirSync(dir); } catch { return; }
+
+    for (const entry of entries) {
+      if (entry.startsWith('.') || entry === 'node_modules' || entry === '__pycache__' ||
+          entry === 'dist' || entry === 'build' || entry === '.next' || entry === 'vendor' ||
+          entry === '.git' || entry === 'coverage') continue;
+
+      const full = join(dir, entry);
+      try {
+        const stat = statSync(full);
+        if (stat.isDirectory()) {
+          walk(full, depth + 1);
+        } else if (SOURCE_EXTS.has(extname(entry))) {
+          sourceFiles++;
+          totalLines += Math.ceil(stat.size / 40);
+        }
+      } catch {}
+    }
+  }
+
+  walk(repoPath, 0);
+
+  // Categorize
+  let category;
+  if (sourceFiles <= 50) category = 'small';
+  else if (sourceFiles <= 200) category = 'medium';
+  else if (sourceFiles <= 500) category = 'large';
+  else category = 'very-large';
+
+  return { sourceFiles, estimatedLines: totalLines, category };
 }
 
 // --- Language Detection ---

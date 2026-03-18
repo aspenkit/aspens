@@ -2,40 +2,61 @@
 
 import { program } from 'commander';
 import pc from 'picocolors';
+import { readdirSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { scanCommand } from '../src/commands/scan.js';
 import { docInitCommand } from '../src/commands/doc-init.js';
 import { docSyncCommand } from '../src/commands/doc-sync.js';
 import { addCommand } from '../src/commands/add.js';
 import { customizeCommand } from '../src/commands/customize.js';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const TEMPLATES_DIR = join(__dirname, '..', 'src', 'templates');
+
+function countTemplates(subdir) {
+  try { return readdirSync(join(TEMPLATES_DIR, subdir)).filter(f => !f.startsWith('.')).length; } catch { return '?'; }
+}
+
 function showWelcome() {
   console.log(`
   ${pc.cyan(pc.bold('aspens'))} ${pc.dim('v0.0.1')} — AI-ready documentation for your codebase
 
-  ${pc.bold('Getting Started')}
-    ${pc.green('aspens scan')} ${pc.dim('[path]')}              Scan a repo's tech stack and structure
-    ${pc.green('aspens doc init')} ${pc.dim('[path]')}          Generate skills + CLAUDE.md from your code
-    ${pc.green('aspens doc sync')} ${pc.dim('[path]')}          Keep skills updated on every commit
+  ${pc.bold('Quick Start')}
+    ${pc.green('aspens scan')}                       See your repo's tech stack and domains
+    ${pc.green('aspens doc init')}                   Generate skills + CLAUDE.md
+    ${pc.green('aspens doc sync --install-hook')}    Auto-update on every commit
+
+  ${pc.bold('Generate & Sync')}
+    ${pc.green('aspens doc init')} ${pc.dim('[path]')}          Generate skills from your code
+    ${pc.green('aspens doc init --dry-run')}         Preview without writing
+    ${pc.green('aspens doc init --mode chunked')}    One domain at a time (large repos)
+    ${pc.green('aspens doc init --model haiku')}     Use a specific Claude model
+    ${pc.green('aspens doc init --verbose')}         See what Claude is reading
+    ${pc.green('aspens doc sync')} ${pc.dim('[path]')}          Update skills from recent commits
+    ${pc.green('aspens doc sync --commits 5')}       Sync from last 5 commits
 
   ${pc.bold('Add Components')}
-    ${pc.green('aspens add agent')} ${pc.dim('[name]')}         Add AI agents to your repo
-    ${pc.green('aspens add hook')} ${pc.dim('[name]')}          Add auto-triggering hooks
-    ${pc.green('aspens add command')} ${pc.dim('[name]')}       Add slash commands
-    ${pc.green('aspens customize agents')}          Inject project context into agents
+    ${pc.green('aspens add agent')} ${pc.dim('[name]')}         Add AI agents ${pc.dim(`(${countTemplates('agents')} available)`)}
+    ${pc.green('aspens add command')} ${pc.dim('[name]')}       Add slash commands ${pc.dim(`(${countTemplates('commands')} available)`)}
+    ${pc.green('aspens add hook')} ${pc.dim('[name]')}          Add auto-triggering hooks ${pc.dim(`(${countTemplates('hooks')} available)`)}
+    ${pc.green('aspens add agent --list')}           Browse the library
+    ${pc.green('aspens customize agents')}           Inject project context into agents
 
-  ${pc.bold('Common Options')}
-    ${pc.yellow('--dry-run')}                        Preview without writing files
-    ${pc.yellow('--mode')} ${pc.dim('<all|chunked|base-only>')}  Generation strategy
-    ${pc.yellow('--force')}                          Overwrite existing files
-    ${pc.yellow('--help')}                           Show help for any command
+  ${pc.bold('Options')}
+    ${pc.yellow('--dry-run')}          Preview without writing      ${pc.yellow('--verbose')}     See Claude's activity
+    ${pc.yellow('--force')}            Overwrite existing files     ${pc.yellow('--model')} ${pc.dim('<m>')}   Choose Claude model
+    ${pc.yellow('--mode')} ${pc.dim('<mode>')}       all, chunked, base-only     ${pc.yellow('--timeout')} ${pc.dim('<s>')}  Seconds per call
+    ${pc.yellow('--strategy')} ${pc.dim('<s>')}    improve, rewrite, skip      ${pc.yellow('--json')}      JSON output (scan)
 
-  ${pc.bold('Examples')}
-    ${pc.dim('$')} aspens scan .                          ${pc.dim('See what\'s in your repo')}
-    ${pc.dim('$')} aspens doc init --dry-run .            ${pc.dim('Preview generated skills')}
-    ${pc.dim('$')} aspens doc init --mode chunked .       ${pc.dim('Generate one domain at a time')}
-    ${pc.dim('$')} aspens doc init --force .              ${pc.dim('Overwrite existing skills')}
+  ${pc.bold('Typical Workflow')}
+    ${pc.dim('$')} aspens scan                              ${pc.dim('1. See what\'s in your repo')}
+    ${pc.dim('$')} aspens doc init                          ${pc.dim('2. Generate skills + CLAUDE.md')}
+    ${pc.dim('$')} aspens add agent all                     ${pc.dim('3. Add AI agents')}
+    ${pc.dim('$')} aspens customize agents                  ${pc.dim('4. Tailor agents to your project')}
+    ${pc.dim('$')} aspens doc sync --install-hook           ${pc.dim('5. Auto-update on every commit')}
 
-  ${pc.dim('Run')} ${pc.cyan('aspens <command> --help')} ${pc.dim('for detailed usage of any command.')}
+  ${pc.dim('Run')} ${pc.cyan('aspens <command> --help')} ${pc.dim('for detailed usage.')}
 `);
 }
 
@@ -70,6 +91,7 @@ doc
   .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
   .option('--mode <mode>', 'Generation mode: all, chunked, base-only (skips interactive prompt)')
   .option('--strategy <strategy>', 'Existing docs: improve, rewrite, skip (skips interactive prompt)')
+  .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
   .action(docInitCommand);
 
@@ -81,6 +103,7 @@ doc
   .option('--install-hook', 'Install git post-commit hook')
   .option('--dry-run', 'Preview without writing files')
   .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
+  .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
   .action(docSyncCommand);
 
@@ -100,6 +123,7 @@ program
   .argument('<what>', 'What to customize: agents')
   .option('--dry-run', 'Preview without writing files')
   .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
+  .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
   .action(customizeCommand);
 
