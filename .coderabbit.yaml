@@ -1,0 +1,12 @@
+language: en-US
+reviews:
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "src/lib/runner.js"
+      instructions: "This file handles Claude CLI invocation via stream-json. Pay attention to stream event parsing and token usage tracking."
+    - path: "src/commands/**"
+      instructions: "CLI commands that orchestrate Claude calls. Check for proper error handling and token tracking."
+    - path: "src/templates/**"
+      instructions: "These are user-facing skill/agent/hook templates. Review for clarity and correctness."
