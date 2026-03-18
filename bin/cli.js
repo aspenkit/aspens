@@ -20,7 +20,7 @@ function countTemplates(subdir) {
 
 function showWelcome() {
   console.log(`
-  ${pc.cyan(pc.bold('aspens'))} ${pc.dim('v0.0.1')} — AI-ready documentation for your codebase
+  ${pc.cyan(pc.bold('aspens'))} ${pc.dim('v0.1.0')} — AI-ready documentation for your codebase
 
   ${pc.bold('Quick Start')}
     ${pc.green('aspens scan')}                       See your repo's tech stack and domains
@@ -63,7 +63,7 @@ function showWelcome() {
 program
   .name('aspens')
   .description('Generate and maintain AI-ready documentation for your codebase')
-  .version('0.0.1')
+  .version('0.1.0')
   .action(() => {
     // No command given — show welcome
     showWelcome();

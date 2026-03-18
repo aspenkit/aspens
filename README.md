@@ -93,6 +93,7 @@ $ aspens doc init .
 | `--timeout <seconds>` | Claude timeout (default: 300) |
 | `--mode <mode>` | `all`, `chunked`, or `base-only` (skips interactive prompt) |
 | `--strategy <strategy>` | `improve`, `rewrite`, or `skip` for existing docs (skips interactive prompt) |
+| `--model <model>` | Claude model (e.g., sonnet, opus, haiku) |
 | `--verbose` | Show what Claude is reading in real time |
 
 ### `aspens doc sync [path]`
@@ -127,17 +128,41 @@ $ aspens doc sync .
 | `--install-hook` | Install git post-commit hook for auto-sync |
 | `--dry-run` | Preview without writing files |
 | `--timeout <seconds>` | Claude timeout (default: 300) |
+| `--model <model>` | Claude model (e.g., sonnet, opus, haiku) |
 | `--verbose` | Show what Claude is reading in real time |
 
 ### `aspens add <type> [name]`
 
-Add individual components from the library. Coming soon.
+Add individual components from the bundled library.
 
 ```bash
-aspens add agent code-reviewer    # Add an AI agent
+aspens add agent all              # Add all 9 AI agents
+aspens add agent code-reviewer    # Add a specific agent
+aspens add agent --list           # Browse available agents
 aspens add hook skill-activation  # Add auto-triggering hooks
 aspens add command dev-docs       # Add slash commands
 ```
+
+| Option | Description |
+|--------|-------------|
+| `--list` | Browse available components |
+| `--force` | Overwrite existing files |
+
+### `aspens customize agents`
+
+Inject your project's tech stack, conventions, and file paths into installed agents. Reads your skills and CLAUDE.md, then tailors each agent with project-specific context.
+
+```bash
+aspens customize agents           # Customize all installed agents
+aspens customize agents --dry-run # Preview changes
+```
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Preview without writing files |
+| `--timeout <seconds>` | Claude timeout (default: 300) |
+| `--model <model>` | Claude model (e.g., sonnet, opus, haiku) |
+| `--verbose` | Show what Claude is doing |
 
 ## How It Works
 
