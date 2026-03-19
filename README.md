@@ -4,6 +4,8 @@ Generate and maintain AI-ready documentation for any codebase. Aspens scans your
 
 Skills are concise markdown files (~35 lines) that Claude Code loads automatically when you work in specific parts of your codebase. They give Claude the context it needs to write correct code — key files, patterns, conventions, critical rules.
 
+![aspens demo](demo/demo-full.gif)
+
 ## Quick Start
 
 ```bash
