@@ -13,8 +13,10 @@ import { customizeCommand } from '../src/commands/customize.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'src', 'templates');
-const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
-const VERSION = PKG.version;
+let VERSION = '0.0.0';
+try {
+  VERSION = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8')).version || '0.0.0';
+} catch { /* use fallback version */ }
 
 function countTemplates(subdir) {
   try { return readdirSync(join(TEMPLATES_DIR, subdir)).filter(f => !f.startsWith('.')).length; } catch { return '?'; }

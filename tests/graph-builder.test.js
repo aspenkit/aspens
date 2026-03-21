@@ -42,54 +42,54 @@ afterAll(() => {
 //    imports are raw specifiers; exports are export names
 // ---------------------------------------------------------------------------
 describe('parseJsImports', () => {
-  it('extracts named ES module imports', () => {
-    const result = parseJsImports(`import { foo, bar } from './bar.js';`, 'src/app.js');
+  it('extracts named ES module imports', async () => {
+    const result = await parseJsImports(`import { foo, bar } from './bar.js';`, 'src/app.js');
     expect(result.imports).toContain('./bar.js');
   });
 
-  it('extracts default imports', () => {
-    const result = parseJsImports(`import foo from './bar';`, 'src/app.js');
+  it('extracts default imports', async () => {
+    const result = await parseJsImports(`import foo from './bar';`, 'src/app.js');
     expect(result.imports).toContain('./bar');
   });
 
-  it('extracts side-effect imports', () => {
-    const result = parseJsImports(`import './styles.css';`, 'src/app.js');
+  it('extracts side-effect imports', async () => {
+    const result = await parseJsImports(`import './styles.css';`, 'src/app.js');
     expect(result.imports).toContain('./styles.css');
   });
 
-  it('extracts re-exports', () => {
-    const result = parseJsImports(`export { foo } from './bar';`, 'src/app.js');
+  it('extracts re-exports', async () => {
+    const result = await parseJsImports(`export { foo } from './bar';`, 'src/app.js');
     expect(result.imports).toContain('./bar');
   });
 
-  it('extracts dynamic imports', () => {
-    const result = parseJsImports(`const mod = await import('./bar');`, 'src/app.js');
+  it('extracts dynamic imports', async () => {
+    const result = await parseJsImports(`const mod = await import('./bar');`, 'src/app.js');
     expect(result.imports).toContain('./bar');
   });
 
-  it('classifies bare node/npm imports as external', () => {
-    const result = parseJsImports(`import fs from 'fs';`, 'src/app.js');
+  it('classifies bare node/npm imports as external', async () => {
+    const result = await parseJsImports(`import fs from 'fs';`, 'src/app.js');
     expect(result.imports).toContain('fs');
   });
 
-  it('classifies scoped packages as external', () => {
-    const result = parseJsImports(`import { x } from '@clack/prompts';`, 'src/app.js');
+  it('classifies scoped packages as external', async () => {
+    const result = await parseJsImports(`import { x } from '@clack/prompts';`, 'src/app.js');
     expect(result.imports).toContain('@clack/prompts');
   });
 
-  it('classifies node: protocol imports as external', () => {
-    const result = parseJsImports(`import { readFile } from 'node:fs/promises';`, 'src/app.js');
+  it('classifies node: protocol imports as external', async () => {
+    const result = await parseJsImports(`import { readFile } from 'node:fs/promises';`, 'src/app.js');
     expect(result.imports).toContain('node:fs/promises');
   });
 
-  it('handles multiple imports in one file', () => {
+  it('handles multiple imports in one file', async () => {
     const code = [
       `import { join } from 'path';`,
       `import { readFile } from 'fs';`,
       `import { helper } from './utils.js';`,
       `import config from '../config.js';`,
     ].join('\n');
-    const result = parseJsImports(code, 'src/app.js');
+    const result = await parseJsImports(code, 'src/app.js');
     expect(result.imports).toContain('path');
     expect(result.imports).toContain('fs');
     expect(result.imports).toContain('./utils.js');
@@ -98,19 +98,19 @@ describe('parseJsImports', () => {
     expect(result.imports).toHaveLength(4);
   });
 
-  it('ignores commented-out imports', () => {
+  it('ignores commented-out imports', async () => {
     const code = [
       `// import { old } from './old.js';`,
       `import { active } from './active.js';`,
     ].join('\n');
-    const result = parseJsImports(code, 'src/app.js');
+    const result = await parseJsImports(code, 'src/app.js');
     expect(result.imports).not.toContain('./old.js');
     expect(result.imports).toContain('./active.js');
   });
 
-  it('handles require() calls as imports', () => {
+  it('handles require() calls as imports', async () => {
     const code = `const foo = require('./bar');`;
-    const result = parseJsImports(code, 'src/app.js');
+    const result = await parseJsImports(code, 'src/app.js');
     // es-module-lexer may or may not pick up require() — it focuses on ESM.
     // If it does, great; if not, this is expected behavior.
     // The implementation relies on es-module-lexer which only parses ESM syntax.
@@ -163,7 +163,7 @@ describe('parsePyImports', () => {
     expect(result).toContain('pathlib');
   });
 
-  it('ignores commented-out imports', () => {
+  it('ignores commented-out imports', async () => {
     const code = [
       `# import os`,
       `from pathlib import Path`,
@@ -555,15 +555,15 @@ describe('edge cases', () => {
     expect(graph.files['src/app.ts'].imports).toContain('src/helper.js');
   });
 
-  it('handles TypeScript type-only imports', () => {
+  it('handles TypeScript type-only imports', async () => {
     const code = `import type { User } from './types';`;
-    const result = parseJsImports(code, 'src/app.ts');
+    const result = await parseJsImports(code, 'src/app.ts');
     expect(result.imports).toContain('./types');
   });
 
-  it('handles star re-exports', () => {
+  it('handles star re-exports', async () => {
     const code = `export * from './utils';`;
-    const result = parseJsImports(code, 'src/index.js');
+    const result = await parseJsImports(code, 'src/index.js');
     expect(result.imports).toContain('./utils');
   });
 });
