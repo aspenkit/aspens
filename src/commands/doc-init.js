@@ -542,12 +542,22 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
 
   let baseSkillContent = null;
   try {
-    const { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
+    let { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
     trackUsage(usage, basePrompt.length);
-    const files = parseFileOutput(text);
+    let files = parseFileOutput(text);
+
+    // Retry: if Claude didn't wrap output in <file> tags, ask it to fix the format
+    if (files.length === 0) {
+      baseSpinner.message('Base skill generated without file tags — retrying with format reminder...');
+      const retryPrompt = `Your previous response did not include the required <file path="...">content</file> XML tags. I need you to output the base skill wrapped in exactly this format:\n\n<file path=".claude/skills/base/skill.md">\n---\nname: base\ndescription: ...\n---\n[skill content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
+      const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+      trackUsage(retry.usage, retryPrompt.length);
+      files = parseFileOutput(retry.text);
+    }
+
     allFiles.push(...files);
     baseSkillContent = files.find(f => f.path.includes('/base/'))?.content;
-    baseSpinner.stop(pc.green('Base skill generated'));
+    baseSpinner.stop(files.length > 0 ? pc.green('Base skill generated') : pc.yellow('Base skill — no parseable output'));
   } catch (err) {
     baseSpinner.stop(pc.red('Base skill failed'));
     p.log.error(err.message);
@@ -639,11 +649,21 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}`;
 
     try {
-      const { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner));
+      let { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner));
       trackUsage(usage, claudeMdPrompt.length);
-      const files = parseFileOutput(text);
+      let files = parseFileOutput(text);
+
+      // Retry: if Claude didn't wrap output in <file> tags, ask it to fix the format
+      if (files.length === 0) {
+        claudeMdSpinner.message('CLAUDE.md generated without file tags — retrying with format reminder...');
+        const retryPrompt = `Your previous response did not include the required <file path="CLAUDE.md">content</file> XML tags. I need you to output CLAUDE.md wrapped in exactly this format:\n\n<file path="CLAUDE.md">\n# project-name\n[CLAUDE.md content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
+        const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+        trackUsage(retry.usage, retryPrompt.length);
+        files = parseFileOutput(retry.text);
+      }
+
       allFiles.push(...files);
-      claudeMdSpinner.stop(pc.green('CLAUDE.md generated'));
+      claudeMdSpinner.stop(files.length > 0 ? pc.green('CLAUDE.md generated') : pc.yellow('CLAUDE.md — could not generate'));
     } catch (err) {
       claudeMdSpinner.stop(pc.yellow('CLAUDE.md — failed, skipped'));
     }
