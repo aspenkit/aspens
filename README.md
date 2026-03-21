@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="aspens-logo.png" alt="aspens" width="120" />
+
 # aspens
 
 ### Stop correcting Claude. Start shipping.
