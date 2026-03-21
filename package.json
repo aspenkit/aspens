@@ -4,7 +4,7 @@
   "description": "Generate and maintain AI-ready documentation for any codebase",
   "type": "module",
   "bin": {
-    "aspens": "./bin/cli.js"
+    "aspens": "bin/cli.js"
   },
   "main": "./src/index.js",
   "files": [
