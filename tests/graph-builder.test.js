@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
+import { init } from 'es-module-lexer';
 import {
   parseJsImports,
   parsePyImports,
@@ -22,7 +23,8 @@ function createFixture(name, files) {
   return dir;
 }
 
-beforeAll(() => {
+beforeAll(async () => {
+  await init; // es-module-lexer WASM must be initialized before parseJsImports works
   mkdirSync(FIXTURES_DIR, { recursive: true });
 });
 
