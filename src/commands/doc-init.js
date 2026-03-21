@@ -542,12 +542,29 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
 
   let baseSkillContent = null;
   try {
-    const { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
+    let { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
     trackUsage(usage, basePrompt.length);
-    const files = parseFileOutput(text);
-    allFiles.push(...files);
-    baseSkillContent = files.find(f => f.path.includes('/base/'))?.content;
-    baseSpinner.stop(pc.green('Base skill generated'));
+    let files = parseFileOutput(text);
+
+    // Retry up to 2 times if Claude didn't wrap output in <file> tags
+    const MAX_RETRIES = 2;
+    for (let attempt = 0; attempt < MAX_RETRIES && files.length === 0; attempt++) {
+      baseSpinner.message(`Base skill missing file tags — retry ${attempt + 1}/${MAX_RETRIES}...`);
+      const retryPrompt = `Your previous response did not include the required <file path="...">content</file> XML tags. I need you to output the base skill wrapped in exactly this format:\n\n<file path=".claude/skills/base/skill.md">\n---\nname: base\ndescription: ...\n---\n[skill content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
+      const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+      trackUsage(retry.usage, retryPrompt.length);
+      files = parseFileOutput(retry.text);
+      text = retry.text;
+    }
+
+    if (files.length === 0) {
+      baseSpinner.stop(pc.yellow('Base skill — failed after retries'));
+      p.log.warn('Could not generate base skill. Try again with: aspens doc init --strategy rewrite --mode base-only');
+    } else {
+      allFiles.push(...files);
+      baseSkillContent = files.find(f => f.path.includes('/base/'))?.content;
+      baseSpinner.stop(pc.green('Base skill generated'));
+    }
   } catch (err) {
     baseSpinner.stop(pc.red('Base skill failed'));
     p.log.error(err.message);
@@ -639,11 +656,28 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}`;
 
     try {
-      const { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner));
+      let { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner));
       trackUsage(usage, claudeMdPrompt.length);
-      const files = parseFileOutput(text);
-      allFiles.push(...files);
-      claudeMdSpinner.stop(pc.green('CLAUDE.md generated'));
+      let files = parseFileOutput(text);
+
+      // Retry up to 2 times if Claude didn't wrap output in <file> tags
+      const MAX_RETRIES = 2;
+      for (let attempt = 0; attempt < MAX_RETRIES && files.length === 0; attempt++) {
+        claudeMdSpinner.message(`CLAUDE.md missing file tags — retry ${attempt + 1}/${MAX_RETRIES}...`);
+        const retryPrompt = `Your previous response did not include the required <file path="CLAUDE.md">content</file> XML tags. I need you to output CLAUDE.md wrapped in exactly this format:\n\n<file path="CLAUDE.md">\n# project-name\n[CLAUDE.md content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
+        const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+        trackUsage(retry.usage, retryPrompt.length);
+        files = parseFileOutput(retry.text);
+        text = retry.text;
+      }
+
+      if (files.length === 0) {
+        claudeMdSpinner.stop(pc.yellow('CLAUDE.md — failed after retries'));
+        p.log.warn('Could not generate CLAUDE.md. Try: aspens doc init --strategy rewrite --mode base-only');
+      } else {
+        allFiles.push(...files);
+        claudeMdSpinner.stop(pc.green('CLAUDE.md generated'));
+      }
     } catch (err) {
       claudeMdSpinner.stop(pc.yellow('CLAUDE.md — failed, skipped'));
     }

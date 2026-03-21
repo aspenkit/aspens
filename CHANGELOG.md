@@ -3,6 +3,25 @@
 ## [Unreleased]
 
 ### Added
+- **CLAUDE.md retry logic** — if Claude generates content without `<file>` tags, aspens detects the failure and retries with a format reminder
+- **Base skill retry logic** — same retry mechanism for the base skill
+- **Subdirectory tsconfig resolution** — path aliases (`@/`) now resolved from tsconfigs in `frontend/`, `apps/*`, `packages/*`, not just repo root
+- **Vendored/generated code exclusion** — skips `*.min.js`, `*_generated.*`, `*_pb2.py`, lock files, and files with generated-code markers in first line
+- **Common Recipes** wiki page
+- **Release Process** wiki page
+- **Logo** in README
+
+### Fixed
+- Python import regex now handles 4+ dot relative imports (`....models`)
+- `parseFileOutput` in parallel runner wrapped in try/catch to prevent usage data loss
+- Scan command logs graph errors in `--verbose` mode instead of silent catch
+- Regex escape for domain names with metacharacters in findings extraction
+- Dead `runDiscovery` function removed
+- `parallel-runner.js` reference removed from CONTRIBUTING.md
+
+## [0.2.0] - 2026-03-20
+
+### Added
 - **Import graph** — parses JS/TS imports (via `es-module-lexer`) and Python imports (regex), resolves `@/` path aliases from tsconfig.json, builds dependency map
 - **Hub file detection** — identifies most-imported files with fan-in ranking and priority scores
 - **Domain clustering** — groups files by import relationships (connected components), not just directory names
