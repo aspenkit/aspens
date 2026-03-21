@@ -1,10 +1,41 @@
+<div align="center">
+
 # aspens
 
-Generate and maintain AI-ready documentation for any codebase. Aspens scans your repo, builds an import graph, uses parallel Claude agents to discover your architecture, and produces structured skill files that stay updated on every commit.
+### Stop correcting Claude. Start shipping.
 
-Skills are concise markdown files (~35 lines) that Claude Code loads automatically when you work in specific parts of your codebase. They give Claude the context it needs to write correct code — key files, patterns, conventions, critical rules.
+[![npm version](https://img.shields.io/npm/v/aspens.svg)](https://www.npmjs.com/package/aspens)
+[![npm downloads](https://img.shields.io/npm/dm/aspens.svg)](https://www.npmjs.com/package/aspens)
+[![GitHub stars](https://img.shields.io/github/stars/aspenkit/aspens)](https://github.com/aspenkit/aspens)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Claude Code writes code that ignores your patterns, uses wrong abstractions, and breaks your rules.
+Aspens scans your repo, discovers what matters, and generates context that stays updated on every commit — so every Claude Code session starts on track.
+
+</div>
+
+---
+
+**Why aspens?**
+
+| Without aspens | With aspens |
+|---|---|
+| Claude ignores your conventions | Claude follows your patterns from the first prompt |
+| Claude builds components from scratch instead of reusing yours | Skills tell Claude exactly what exists and where |
+| You manually write and maintain CLAUDE.md | Skills auto-generated and updated on every commit |
+| Claude spends half its tool calls Bash/Grep searching for files | Import graph tells Claude which files actually matter |
+| Your codebase gets fragmented and inconsistent over time | Domain-specific skills with critical rules and anti-patterns |
+| Burns through tokens searching, reading, and rebuilding | Claude already knows what matters — dramatically fewer tool calls |
+
+---
+
+```bash
+npx aspens doc init .
+```
 
 ![aspens demo](demo/demo-full.gif)
+
+**What are skills?** Concise markdown files (~35 lines) that Claude Code loads automatically when you work in specific parts of your codebase. They give Claude the context it needs to write correct code — key files, patterns, conventions, critical rules.
 
 ## Quick Start
 
@@ -14,7 +45,7 @@ npx aspens doc init .                # Generate skills + CLAUDE.md
 npx aspens doc sync --install-hook   # Auto-update on every commit
 ```
 
-Requires [Node.js 18+](https://nodejs.org) and [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+Requires [Node.js 18+](https://nodejs.org) and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code).
 
 ## Commands
 
@@ -250,6 +281,12 @@ You are working on **billing, Stripe integration, and usage limits**.
 ```
 
 ~35 lines. This is what Claude reads when you touch billing files.
+
+## Save Tokens
+
+Without context, Claude burns through your usage searching for files, reading code it doesn't need, and rebuilding things that already exist. With aspens, Claude knows your codebase structure before it writes a single line — fewer tool calls, fewer wasted reads, fewer rewrites.
+
+Less context searching. More code shipping.
 
 ## Requirements
 
