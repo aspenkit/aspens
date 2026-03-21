@@ -30,7 +30,7 @@ src/templates/
   commands/             # 2 command templates (.md)
   hooks/                # 2 hook templates (.sh)
   settings/             # settings templates
-test/                   # vitest tests + fixtures
+tests/                   # vitest tests + fixtures
 ```
 
 ## Skills (Claude Code integration)
@@ -53,4 +53,4 @@ The project ships as both a CLI and a set of Claude Code skills registered in th
 - **Node >= 18** required
 - No linter configured yet; `npm run lint` is a no-op
 - Dependencies: commander, es-module-lexer, picocolors, @clack/prompts
-- Tests live in `test/` and use vitest — run with `npm test`
+- Tests live in `tests/` and use vitest — run with `npm test`

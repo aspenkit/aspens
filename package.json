@@ -29,7 +29,6 @@
   },
   "dependencies": {
     "@clack/prompts": "^0.8.0",
-    "aspens": "^0.2.0",
     "commander": "^12.0.0",
     "es-module-lexer": "^2.0.0",
     "picocolors": "^1.1.0"

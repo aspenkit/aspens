@@ -30,11 +30,11 @@ You are working on **aspens' repo scanning system** — a fully deterministic an
 - **Size estimation:** Lines estimated at ~40 bytes/line from `stat.size`, walk capped at depth 5
 
 ## Critical Rules
-- **SOURCE_EXTS** (line 632): Only `.py`, `.ts`, `.js`, `.tsx`, `.jsx`, `.rb`, `.go`, `.rs` — adding a language requires updating this set AND the `detectLanguages` indicators
-- **SKIP_DIR_NAMES** (line 317): Directories like `src`, `app`, `dist`, `node_modules` are skipped in domain detection — adding a skip dir here affects all repos
-- **BOILERPLATE_STEMS** (line 372): `__init__`, `index`, `mod` are excluded from module collection — don't add real module names here
-- **TypeScript implies JavaScript** (line 137): TS detection automatically adds JS to the languages array
-- **Graph failure is non-fatal** (scan.js:17-25): `buildRepoGraph` errors are caught and silently ignored unless `--verbose`
+- **`SOURCE_EXTS`**: Only `.py`, `.ts`, `.js`, `.tsx`, `.jsx`, `.rb`, `.go`, `.rs` — adding a language requires updating this set AND the `detectLanguages` indicators
+- **`SKIP_DIR_NAMES`**: Directories like `src`, `app`, `dist`, `node_modules` are skipped in domain detection — adding a skip dir here affects all repos
+- **`BOILERPLATE_STEMS`**: `__init__`, `index`, `mod` are excluded from module collection — don't add real module names here
+- **TypeScript implies JavaScript**: TS detection in `detectLanguages()` automatically adds JS to the languages array
+- **Graph failure is non-fatal**: `buildRepoGraph` errors in `scanCommand()` are caught and silently ignored unless `--verbose`
 - **Tests use real filesystem fixtures**, not mocks — create fixtures with `createFixture(name, files)` pattern, always clean up
 - **`detectEntryPoints` is exported** and reused by `graph-builder.js` — changing its signature breaks the graph builder
 

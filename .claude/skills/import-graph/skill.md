@@ -18,7 +18,7 @@ You are working on the **import graph builder** — a static analysis module tha
 - `tests/graph-builder.test.js` — Tests using temp fixture directories
 - `src/lib/scanner.js` — Provides `detectEntryPoints()`, the only internal dependency
 
-## Architecture
+## Key Concepts
 `buildRepoGraph(repoPath, languages?)` is the sole public entry point. It runs a **9-step pipeline**:
 1. Walk source files (skip `SKIP_DIRS`, vendored, generated)
 2. Parse imports per file (es-module-lexer for JS/TS, regex for Python)

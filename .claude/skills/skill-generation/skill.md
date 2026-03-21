@@ -31,4 +31,11 @@ You are working on **aspens' skill generation pipeline** — the system that sca
 - **Existing docs strategies:** `improve` (preserve hand-written content), `rewrite` (fresh), `skip-existing` (only generate new domains)
 - **Auto-timeout:** Scales by repo size category — small=120s, medium=300s, large=600s, very-large=900s
 - **Read-only tools:** Claude agents only get `['Read', 'Glob', 'Grep']` — no writes
-- **Output format:** Claude returns `<file path="...">content
+- **Output format:** Claude must return `<file path="...">content</file>` XML tags. If tags are missing, the pipeline retries with a format reminder.
+
+## Critical Rules
+- **Base skill + CLAUDE.md are essential** — if `parseFileOutput` returns empty for either, the pipeline retries automatically with a format correction prompt. Domain skills failing is acceptable (user can retry).
+- **`improve` strategy preserves hand-written content** — Claude must read existing skills first and not discard human-authored rules, conventions, or gotchas.
+- **Discovery runs before user prompt** — the domain picker shows Claude-discovered domains, not scanner directory names.
+- **PARALLEL_LIMIT = 3** — domain skills generate in batches of 3 concurrent Claude calls. Base skill is always sequential first. CLAUDE.md is always sequential last.
+- **Skills must be 35-60 lines** — every line earns its place. No generic advice, no framework documentation.
