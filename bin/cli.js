@@ -2,7 +2,7 @@
 
 import { program } from 'commander';
 import pc from 'picocolors';
-import { readdirSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { scanCommand } from '../src/commands/scan.js';
@@ -13,6 +13,8 @@ import { customizeCommand } from '../src/commands/customize.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'src', 'templates');
+const PKG = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
+const VERSION = PKG.version;
 
 function countTemplates(subdir) {
   try { return readdirSync(join(TEMPLATES_DIR, subdir)).filter(f => !f.startsWith('.')).length; } catch { return '?'; }
@@ -20,7 +22,7 @@ function countTemplates(subdir) {
 
 function showWelcome() {
   console.log(`
-  ${pc.cyan(pc.bold('aspens'))} ${pc.dim('v0.1.0')} — AI-ready documentation for your codebase
+  ${pc.cyan(pc.bold('aspens'))} ${pc.dim(`v${VERSION}`)} — AI-ready documentation for your codebase
 
   ${pc.bold('Quick Start')}
     ${pc.green('aspens scan')}                       See your repo's tech stack and domains
@@ -63,7 +65,7 @@ function showWelcome() {
 program
   .name('aspens')
   .description('Generate and maintain AI-ready documentation for your codebase')
-  .version('0.1.0')
+  .version(VERSION)
   .action(() => {
     // No command given — show welcome
     showWelcome();
@@ -75,6 +77,8 @@ program
   .description('Scan a repo and print its tech stack and structure')
   .argument('[path]', 'Path to repo', '.')
   .option('--json', 'Output as JSON')
+  .option('--domains <domains>', 'Additional domains to include (comma-separated)')
+  .option('--verbose', 'Show diagnostic output')
   .action(scanCommand);
 
 // Doc commands
@@ -91,6 +95,7 @@ doc
   .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
   .option('--mode <mode>', 'Generation mode: all, chunked, base-only (skips interactive prompt)')
   .option('--strategy <strategy>', 'Existing docs: improve, rewrite, skip (skips interactive prompt)')
+  .option('--domains <domains>', 'Additional domains to include (comma-separated, e.g., "backtest,advisory")')
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
   .action(docInitCommand);

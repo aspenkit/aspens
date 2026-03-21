@@ -5,7 +5,7 @@ import { join, basename, extname, relative } from 'path';
  * Scan a repository and return its tech stack, structure, and domains.
  * Fully deterministic — no LLM calls.
  */
-export function scanRepo(repoPath) {
+export function scanRepo(repoPath, { extraDomains } = {}) {
   const result = {
     path: repoPath,
     name: basename(repoPath),
@@ -18,10 +18,52 @@ export function scanRepo(repoPath) {
     hasClaudeMd: existsSync(join(repoPath, 'CLAUDE.md')),
   };
 
+  // Merge user-specified domains
+  if (extraDomains && extraDomains.length > 0) {
+    mergeExtraDomains(result, repoPath, extraDomains);
+  }
+
   result.repoType = inferRepoType(result);
   result.size = estimateRepoSize(repoPath);
+  result.health = checkHealth(repoPath, result);
 
   return result;
+}
+
+function mergeExtraDomains(result, repoPath, extraDomains) {
+  const sourceRoot = findSourceRoot(repoPath);
+  const existingNames = new Set(result.domains.map(d => d.name));
+
+  for (const name of extraDomains) {
+    if (existingNames.has(name)) continue;
+
+    const candidates = [
+      sourceRoot ? join(sourceRoot, name) : null,
+      join(repoPath, name),
+    ].filter(Boolean);
+
+    const matchedDir = candidates.find(d => existsSync(d) && isDir(d));
+
+    if (matchedDir) {
+      const modules = collectModules(matchedDir, 3);
+      result.domains.push({
+        name,
+        directories: [relative(repoPath, matchedDir)],
+        modules,
+        files: [],
+        userSpecified: true,
+        sourceFileCount: modules.length || undefined,
+      });
+    } else {
+      result.domains.push({
+        name,
+        directories: [],
+        modules: [],
+        files: [],
+        userSpecified: true,
+      });
+    }
+  }
 }
 
 // --- Repo Size Estimation ---
@@ -271,58 +313,51 @@ function detectStructure(repoPath) {
 
 // --- Domain Detection ---
 
-// Directories that are scaffolding/infrastructure, not product domains
-const SCAFFOLD_DIR_NAMES = new Set(['templates', 'template', 'scaffolds', 'scaffold', 'fixtures', 'mocks', 'stubs', 'examples', 'example', 'samples', 'sample', 'boilerplate', 'skeleton']);
+// Always skip — purely structural, build output, dependencies, IDE
+const SKIP_DIR_NAMES = new Set([
+  'src', 'app', 'bin', 'cmd', 'pkg', 'internal', 'vendor',
+  'dist', 'build', 'out', 'output', 'target', 'coverage',
+  'node_modules', '__pycache__', '.next', '.nuxt', '.cache',
+  '.github', '.vscode', '.idea', '.git',
+  'assets', 'static', 'public', 'images', 'icons', 'fonts',
+  'styles', 'css',
+]);
 
 function detectDomains(repoPath) {
   const domains = [];
   const sourceRoot = findSourceRoot(repoPath);
-  if (!sourceRoot) return domains;
 
-  // Collect all directory names up to 3 levels deep in source
-  const allDirs = collectDirs(sourceRoot, 3);
+  // Scan directories under source root AND at repo root
+  const scanRoots = new Set();
+  if (sourceRoot) scanRoots.add(sourceRoot);
+  scanRoots.add(repoPath);
 
-  // Filter out scaffold/template directories and their children
-  const productDirs = allDirs.filter(d => {
-    const parts = relative(repoPath, d).split(/[/\\]/);
-    return !parts.some(p => SCAFFOLD_DIR_NAMES.has(p.toLowerCase()));
-  });
-  const dirNames = productDirs.map(d => basename(d).toLowerCase());
+  const seen = new Set(); // avoid duplicates when sourceRoot === repoPath
 
-  // Also collect file names (without extension) in key directories for flat-structure repos
-  // e.g. backend/app/services/billing_service.py → "billing"
-  const fileHints = collectFileHints(sourceRoot, repoPath, 3);
+  for (const root of scanRoots) {
+    const entries = listDir(root);
+    for (const entry of entries) {
+      const name = entry.toLowerCase();
+      if (name.startsWith('.')) continue;
+      if (SKIP_DIR_NAMES.has(name)) continue;
 
-  // Common domain patterns
-  const domainPatterns = {
-    auth: ['auth', 'authentication', 'login', 'signup', 'session', 'oauth'],
-    billing: ['billing', 'payment', 'payments', 'stripe', 'subscription', 'pricing'],
-    users: ['users', 'user', 'profile', 'profiles', 'account', 'accounts'],
-    admin: ['admin', 'dashboard', 'backoffice'],
-    notifications: ['notifications', 'notification', 'alerts', 'emails', 'email'],
-    search: ['search', 'discovery', 'explore'],
-    messaging: ['messaging', 'messages', 'chat', 'conversations'],
-    media: ['media', 'upload', 'uploads', 'files', 'storage', 'assets'],
-    analytics: ['analytics', 'metrics', 'tracking', 'reporting', 'reports'],
-    settings: ['settings', 'preferences', 'configuration'],
-    onboarding: ['onboarding', 'setup', 'wizard', 'welcome'],
-    api: ['api', 'endpoints', 'routes', 'graphql'],
-  };
+      const full = join(root, entry);
+      const relDir = relative(repoPath, full);
+      if (seen.has(relDir)) continue;
+      seen.add(relDir);
 
-  for (const [domain, patterns] of Object.entries(domainPatterns)) {
-    // Match on directory names
-    const dirMatches = patterns.filter(p => dirNames.includes(p));
-    const matchingDirs = productDirs.filter(d => patterns.includes(basename(d).toLowerCase()));
+      if (!isDir(full)) continue;
 
-    // Match on file name hints (e.g. billing_service.py → "billing")
-    const fileMatches = fileHints.filter(h => patterns.some(p => h.hint.includes(p)));
+      // Collect modules (source file stems) inside this directory
+      const modules = collectModules(full, 3);
+      if (modules.length === 0) continue;
 
-    if (dirMatches.length > 0 || fileMatches.length > 0) {
       domains.push({
-        name: domain,
-        matchedOn: [...dirMatches, ...fileMatches.map(f => f.hint)].filter((v, i, a) => a.indexOf(v) === i),
-        directories: matchingDirs.map(d => relative(repoPath, d)),
-        files: fileMatches.map(f => f.path),
+        name: name,
+        directories: [relDir],
+        modules: modules,
+        files: [],
+        sourceFileCount: modules.length,
       });
     }
   }
@@ -330,9 +365,42 @@ function detectDomains(repoPath) {
   return domains;
 }
 
+/**
+ * Collect source file names (without extension) from a directory tree.
+ * Skips __init__.py, index.js/ts and similar boilerplate entry files.
+ */
+const BOILERPLATE_STEMS = new Set(['__init__', 'index', 'mod']);
+
+function collectModules(dirPath, maxDepth, depth = 0) {
+  if (depth >= maxDepth) return [];
+  const results = [];
+  const entries = listDir(dirPath);
+
+  for (const entry of entries) {
+    if (entry.startsWith('.') || entry === 'node_modules' || entry === '__pycache__') continue;
+    const full = join(dirPath, entry);
+    const ext = extname(entry);
+
+    if (SOURCE_EXTS.has(ext)) {
+      const stem = basename(entry, ext);
+      if (!BOILERPLATE_STEMS.has(stem)) {
+        results.push(stem);
+      }
+    } else if (isDir(full)) {
+      // For subdirectories, add the dir name as a module if it has source files
+      const subModules = collectModules(full, maxDepth, depth + 1);
+      if (subModules.length > 0) {
+        results.push(basename(full) + '/');
+      }
+    }
+  }
+
+  return results;
+}
+
 // --- Entry Points ---
 
-function detectEntryPoints(repoPath) {
+export function detectEntryPoints(repoPath) {
   const entries = [];
   const candidates = [
     // JS/TS
@@ -377,6 +445,88 @@ function inferRepoType(scanResult) {
   if (frameworks.includes('electron')) return 'desktop';
 
   return 'unknown';
+}
+
+// --- Health Checks ---
+
+function checkHealth(repoPath, scanResult) {
+  const issues = [];
+
+  const gitignorePath = join(repoPath, '.gitignore');
+  const hasGitignore = existsSync(gitignorePath);
+
+  if (!hasGitignore) {
+    issues.push({
+      level: 'warn',
+      id: 'no-gitignore',
+      message: 'No .gitignore found',
+      detail: 'Installing dependencies (npm install, pip install, etc.) will pollute your git history with thousands of files.',
+      fix: 'Add a .gitignore file — most frameworks provide one via their init/create commands.',
+    });
+  } else {
+    const content = readFileContent(gitignorePath) || '';
+    const lines = content.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+
+    // Check language-specific ignores
+    const langs = scanResult.languages || [];
+    const hasJS = langs.includes('javascript') || langs.includes('typescript');
+    const hasPython = langs.includes('python');
+    const hasRust = langs.includes('rust');
+
+    if (hasJS && !lines.some(l => l === 'node_modules' || l === 'node_modules/' || l === '/node_modules' || l === '/node_modules/')) {
+      issues.push({
+        level: 'warn',
+        id: 'missing-node-modules-ignore',
+        message: 'node_modules/ is not in .gitignore',
+        detail: 'Running npm install will add hundreds of files to git.',
+        fix: 'Add node_modules/ to your .gitignore',
+      });
+    }
+
+    if (hasPython && !lines.some(l => l === '__pycache__' || l === '__pycache__/' || l.includes('__pycache__') || l === '*.pyc')) {
+      issues.push({
+        level: 'warn',
+        id: 'missing-pycache-ignore',
+        message: '__pycache__/ is not in .gitignore',
+        fix: 'Add __pycache__/ and *.pyc to your .gitignore',
+      });
+    }
+
+    if (hasPython && !lines.some(l => l === '.venv' || l === '.venv/' || l === 'venv' || l === 'venv/' || l === 'env' || l === 'env/')) {
+      issues.push({
+        level: 'info',
+        id: 'missing-venv-ignore',
+        message: 'Virtual environment directory not in .gitignore',
+        fix: 'Add .venv/ to your .gitignore',
+      });
+    }
+
+    if (hasRust && !lines.some(l => l === 'target' || l === 'target/' || l === '/target')) {
+      issues.push({
+        level: 'warn',
+        id: 'missing-target-ignore',
+        message: 'target/ is not in .gitignore',
+        fix: 'Add target/ to your .gitignore',
+      });
+    }
+  }
+
+  // Check for .env files that might be committed
+  if (existsSync(join(repoPath, '.env'))) {
+    const gitignoreContent = hasGitignore ? (readFileContent(gitignorePath) || '') : '';
+    const lines = gitignoreContent.split('\n').map(l => l.trim());
+    if (!lines.some(l => l === '.env' || l === '.env*' || l === '.env.*' || l === '*.env')) {
+      issues.push({
+        level: 'warn',
+        id: 'env-not-ignored',
+        message: '.env file exists but is not in .gitignore',
+        detail: 'This may leak secrets (API keys, passwords) into your git history.',
+        fix: 'Add .env to your .gitignore',
+      });
+    }
+  }
+
+  return { issues };
 }
 
 // --- Helpers ---
@@ -479,54 +629,4 @@ function findSourceRoot(repoPath) {
   return repoPath;
 }
 
-const GENERIC_FILE_NAMES = new Set(['index', 'main', 'app', 'init', 'test', 'spec', 'utils', 'helpers', 'types', 'models', 'config', 'deps', 'base', 'core', 'common', 'constants', 'middleware', 'router', 'routes', 'service', 'controller']);
 const SOURCE_EXTS = new Set(['.py', '.ts', '.js', '.tsx', '.jsx', '.rb', '.go', '.rs']);
-
-function collectFileHints(rootPath, repoPath, maxDepth, currentDepth = 0) {
-  if (currentDepth >= maxDepth) return [];
-
-  const results = [];
-  const entries = listDir(rootPath);
-
-  for (const entry of entries) {
-    if (entry.startsWith('.') || entry === 'node_modules' || entry === '__pycache__' || entry === '.git') continue;
-
-    const full = join(rootPath, entry);
-    if (isDir(full)) {
-      results.push(...collectFileHints(full, repoPath, maxDepth, currentDepth + 1));
-    } else {
-      const ext = extname(entry);
-      if (SOURCE_EXTS.has(ext)) {
-        const stem = basename(entry, ext).toLowerCase();
-        const parts = stem.split(/[_\-.]/).filter(p => p.length > 2);
-        for (const part of parts) {
-          if (!GENERIC_FILE_NAMES.has(part)) {
-            results.push({ hint: part, path: relative(repoPath, full) });
-          }
-        }
-      }
-    }
-  }
-
-  return results;
-}
-
-function collectDirs(rootPath, maxDepth, currentDepth = 0) {
-  if (currentDepth >= maxDepth) return [];
-
-  const results = [];
-  const entries = listDir(rootPath);
-
-  for (const entry of entries) {
-    if (entry.startsWith('.') || entry === 'node_modules' || entry === '__pycache__' || entry === '.git' || entry === 'dist' || entry === 'build' || entry === '.next') {
-      continue;
-    }
-    const full = join(rootPath, entry);
-    if (isDir(full)) {
-      results.push(full);
-      results.push(...collectDirs(full, maxDepth, currentDepth + 1));
-    }
-  }
-
-  return results;
-}
