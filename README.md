@@ -1,6 +1,6 @@
 # aspens
 
-Generate and maintain AI-ready documentation for any codebase. Aspens scans your repo, uses Claude to produce structured skill files, and keeps them updated on every commit.
+Generate and maintain AI-ready documentation for any codebase. Aspens scans your repo, builds an import graph, uses parallel Claude agents to discover your architecture, and produces structured skill files that stay updated on every commit.
 
 Skills are concise markdown files (~35 lines) that Claude Code loads automatically when you work in specific parts of your codebase. They give Claude the context it needs to write correct code — key files, patterns, conventions, critical rules.
 
@@ -20,7 +20,7 @@ Requires [Node.js 18+](https://nodejs.org) and [Claude Code](https://docs.anthro
 
 ### `aspens scan [path]`
 
-Detect tech stack, frameworks, structure, and domains. No LLM calls — pure file system inspection.
+Detect tech stack, frameworks, structure, and domains. Builds an import graph to identify hub files, domain coupling, and hotspots. No LLM calls — pure file system + git inspection.
 
 ```
 $ aspens scan .
@@ -41,9 +41,24 @@ $ aspens scan .
     services → src/services/
     database → prisma/
 
-  Detected domains
-    auth (src/services/auth, src/components/auth)
-    billing (src/services/billing)
+  Import Graph (247 files, 892 edges)
+    Hub files:
+      src/lib/db.ts              ← 31 dependents, 2 exports
+      src/auth/middleware.ts      ← 18 dependents, 3 exports
+      src/lib/api-client.ts      ← 15 dependents, 4 exports
+
+  Domains (by imports)
+    components (src/components/) — 89 files
+      → depends on: lib, hooks, types
+    lib (src/lib/) — 12 files
+      ← depended on by: components, services, hooks
+
+  Coupling
+    components → lib    45 imports
+    hooks → lib         23 imports
+
+  Hotspots (high churn, last 6 months)
+    src/auth/session.ts — 19 changes, 210 lines
 
   Claude Code
     .claude/ no  CLAUDE.md no
@@ -52,40 +67,60 @@ $ aspens scan .
 | Option | Description |
 |--------|-------------|
 | `--json` | Output as JSON |
+| `--domains <list>` | Additional domains to include (comma-separated) |
+| `--verbose` | Show diagnostic output |
 
 ### `aspens doc init [path]`
 
-Generate skills and CLAUDE.md by scanning your repo and having Claude explore the code.
+Generate skills and CLAUDE.md. Runs parallel discovery agents to understand your architecture, then generates skills based on what it found.
 
-Claude gets read-only access to your repo (Read, Glob, Grep) and explores it to understand patterns, conventions, and critical rules. It then generates skill files that Claude Code discovers automatically.
+The flow:
+1. **Scan + Import Graph** — builds dependency map, finds hub files
+2. **Parallel Discovery** — 2 Claude agents explore simultaneously (domains + architecture)
+3. **User picks domains** — from the discovered feature domains
+4. **Parallel Generation** — generates 3 domain skills at a time
 
 ```
 $ aspens doc init .
-
-  ◆ aspens doc init
 
   ◇ Scanned my-app (fullstack)
 
     Languages: typescript, javascript
     Frameworks: nextjs, react, tailwind, prisma
-    Domains: auth, billing, notifications
+    Source modules: components, lib, hooks, services, types
+    Import graph: 247 files, 892 edges
+    Size: 247 source files (medium)
+    Timeout: 300s per call
 
-  ◆ 3 domains detected. Generate skills:
-  ● All at once
-  ○ One domain at a time
+    Running 2 discovery agents in parallel...
+
+  ◇ Discovery complete
+    Architecture: Layered frontend (Next.js 16 App Router)
+    Discovered 8 feature domains:
+      auth — User authentication, session management
+      courses — AI-powered course generation
+      billing — Stripe subscriptions, usage limits
+      profile — User profile, XP, badges
+      ...
+
+  ◆ 8 domains detected. Generate skills:
+  ● One domain at a time
   ○ Pick specific domains
   ○ Base skill only
 
-  ◇ Exploring repo and generating skills...
-  ◇ Generated 5 files
+  ◇ Base skill generated
+  ◇ auth, courses, billing
+  ◇ profile, settings, onboarding
+  ◇ layout, landing
 
   + .claude/skills/base/skill.md
   + .claude/skills/auth/skill.md
-  + .claude/skills/billing/skill.md
-  + .claude/skills/notifications/skill.md
-  + CLAUDE.md
+  + .claude/skills/courses/skill.md
+  ...
 
-  5 created
+  11 call(s) | ~23,640 prompt | 35,180 output | 161 tool calls | 4m 32s
+
+  10 created
 ```
 
 | Option | Description |
@@ -95,6 +130,7 @@ $ aspens doc init .
 | `--timeout <seconds>` | Claude timeout (default: 300) |
 | `--mode <mode>` | `all`, `chunked`, or `base-only` (skips interactive prompt) |
 | `--strategy <strategy>` | `improve`, `rewrite`, or `skip` for existing docs (skips interactive prompt) |
+| `--domains <list>` | Additional domains to include (comma-separated) |
 | `--model <model>` | Claude model (e.g., sonnet, opus, haiku) |
 | `--verbose` | Show what Claude is reading in real time |
 
@@ -169,15 +205,16 @@ aspens customize agents --dry-run # Preview changes
 ## How It Works
 
 ```
-Your Repo ──▶ Scanner ──▶ Claude ──▶ .claude/skills/
-               (detect     (explore    (skill files
-               stack,       code,       Claude Code
-               domains)     generate)   loads auto)
+Your Repo ──▶ Scanner ──▶ Import Graph ──▶ Discovery Agents ──▶ Skill Generation
+               (detect     (parse imports,   (2 parallel Claude   (3 domains at a
+               stack,       hub files,         agents: domains +    time, guided by
+               domains)     coupling)          architecture)        graph + findings)
 ```
 
 1. **Scanner** detects your tech stack, frameworks, structure, and domains. Deterministic — no LLM, instant, free.
-2. **Claude** explores your codebase with read-only tools (Read, Glob, Grep). It reads actual source files, follows patterns, and generates skills based on what it finds.
-3. **Skills** are written to `.claude/skills/` in your repo. Claude Code discovers them automatically via YAML frontmatter.
+2. **Import Graph** parses imports across JS/TS/Python, resolves `@/` aliases from tsconfig, builds a dependency map with hub files, coupling analysis, git churn hotspots, and file priority ranking.
+3. **Discovery Agents** (2 parallel Claude calls) explore the codebase guided by the graph. One discovers feature domains, the other analyzes architecture and patterns. Results are merged.
+4. **Skill Generation** uses the graph + discovery findings to write concise, actionable skills. Runs up to 3 domains in parallel.
 
 Doc sync keeps skills current: on each commit, it reads the diff, identifies affected skills, and updates them.
 

@@ -1,7 +1,7 @@
 {
   "name": "aspens",
-  "version": "0.1.0",
-  "description": "CLI for managing shared AI coding config across repos",
+  "version": "0.2.0",
+  "description": "Generate and maintain AI-ready documentation for any codebase",
   "type": "module",
   "bin": {
     "aspens": "./bin/cli.js"
@@ -30,6 +30,7 @@
   "dependencies": {
     "@clack/prompts": "^0.8.0",
     "commander": "^12.0.0",
+    "es-module-lexer": "^2.0.0",
     "picocolors": "^1.1.0"
   },
   "devDependencies": {

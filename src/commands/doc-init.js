@@ -3,6 +3,7 @@ import { existsSync } from 'fs';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
+import { buildRepoGraph } from '../lib/graph-builder.js';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles } from '../lib/skill-writer.js';
 
@@ -48,18 +49,31 @@ export async function docInitCommand(path, options) {
   const model = options.model || null;
 
   // Reset token tracker for this run
+  const startTime = Date.now();
   tokenTracker.promptTokens = 0;
   tokenTracker.toolResultTokens = 0;
   tokenTracker.output = 0;
   tokenTracker.toolUses = 0;
   tokenTracker.calls = 0;
 
+  // Parse --domains flag
+  const extraDomains = options.domains
+    ? options.domains.split(',').map(d => d.trim().toLowerCase()).filter(Boolean)
+    : undefined;
+
   p.intro(pc.cyan('aspens doc init'));
 
   // Step 1: Scan
   const scanSpinner = p.spinner();
   scanSpinner.start('Scanning repository...');
-  const scan = scanRepo(repoPath);
+  const scan = scanRepo(repoPath, { extraDomains });
+
+  // Build import graph
+  let repoGraph = null;
+  try {
+    repoGraph = await buildRepoGraph(repoPath, scan.languages);
+  } catch { /* graph building failed — continue without it */ }
+
   scanSpinner.stop(`Scanned ${pc.bold(scan.name)} (${scan.repoType})`);
 
   // Show what was found
@@ -71,7 +85,10 @@ export async function docInitCommand(path, options) {
     console.log(pc.dim('  Frameworks: ') + scan.frameworks.join(', '));
   }
   if (scan.domains.length > 0) {
-    console.log(pc.dim('  Domains: ') + scan.domains.map(d => d.name).join(', '));
+    console.log(pc.dim('  Source modules: ') + scan.domains.map(d => d.name).join(', '));
+  }
+  if (repoGraph) {
+    console.log(pc.dim('  Import graph: ') + `${repoGraph.stats.totalFiles} files, ${repoGraph.stats.totalEdges} edges`);
   }
   const timeoutMs = autoTimeout(scan, options.timeout);
   if (scan.size) {
@@ -80,8 +97,111 @@ export async function docInitCommand(path, options) {
   }
   console.log();
 
-  // Check for existing docs
-  let existingDocsStrategy = 'fresh'; // default for repos with no existing docs
+  // Step 2: Parallel Discovery — runs immediately, no user input needed
+  let discoveryFindings = null;
+  let discoveredDomains = [];
+
+  if (repoGraph && repoGraph.stats.totalFiles > 0 && options.mode !== 'base-only') {
+    console.log(pc.dim('  Running 2 discovery agents in parallel...'));
+    console.log();
+    const discoverSpinner = p.spinner();
+    discoverSpinner.start('Discovering domains + analyzing architecture...');
+
+    try {
+      const graphContext = buildGraphContext(repoGraph);
+      let hotspotsSection = '';
+      if (repoGraph.hotspots && repoGraph.hotspots.length > 0) {
+        hotspotsSection = '\n\n### Hotspots (high churn)\n';
+        for (const h of repoGraph.hotspots) {
+          hotspotsSection += `- \`${h.path}\` — ${h.churn} changes, ${h.lines} lines\n`;
+        }
+      }
+
+      const scanSummary = buildScanSummary(scan);
+      const sharedContext = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${graphContext}${hotspotsSection}`;
+
+      // Run both discovery agents in parallel
+      const [domainsResult, archResult] = await Promise.all([
+        // Agent 1: Domain discovery (focused, fast)
+        (async () => {
+          try {
+            const prompt = loadPrompt('discover-domains') + sharedContext;
+            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+            trackUsage(usage, prompt.length);
+            const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
+            return match ? match[1].trim() : null;
+          } catch { return null; }
+        })(),
+        // Agent 2: Architecture analysis (deeper, reads hub files)
+        (async () => {
+          try {
+            const prompt = loadPrompt('discover-architecture') + sharedContext;
+            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+            trackUsage(usage, prompt.length);
+            const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
+            return match ? match[1].trim() : null;
+          } catch { return null; }
+        })(),
+      ]);
+
+      // Merge findings
+      const findingsParts = [];
+      if (domainsResult) findingsParts.push(domainsResult);
+      if (archResult) findingsParts.push(archResult);
+      discoveryFindings = findingsParts.join('\n\n');
+
+      discoverSpinner.stop(pc.green('Discovery complete'));
+
+      // Parse discovered domains
+      if (domainsResult) {
+        const domainMatch = domainsResult.match(/## Domains\n([\s\S]*?)(?=\n## |$)/);
+        if (domainMatch) {
+          const domainLines = domainMatch[1].trim().split('\n').filter(l => l.startsWith('- **'));
+          for (const line of domainLines) {
+            const nameMatch = line.match(/\*\*([^*]+)\*\*/);
+            const descMatch = line.match(/\*\*[^*]+\*\*:\s*(.+?)(?:\s*—|\s*$)/);
+            if (nameMatch) {
+              const name = nameMatch[1];
+              const desc = descMatch ? descMatch[1].trim() : '';
+              const filePaths = [...line.matchAll(/`([^`]+\.[a-z]+)`/g)].map(m => m[1]);
+              discoveredDomains.push({
+                name,
+                description: desc,
+                directories: filePaths.length > 0 ? [filePaths[0].split('/').slice(0, -1).join('/')] : [],
+                files: filePaths,
+              });
+            }
+          }
+        }
+      }
+
+      // Show results
+      if (archResult) {
+        // Extract architecture type
+        const archMatch = archResult.match(/## Architecture\n([\s\S]*?)(?=\n## |$)/);
+        if (archMatch) {
+          const firstLine = archMatch[1].trim().split('\n')[0].replace(/\*\*/g, '').replace(/^Type:\s*/i, '');
+          if (firstLine) console.log(pc.dim('  Architecture: ') + firstLine.slice(0, 80));
+        }
+      }
+
+      if (discoveredDomains.length > 0) {
+        console.log(pc.dim(`  Discovered ${discoveredDomains.length} feature domains:`));
+        for (const d of discoveredDomains) {
+          console.log(pc.dim('    ') + pc.green(d.name) + (d.description ? pc.dim(` — ${d.description.slice(0, 120)}`) : ''));
+        }
+      }
+    } catch {
+      discoverSpinner.stop(pc.dim('Discovery skipped — using scanner domains'));
+    }
+    console.log();
+  }
+
+  // Use discovered domains if available, otherwise fall back to scanner domains
+  const effectiveDomains = discoveredDomains.length > 0 ? discoveredDomains : scan.domains;
+
+  // Step 3: Strategy for existing docs
+  let existingDocsStrategy = 'fresh';
   if (options.strategy) {
     const strategyMap = { 'improve': 'improve', 'rewrite': 'rewrite', 'skip': 'skip-existing' };
     existingDocsStrategy = strategyMap[options.strategy] || options.strategy;
@@ -110,9 +230,9 @@ export async function docInitCommand(path, options) {
     }
   }
 
-  // Step 2: Choose generation mode
+  // Step 4: Choose generation mode
   let mode = 'all-at-once';
-  let selectedDomains = scan.domains;
+  let selectedDomains = effectiveDomains;
 
   // --mode flag skips interactive prompt (for CI / scripted use)
   if (options.mode) {
@@ -122,13 +242,13 @@ export async function docInitCommand(path, options) {
       p.log.error(`Unknown mode: ${options.mode}. Use: all, chunked, or base-only`);
       process.exit(1);
     }
-  } else if (scan.domains.length === 0) {
+  } else if (effectiveDomains.length === 0) {
     p.log.info('No domains detected — generating base skill only.');
     mode = 'base-only';
   } else {
     // Smart defaults based on repo size
     const isLarge = scan.size && (scan.size.category === 'large' || scan.size.category === 'very-large');
-    const domainCount = scan.domains.length;
+    const domainCount = effectiveDomains.length;
 
     let defaultMode = 'all-at-once';
     if (isLarge || domainCount > 6) defaultMode = 'chunked';
@@ -156,10 +276,10 @@ export async function docInitCommand(path, options) {
     if (mode === 'pick') {
       const picked = await p.multiselect({
         message: 'Select domains:',
-        options: scan.domains.map(d => ({
+        options: effectiveDomains.map(d => ({
           value: d.name,
           label: d.name,
-          hint: d.directories.join(', ') || d.files?.slice(0, 2).join(', '),
+          hint: d.description || d.directories?.join(', ') || d.files?.slice(0, 2).join(', '),
         })),
         required: true,
       });
@@ -168,18 +288,18 @@ export async function docInitCommand(path, options) {
         p.cancel('Aborted');
         process.exit(0);
       }
-      selectedDomains = scan.domains.filter(d => picked.includes(d.name));
+      selectedDomains = effectiveDomains.filter(d => picked.includes(d.name));
       mode = 'chunked';
     }
   }
 
-  // Step 3: Generate
+  // Step 4: Generate (Layer 3) — write skills from findings
   let allFiles = [];
 
   if (mode === 'all-at-once') {
-    allFiles = await generateAllAtOnce(repoPath, scan, timeoutMs, existingDocsStrategy, verbose, model);
+    allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings);
   } else {
-    allFiles = await generateChunked(repoPath, scan, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model);
+    allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings);
   }
 
   if (allFiles.length === 0) {
@@ -205,7 +325,7 @@ export async function docInitCommand(path, options) {
       console.log(pc.bold(`\n--- ${file.path} ---`));
       console.log(pc.dim(file.content));
     }
-    showTokenSummary();
+    showTokenSummary(startTime);
     p.outro('Dry run complete');
     return;
   }
@@ -241,7 +361,7 @@ export async function docInitCommand(path, options) {
     console.log(`  ${icon} ${result.path}${status}`);
   }
 
-  showTokenSummary();
+  showTokenSummary(startTime);
 
   console.log();
   p.outro(
@@ -251,8 +371,13 @@ export async function docInitCommand(path, options) {
   );
 }
 
-function showTokenSummary() {
+function showTokenSummary(startTime) {
   if (tokenTracker.calls > 0) {
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+
     const parts = [
       `${tokenTracker.calls} call(s)`,
       `~${tokenTracker.promptTokens.toLocaleString()} prompt`,
@@ -262,6 +387,7 @@ function showTokenSummary() {
     if (tokenTracker.toolUses > 0) {
       parts.push(`${tokenTracker.toolUses} tool calls`);
     }
+    parts.push(timeStr);
     console.log();
     console.log(pc.dim(`  ${parts.join(' | ')}`));
   }
@@ -272,6 +398,82 @@ function showTokenSummary() {
 function buildScanSummary(scan) {
   const cleanScan = { ...scan, path: undefined };
   return '## Scan Results\n```json\n' + JSON.stringify(cleanScan, null, 2) + '\n```';
+}
+
+function buildGraphContext(graph) {
+  if (!graph) return '';
+
+  const sections = ['## Import Graph Analysis\n'];
+
+  // Hub files — most architecturally important
+  if (graph.hubs.length > 0) {
+    sections.push('### Hub Files (most depended on — read these first)\n');
+    for (const hub of graph.hubs.slice(0, 10)) {
+      const fileInfo = graph.files[hub.path];
+      sections.push(`- \`${hub.path}\` — ${hub.fanIn} dependents, ${fileInfo?.exportCount || 0} exports, ${fileInfo?.lines || 0} lines`);
+    }
+    sections.push('');
+  }
+
+  // Domain clusters with coupling
+  if (graph.clusters?.components?.length > 0) {
+    sections.push('### Domain Clusters (files that import each other)\n');
+    for (const comp of graph.clusters.components) {
+      if (comp.size <= 1) continue;
+      const fileList = comp.files.slice(0, 10).map(f => `\`${f}\``).join(', ');
+      const more = comp.files.length > 10 ? ` +${comp.files.length - 10} more` : '';
+      sections.push(`- **${comp.label}** (${comp.size} files): ${fileList}${more}`);
+    }
+    sections.push('');
+  }
+
+  // Coupling between domains
+  if (graph.clusters?.coupling?.length > 0) {
+    sections.push('### Cross-Domain Dependencies\n');
+    for (const c of graph.clusters.coupling) {
+      sections.push(`- ${c.from} → ${c.to} (${c.edges} imports)`);
+    }
+    sections.push('');
+  }
+
+  // File ranking (top files Claude should prioritize reading)
+  if (graph.ranked.length > 0) {
+    sections.push('### File Priority Ranking (read in this order)\n');
+    for (const file of graph.ranked.slice(0, 15)) {
+      sections.push(`- \`${file.path}\` — priority ${file.priority.toFixed(1)} (${file.fanIn} dependents, ${file.exportCount} exports, ${file.lines} lines)`);
+    }
+    sections.push('');
+  }
+
+  return sections.join('\n');
+}
+
+function buildDomainGraphContext(graph, domain) {
+  if (!graph) return '';
+
+  const sections = ['## Domain Import Context\n'];
+
+  // Find files in this domain
+  const domainFiles = Object.entries(graph.files)
+    .filter(([path]) => domain.directories?.some(d => path.startsWith(d)))
+    .sort(([, a], [, b]) => (b.fanIn || 0) - (a.fanIn || 0));
+
+  if (domainFiles.length === 0) return '';
+
+  // Show each file's imports and dependents
+  for (const [path, info] of domainFiles) {
+    const deps = info.imports.length > 0 ? `imports: ${info.imports.map(i => `\`${i}\``).join(', ')}` : 'no imports';
+    const depBy = info.importedBy.length > 0 ? `depended on by: ${info.importedBy.map(i => `\`${i}\``).join(', ')}` : '';
+    sections.push(`- \`${path}\` (${info.lines} lines) — ${deps}${depBy ? '; ' + depBy : ''}`);
+  }
+
+  // External deps used by this domain
+  const externalDeps = new Set(domainFiles.flatMap(([, info]) => info.externalImports));
+  if (externalDeps.size > 0) {
+    sections.push(`\nExternal dependencies: ${[...externalDeps].join(', ')}`);
+  }
+
+  return sections.join('\n');
 }
 
 function buildStrategyInstruction(strategy) {
@@ -285,12 +487,14 @@ function buildStrategyInstruction(strategy) {
   return '';
 }
 
-async function generateAllAtOnce(repoPath, scan, timeoutMs, strategy, verbose, model) {
+async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, strategy, verbose, model, findings) {
   const today = new Date().toISOString().split('T')[0];
   const systemPrompt = loadPrompt('doc-init');
   const scanSummary = buildScanSummary(scan);
+  const graphContext = buildGraphContext(repoGraph);
   const strategyNote = buildStrategyInstruction(strategy);
-  const fullPrompt = `${systemPrompt}${strategyNote}\n\n---\n\nGenerate skills for this repository at ${repoPath}. Today's date is ${today}.\n\n${scanSummary}`;
+  const findingsSection = findings ? `\n\n## Architecture Analysis (from discovery pass)\n\n${findings}` : '';
+  const fullPrompt = `${systemPrompt}${strategyNote}\n\n---\n\nGenerate skills for this repository at ${repoPath}. Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}`;
 
   const claudeSpinner = p.spinner();
   claudeSpinner.start('Exploring repo and generating skills...');
@@ -316,23 +520,25 @@ async function generateAllAtOnce(repoPath, scan, timeoutMs, strategy, verbose, m
     if (p.isCancel(retry) || !retry) {
       process.exit(1);
     }
-    return generateChunked(repoPath, scan, scan.domains, false, timeoutMs, strategy, verbose, model);
+    return generateChunked(repoPath, scan, repoGraph, selectedDomains, false, timeoutMs, strategy, verbose, model, findings);
   }
 }
 
-async function generateChunked(repoPath, scan, domains, baseOnly, timeoutMs, strategy, verbose, model) {
+async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, timeoutMs, strategy, verbose, model, findings) {
   const allFiles = [];
   const skippedDomains = [];
   const today = new Date().toISOString().split('T')[0];
   const scanSummary = buildScanSummary(scan);
+  const graphContext = buildGraphContext(repoGraph);
+  const findingsSection = findings ? `\n\n## Architecture Analysis (from discovery pass)\n\n${findings}` : '';
 
   // 1. Generate base skill
   const baseSpinner = p.spinner();
-  baseSpinner.start('Exploring repo and generating base skill...');
+  baseSpinner.start('Generating base skill...');
 
   const strategyNote = buildStrategyInstruction(strategy);
   const basePrompt = loadPrompt('doc-init') + strategyNote +
-    `\n\n---\n\nGenerate ONLY the base skill for this repository at ${repoPath} (no domain skills, no CLAUDE.md). Today's date is ${today}.\n\n${scanSummary}`;
+    `\n\n---\n\nGenerate ONLY the base skill for this repository at ${repoPath} (no domain skills, no CLAUDE.md). Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}`;
 
   let baseSkillContent = null;
   try {
@@ -348,31 +554,64 @@ async function generateChunked(repoPath, scan, domains, baseOnly, timeoutMs, str
     return allFiles;
   }
 
-  // 2. Generate each domain skill
+  // 2. Generate domain skills (in parallel batches for speed)
   if (!baseOnly) {
-    for (const domain of domains) {
-      const domainSpinner = p.spinner();
-      domainSpinner.start(`Exploring ${pc.bold(domain.name)} and generating skill...`);
+    const PARALLEL_LIMIT = 3; // run up to 3 domains concurrently
 
-      const domainInfo = `## Domain: ${domain.name}\nDirectories: ${domain.directories.join(', ')}\nFiles: ${(domain.files || []).join(', ')}`;
-      const domainPrompt = loadPrompt('doc-init-domain', {
-        domainName: domain.name,
-      }) + strategyNote + `\n\n---\n\nRepository path: ${repoPath}\nToday's date is ${today}.\n\n## Base skill (for context)\n\`\`\`\n${baseSkillContent || 'Not available'}\n\`\`\`\n\n${domainInfo}`;
+    for (let i = 0; i < domains.length; i += PARALLEL_LIMIT) {
+      const batch = domains.slice(i, i + PARALLEL_LIMIT);
+      const batchLabel = batch.map(d => d.name).join(', ');
 
-      try {
-        const { text, usage } = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, domainSpinner));
-        trackUsage(usage, domainPrompt.length);
-        const files = parseFileOutput(text);
-        if (files.length > 0) {
-          allFiles.push(...files);
-          domainSpinner.stop(pc.green(`${domain.name} skill generated`));
-        } else {
-          domainSpinner.stop(pc.dim(`${domain.name} — skipped (not enough substance)`));
+      const batchSpinner = p.spinner();
+      batchSpinner.start(`Generating skills: ${pc.bold(batchLabel)}...`);
+
+      const promises = batch.map(async (domain) => {
+        const domainInfo = `## Domain: ${domain.name}\nDirectories: ${(domain.directories || []).join(', ')}\nFiles: ${(domain.files || []).join(', ')}`;
+        const domainGraph = buildDomainGraphContext(repoGraph, domain);
+
+        // Extract domain-specific findings if available
+        let domainFindings = '';
+        if (findings) {
+          const escapedName = domain.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const domainRegex = new RegExp(`-\\s*\\*\\*${escapedName}\\*\\*:([^\\n]*(?:\\n(?!-\\s*\\*\\*).*)*)`,'i');
+          const domainMatch = findings.match(domainRegex);
+          if (domainMatch) {
+            domainFindings = `\n\n## Discovery Findings for ${domain.name}\n${domainMatch[0]}`;
+          }
         }
-      } catch (err) {
-        domainSpinner.stop(pc.yellow(`${domain.name} — timed out or failed`));
-        skippedDomains.push(domain.name);
+
+        const domainPrompt = loadPrompt('doc-init-domain', {
+          domainName: domain.name,
+        }) + strategyNote + `\n\n---\n\nRepository path: ${repoPath}\nToday's date is ${today}.\n\n## Base skill (for context)\n\`\`\`\n${baseSkillContent || 'Not available'}\n\`\`\`\n\n${domainInfo}\n\n${domainGraph}${domainFindings}`;
+
+        try {
+          const { text, usage } = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+          trackUsage(usage, domainPrompt.length);
+          const files = parseFileOutput(text);
+          return { domain: domain.name, files, success: true };
+        } catch {
+          return { domain: domain.name, files: [], success: false };
+        }
+      });
+
+      const results = await Promise.all(promises);
+
+      const succeeded = [];
+      for (const result of results) {
+        if (result.success && result.files.length > 0) {
+          allFiles.push(...result.files);
+          succeeded.push(result.domain);
+        } else if (!result.success) {
+          skippedDomains.push(result.domain);
+        }
       }
+
+      const statusParts = [];
+      if (succeeded.length > 0) statusParts.push(pc.green(succeeded.join(', ')));
+      if (results.some(r => !r.success)) statusParts.push(pc.yellow(results.filter(r => !r.success).map(r => r.domain).join(', ') + ' failed'));
+      if (results.some(r => r.success && r.files.length === 0)) statusParts.push(pc.dim(results.filter(r => r.success && r.files.length === 0).map(r => r.domain).join(', ') + ' skipped'));
+
+      batchSpinner.stop(statusParts.join(pc.dim(' | ')));
     }
   }
 

@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { scanRepo } from '../src/lib/scanner.js';
 
-const FIXTURES_DIR = join(import.meta.dirname, 'fixtures');
+const FIXTURES_DIR = join(import.meta.dirname, 'fixtures', 'scanner');
 
 function createFixture(name, files) {
   const dir = join(FIXTURES_DIR, name);
@@ -21,9 +21,11 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  if (existsSync(FIXTURES_DIR)) {
-    rmSync(FIXTURES_DIR, { recursive: true });
-  }
+  try {
+    if (existsSync(FIXTURES_DIR)) {
+      rmSync(FIXTURES_DIR, { recursive: true, force: true });
+    }
+  } catch { /* ignore cleanup race with other test files */ }
 });
 
 describe('scanRepo', () => {
@@ -179,27 +181,27 @@ describe('scanRepo', () => {
       expect(scan.domains.some(d => d.name === 'auth')).toBe(true);
     });
 
-    it('detects billing domain from file names', () => {
+    it('detects billing domain from directory', () => {
       const dir = createFixture('billing-project', {
         'requirements.txt': 'fastapi\n',
-        'app/services/billing_service.py': 'class BillingService: pass',
-        'app/services/stripe_service.py': 'class StripeService: pass',
+        'app/billing/invoice_service.py': 'class InvoiceService: pass',
+        'app/billing/stripe_client.py': 'class StripeClient: pass',
       });
       const scan = scanRepo(dir);
       expect(scan.domains.some(d => d.name === 'billing')).toBe(true);
     });
 
-    it('filters out scaffold directories', () => {
+    it('filters out skipped directories', () => {
       const dir = createFixture('scaffold-project', {
         'package.json': '{}',
-        'src/templates/settings/config.json': '{}',
-        'src/components/auth/Login.tsx': '',
+        'src/assets/settings/theme.js': 'export default {}',
+        'src/auth/Login.tsx': '',
       });
       const scan = scanRepo(dir);
-      // settings from templates/ should NOT be a domain
+      // assets is in SKIP_DIR_NAMES so settings under it should NOT appear as a domain
       const settingsDomain = scan.domains.find(d => d.name === 'settings');
       expect(settingsDomain).toBeUndefined();
-      // auth should still be detected
+      // auth should still be detected (direct subdirectory of src with source files)
       expect(scan.domains.some(d => d.name === 'auth')).toBe(true);
     });
 
