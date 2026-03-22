@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { scanCommand } from '../src/commands/scan.js';
 import { docInitCommand } from '../src/commands/doc-init.js';
 import { docSyncCommand } from '../src/commands/doc-sync.js';
+import { docGraphCommand } from '../src/commands/doc-graph.js';
 import { addCommand } from '../src/commands/add.js';
 import { customizeCommand } from '../src/commands/customize.js';
 import { CliError } from '../src/lib/errors.js';
@@ -157,6 +158,13 @@ doc
     checkMissingHooks(resolve(path));
     return docSyncCommand(path, options);
   });
+
+doc
+  .command('graph')
+  .description('Rebuild the import graph cache (.claude/graph.json)')
+  .argument('[path]', 'Path to repo', '.')
+  .option('--verbose', 'Show detailed graph info')
+  .action(docGraphCommand);
 
 // Add command
 program

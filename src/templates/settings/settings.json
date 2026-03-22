@@ -8,6 +8,14 @@
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/skill-activation-prompt.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/graph-context-prompt.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [

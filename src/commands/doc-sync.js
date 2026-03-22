@@ -6,6 +6,8 @@ import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles } from '../lib/skill-writer.js';
+import { buildRepoGraph } from '../lib/graph-builder.js';
+import { persistGraphArtifacts, loadGraph, extractSubgraph, formatNavigationContext } from '../lib/graph-persistence.js';
 import { CliError } from '../lib/errors.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
@@ -67,7 +69,21 @@ export async function docSyncCommand(path, options) {
   // Step 3: Find affected skills
   const scan = scanRepo(repoPath);
   const existingSkills = findExistingSkills(repoPath);
-  const affectedSkills = mapChangesToSkills(changedFiles, existingSkills, scan);
+
+  // Rebuild graph from current state (keeps graph fresh on every sync)
+  let repoGraph = null;
+  let graphContext = '';
+  try {
+    const rawGraph = await buildRepoGraph(repoPath, scan.languages);
+    persistGraphArtifacts(repoPath, rawGraph);
+    repoGraph = loadGraph(repoPath);
+    if (repoGraph) {
+      const subgraph = extractSubgraph(repoGraph, changedFiles);
+      graphContext = formatNavigationContext(subgraph);
+    }
+  } catch { /* proceed without graph */ }
+
+  const affectedSkills = mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph);
 
   if (affectedSkills.length > 0) {
     p.log.info(`Skills that may need updates: ${affectedSkills.map(s => pc.yellow(s.name)).join(', ')}`);
@@ -109,7 +125,7 @@ ${truncateDiff(diff, 15000)}
 
 ## Changed Files
 ${changedFiles.join('\n')}
-
+${graphContext ? `\n## Import Graph Context\n${graphContext}` : ''}
 ## Existing Skills
 ${skillContents}
 
@@ -280,7 +296,7 @@ const GENERIC_PATH_SEGMENTS = new Set([
   'public', 'assets', 'styles', 'scripts',
 ]);
 
-function mapChangesToSkills(changedFiles, existingSkills, scan) {
+function mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph = null) {
   const affected = [];
 
   for (const skill of existingSkills) {
@@ -292,7 +308,7 @@ function mapChangesToSkills(changedFiles, existingSkills, scan) {
 
     const activationBlock = activationMatch[0].toLowerCase();
 
-    const isAffected = changedFiles.some(file => {
+    let isAffected = changedFiles.some(file => {
       const fileLower = file.toLowerCase();
       // Check the filename itself (e.g., billing_service.py)
       const fileName = fileLower.split('/').pop();
@@ -302,6 +318,22 @@ function mapChangesToSkills(changedFiles, existingSkills, scan) {
       const parts = fileLower.split('/').filter(p => !GENERIC_PATH_SEGMENTS.has(p) && p.length > 2);
       return parts.some(part => activationBlock.includes(part));
     });
+
+    // Graph-aware: check if changed files are imported by files in this skill's domain
+    if (!isAffected && repoGraph) {
+      isAffected = changedFiles.some(file => {
+        const info = repoGraph.files[file];
+        if (!info) return false;
+        // Check if any file that imports the changed file matches the activation block
+        return (info.importedBy || []).some(dep => {
+          const depLower = dep.toLowerCase();
+          const depName = depLower.split('/').pop();
+          if (activationBlock.includes(depName)) return true;
+          const parts = depLower.split('/').filter(p => !GENERIC_PATH_SEGMENTS.has(p) && p.length > 2);
+          return parts.some(part => activationBlock.includes(part));
+        });
+      });
+    }
 
     if (isAffected) {
       affected.push(skill);
