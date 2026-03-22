@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { program } from 'commander';
+import { program, InvalidArgumentError } from 'commander';
 import pc from 'picocolors';
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
@@ -10,6 +10,20 @@ import { docInitCommand } from '../src/commands/doc-init.js';
 import { docSyncCommand } from '../src/commands/doc-sync.js';
 import { addCommand } from '../src/commands/add.js';
 import { customizeCommand } from '../src/commands/customize.js';
+import { CliError } from '../src/lib/errors.js';
+
+function parsePositiveInt(value, name) {
+  const n = parseInt(value, 10);
+  if (isNaN(n) || n <= 0) throw new InvalidArgumentError(`${name} must be a positive integer`);
+  return n;
+}
+
+function parseTimeout(value) { return parsePositiveInt(value, 'timeout'); }
+function parseCommits(value) {
+  const n = parsePositiveInt(value, 'commits');
+  if (n > 50) throw new InvalidArgumentError('commits must be 50 or less');
+  return n;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'src', 'templates');
@@ -117,7 +131,7 @@ doc
   .argument('[path]', 'Path to repo', '.')
   .option('--dry-run', 'Preview without writing files')
   .option('--force', 'Overwrite existing skills')
-  .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
+  .option('--timeout <seconds>', 'Claude timeout in seconds', parseTimeout, 300)
   .option('--mode <mode>', 'Generation mode: all, chunked, base-only (skips interactive prompt)')
   .option('--strategy <strategy>', 'Existing docs: improve, rewrite, skip (skips interactive prompt)')
   .option('--domains <domains>', 'Additional domains to include (comma-separated, e.g., "backtest,advisory")')
@@ -132,11 +146,11 @@ doc
   .command('sync')
   .description('Update skills from recent commits')
   .argument('[path]', 'Path to repo', '.')
-  .option('--commits <n>', 'Number of commits to analyze', '1')
+  .option('--commits <n>', 'Number of commits to analyze', parseCommits, 1)
   .option('--install-hook', 'Install git post-commit hook')
   .option('--remove-hook', 'Remove git post-commit hook')
   .option('--dry-run', 'Preview without writing files')
-  .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
+  .option('--timeout <seconds>', 'Claude timeout in seconds', parseTimeout, 300)
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
   .action((path, options) => {
@@ -162,7 +176,7 @@ program
   .description('Inject project-specific context into agents')
   .argument('<what>', 'What to customize: agents')
   .option('--dry-run', 'Preview without writing files')
-  .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
+  .option('--timeout <seconds>', 'Claude timeout in seconds', parseTimeout, 300)
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
   .action((what, options) => {
@@ -170,7 +184,15 @@ program
     return customizeCommand(what, options);
   });
 
+// Clean up spawned processes on interrupt
+process.on('SIGINT', () => process.exit(130));
+process.on('SIGTERM', () => process.exit(143));
+
 program.parseAsync().catch((err) => {
+  if (err instanceof CliError) {
+    if (!err.logged) console.error(pc.red('Error:'), err.message);
+    process.exit(err.exitCode);
+  }
   console.error(pc.red('Error:'), err.message);
   process.exit(1);
 });

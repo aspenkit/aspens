@@ -4,12 +4,13 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles } from '../lib/skill-writer.js';
+import { CliError } from '../lib/errors.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 export async function customizeCommand(what, options) {
   const repoPath = resolve('.');
-  const timeoutMs = parseInt(options.timeout) * 1000 || 300000;
+  const timeoutMs = (typeof options.timeout === 'number' ? options.timeout : 300) * 1000;
   const verbose = !!options.verbose;
 
   if (what !== 'agents') {
@@ -19,7 +20,7 @@ export async function customizeCommand(what, options) {
   Usage:
     ${pc.green('aspens customize agents')}    Inject project context into your agents
 `);
-    process.exit(1);
+    throw new CliError(`Unknown target: ${what}`, { logged: true });
   }
 
   p.intro(pc.cyan('aspens customize agents'));
@@ -27,14 +28,12 @@ export async function customizeCommand(what, options) {
   // Step 1: Find agents in the repo
   const agentsDir = join(repoPath, '.claude', 'agents');
   if (!existsSync(agentsDir)) {
-    p.log.error('No .claude/agents/ found. Run aspens add agent first.');
-    process.exit(1);
+    throw new CliError('No .claude/agents/ found. Run aspens add agent first.');
   }
 
   const agents = findAgents(agentsDir, repoPath);
   if (agents.length === 0) {
-    p.log.error('No agent files found in .claude/agents/');
-    process.exit(1);
+    throw new CliError('No agent files found in .claude/agents/');
   }
 
   p.log.info(`Found ${agents.length} agent(s): ${agents.map(a => pc.yellow(a.name)).join(', ')}`);
@@ -48,7 +47,7 @@ export async function customizeCommand(what, options) {
   if (!projectContext) {
     contextSpinner.stop(pc.yellow('No skills or CLAUDE.md found'));
     p.log.warn('Run aspens doc init first to generate skills, then customize agents.');
-    process.exit(0);
+    return;
   }
 
   contextSpinner.stop('Project context loaded');
@@ -114,7 +113,7 @@ export async function customizeCommand(what, options) {
 
   if (p.isCancel(proceed) || !proceed) {
     p.cancel('Aborted');
-    process.exit(0);
+    return;
   }
 
   // Allow .claude/agents/ paths in sanitizePath

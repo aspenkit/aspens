@@ -6,14 +6,15 @@ import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles } from '../lib/skill-writer.js';
+import { CliError } from '../lib/errors.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 export async function docSyncCommand(path, options) {
   const repoPath = resolve(path);
-  const timeoutMs = parseInt(options.timeout) * 1000 || 300000;
+  const timeoutMs = (typeof options.timeout === 'number' ? options.timeout : 300) * 1000;
   const verbose = !!options.verbose;
-  const commits = parseInt(options.commits) || 1;
+  const commits = typeof options.commits === 'number' ? options.commits : 1;
 
   // Install/remove hook mode
   if (options.installHook) {
@@ -27,13 +28,11 @@ export async function docSyncCommand(path, options) {
 
   // Step 1: Check prerequisites
   if (!isGitRepo(repoPath)) {
-    p.log.error('Not a git repository. doc sync requires git history.');
-    process.exit(1);
+    throw new CliError('Not a git repository. doc sync requires git history.');
   }
 
   if (!existsSync(join(repoPath, '.claude', 'skills'))) {
-    p.log.error('No .claude/skills/ found. Run aspens doc init first.');
-    process.exit(1);
+    throw new CliError('No .claude/skills/ found. Run aspens doc init first.');
   }
 
   // Step 2: Get git diff
@@ -136,8 +135,7 @@ ${truncate(claudeMdContent, 5000)}
     });
   } catch (err) {
     syncSpinner.stop(pc.red('Failed'));
-    p.log.error(err.message);
-    process.exit(1);
+    throw new CliError(err.message);
   }
 
   // Step 6: Parse output
@@ -186,7 +184,7 @@ ${truncate(claudeMdContent, 5000)}
 
 function isGitRepo(repoPath) {
   try {
-    execSync('git rev-parse --git-dir', { cwd: repoPath, stdio: 'pipe' });
+    execSync('git rev-parse --git-dir', { cwd: repoPath, stdio: 'pipe', timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -201,6 +199,7 @@ function getGitDiff(repoPath, commits) {
         cwd: repoPath,
         encoding: 'utf8',
         maxBuffer: 10 * 1024 * 1024,
+        timeout: 30000,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       return { diff, actualCommits: n };
@@ -217,6 +216,7 @@ function getGitLog(repoPath, commits) {
       cwd: repoPath,
       encoding: 'utf8',
       maxBuffer: 5 * 1024 * 1024,
+      timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
   } catch {
@@ -230,6 +230,7 @@ function getChangedFiles(repoPath, commits) {
       cwd: repoPath,
       encoding: 'utf8',
       maxBuffer: 5 * 1024 * 1024,
+      timeout: 15000,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     return output.trim().split('\n').filter(Boolean);
@@ -326,6 +327,7 @@ function resolveAspensPath() {
   try {
     const resolved = execSync(cmd, {
       encoding: 'utf8',
+      timeout: 5000,
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
     if (resolved && existsSync(resolved)) return resolved;
@@ -338,8 +340,7 @@ export function installGitHook(repoPath) {
   const hookPath = join(hookDir, 'post-commit');
 
   if (!existsSync(join(repoPath, '.git'))) {
-    console.log(pc.red('\n  Not a git repository.\n'));
-    process.exit(1);
+    throw new CliError('Not a git repository.');
   }
 
   mkdirSync(hookDir, { recursive: true });

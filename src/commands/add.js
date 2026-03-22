@@ -3,6 +3,7 @@ import { existsSync, readFileSync, copyFileSync, mkdirSync, readdirSync } from '
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
+import { CliError } from '../lib/errors.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -47,7 +48,7 @@ export async function addCommand(type, name, options) {
     ${pc.dim('aspens add hook [name]')}
     ${pc.dim('aspens add agent --list')}
 `);
-    process.exit(1);
+    throw new CliError(`Unknown type: ${type}`, { logged: true });
   }
 
   const resourceType = RESOURCE_TYPES[type];
@@ -78,7 +79,7 @@ export async function addCommand(type, name, options) {
 
     if (p.isCancel(picked)) {
       p.cancel('Aborted');
-      process.exit(0);
+      return;
     }
 
     for (const pickedName of picked) {
@@ -110,7 +111,7 @@ export async function addCommand(type, name, options) {
   Available ${type}s:
 ${available.map(a => `    ${pc.green(a.name)} — ${a.description}`).join('\n')}
 `);
-    process.exit(1);
+    throw new CliError(`Not found: ${name}`, { logged: true });
   }
 
   addResource(repoPath, resourceType, name, available);

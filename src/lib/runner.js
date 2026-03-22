@@ -16,7 +16,7 @@ const ALLOWED_EXACT_FILES = ['CLAUDE.md'];
  */
 function checkClaude() {
   try {
-    execSync(process.platform === 'win32' ? 'where claude' : 'which claude', { stdio: 'pipe' });
+    execSync(process.platform === 'win32' ? 'where claude' : 'which claude', { stdio: 'pipe', timeout: 5000 });
   } catch {
     throw new Error(
       'Claude Code CLI not found. Install it first:\n' +
