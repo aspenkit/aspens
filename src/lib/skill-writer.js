@@ -195,8 +195,13 @@ export function mergeSettings(existing, template) {
       const aspensCommands = templateCommands.filter(cmd => isAspensHook(cmd));
 
       if (aspensCommands.length === 0) {
-        // Not an aspens hook, just append
-        merged.hooks[eventType].push(templateEntry);
+        // Not an aspens hook — check for duplicates before appending
+        const isDuplicate = merged.hooks[eventType].some(e =>
+          JSON.stringify(e) === JSON.stringify(templateEntry)
+        );
+        if (!isDuplicate) {
+          merged.hooks[eventType].push(templateEntry);
+        }
         continue;
       }
 
