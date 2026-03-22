@@ -192,6 +192,7 @@ export function parseFileOutput(output) {
 
   let openMatch;
   while ((openMatch = openTagPattern.exec(output)) !== null) {
+    if (isInsideFence(openMatch.index)) continue;
     const filePath = sanitizePath(openMatch[1].trim());
     if (!filePath) continue;
 

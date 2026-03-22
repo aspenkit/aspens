@@ -1,6 +1,6 @@
 {
   "name": "aspens",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Generate and maintain AI-ready documentation for any codebase",
   "type": "module",
   "bin": {
@@ -22,7 +22,8 @@
   "scripts": {
     "test": "vitest run",
     "start": "node bin/cli.js",
-    "lint": "echo 'No linter configured yet' && exit 0"
+    "lint": "echo 'No linter configured yet' && exit 0",
+    "postinstall": "echo '\n  📌 aspens v0.2.2: Skill activation hooks are now required.\n     If you have existing skills, run: aspens doc init --hooks-only\n\n  🌲 aspens is in active development — please keep it up to date.\n     Run into issues? Let us know: https://github.com/aspenkit/aspens/issues\n'"
   },
   "engines": {
     "node": ">=18"
