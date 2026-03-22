@@ -43,9 +43,9 @@
       "promptTriggers": {
         "keywords": [
           "core",
-          "conventions,",
+          "conventions",
           "tech",
-          "stack,",
+          "stack",
           "project"
         ],
         "intentPatterns": []
@@ -71,7 +71,7 @@
           "execution",
           "layer",
           "prompt",
-          "loading,",
+          "loading",
           "skill-writer",
           "prompts",
           "tests",
@@ -164,7 +164,7 @@
           "deterministic",
           "analysis",
           "language/framework",
-          "detection,",
+          "detection",
           "scanner",
           "commands",
           "scan",
@@ -235,11 +235,10 @@
           "library",
           "template library",
           "bundled",
-          "agents,",
-          "commands,",
+          "agents",
+          "commands",
           "hooks",
           "users",
-          "commands",
           "add",
           "customize",
           "templates"

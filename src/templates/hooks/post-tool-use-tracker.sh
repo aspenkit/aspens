@@ -50,7 +50,8 @@ detect_repo() {
     local relative_path="${file#$project_root/}"
 
     # Extract first directory component
-    local repo=$(echo "$relative_path" | cut -d'/' -f1)
+    local repo
+    repo=$(echo "$relative_path" | cut -d'/' -f1)
 
     # Common project directory patterns
     case "$repo" in
@@ -206,6 +207,8 @@ fi
 # Detect which domain skill should be activated based on file path
 # and persist it in session state for sticky behavior
 
+# BEGIN detect_skill_domain
+# STUB: replaced during installation by generateDomainPatterns()
 detect_skill_domain() {
     local file="$1"
     local detected_skills=""
@@ -231,6 +234,7 @@ detect_skill_domain() {
 
     echo "$detected_skills"
 }
+# END detect_skill_domain
 
 # Create session file path based on project directory hash
 get_session_file() {

@@ -50,7 +50,8 @@ detect_repo() {
     local relative_path="${file#$project_root/}"
 
     # Extract first directory component
-    local repo=$(echo "$relative_path" | cut -d'/' -f1)
+    local repo
+    repo=$(echo "$relative_path" | cut -d'/' -f1)
 
     # Common project directory patterns
     case "$repo" in

@@ -98,7 +98,7 @@ This skill triggers when editing these files:
 Keywords: keyword1, keyword2, keyword3
 ```
 
-- File patterns MUST be on their own line, prefixed with `- `, wrapped in backticks.
+- File patterns MUST be on their own line, prefixed with a dash and space (`-`), wrapped in backticks.
 - The `Keywords:` line MUST be in the Activation section, comma-separated. These are case-insensitive terms that trigger this skill when they appear in a user prompt.
 - For the base skill, use `This is a **base skill** that always loads when working in this repository.` (no file patterns or keywords needed).
 

@@ -1,6 +1,6 @@
 import { execSync, spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join, dirname, normalize } from 'path';
+import { join, dirname, normalize, resolve, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -166,10 +166,11 @@ export function parseFileOutput(output) {
 
   // Pre-compute which character positions are inside fenced code blocks
   const fenceRanges = [];
-  const fenceRegex = /^```[^\n]*\n[\s\S]*?\n```/gm;
+  const fenceRegex = /(^|\n)```[^\n]*\n([\s\S]*?)(?:\n```|$)/g;
   let fm;
   while ((fm = fenceRegex.exec(output)) !== null) {
-    fenceRanges.push([fm.index, fm.index + fm[0].length]);
+    const start = fm.index + fm[1].length; // skip leading newline if present
+    fenceRanges.push([start, fm.index + fm[0].length]);
   }
   function isInsideFence(pos) {
     for (const [start, end] of fenceRanges) {
@@ -180,10 +181,11 @@ export function parseFileOutput(output) {
 
   // Find all valid </file> positions (at line start, outside code fences)
   const closePositions = [];
-  const closeRegex = /\n<\/file>/g;
+  const closeRegex = /(^|\n)<\/file>/g;
   let cm;
   while ((cm = closeRegex.exec(output)) !== null) {
-    if (!isInsideFence(cm.index)) {
+    const tagStart = cm.index + cm[1].length;
+    if (!isInsideFence(tagStart)) {
       closePositions.push(cm.index);
     }
   }
@@ -270,8 +272,9 @@ export function validateSkillFiles(files, repoPath) {
       for (const refPath of referencedPaths) {
         // Skip glob patterns and path traversal
         if (refPath.includes('*') || refPath.includes('?') || refPath.includes('..')) continue;
-        const resolved = join(repoPath, refPath);
-        if (!resolved.startsWith(repoPath)) continue;
+        const resolved = resolve(repoPath, refPath);
+        const rel = relative(repoPath, resolved);
+        if (rel.startsWith('..') || rel.startsWith(sep)) continue;
         if (!existsSync(resolved)) {
           issues.push({ file: filePath, issue: 'bad-path', detail: `Referenced path \`${refPath}\` does not exist` });
         }

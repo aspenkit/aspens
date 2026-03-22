@@ -117,8 +117,17 @@ export function generateDomainPatterns(rules) {
 
     if (bashPatterns.length === 0) continue;
 
-    // Deduplicate patterns per skill
-    const uniquePatterns = [...new Set(bashPatterns)];
+    // Deduplicate and validate patterns per skill
+    const SAFE_BASH_PATTERN = /^[A-Za-z0-9/_.\-]+$/;
+    const uniquePatterns = [...new Set(bashPatterns)].filter(p => {
+      if (!SAFE_BASH_PATTERN.test(p)) {
+        console.warn(`[skill-writer] Skipping unsafe bash pattern "${p}" for skill "${skillName}"`);
+        return false;
+      }
+      return true;
+    });
+
+    if (uniquePatterns.length === 0) continue;
 
     const conditions = uniquePatterns
       .map(p => `[[ "$file" =~ ${p} ]]`)
@@ -142,7 +151,8 @@ export function generateDomainPatterns(rules) {
   });
   body += '    fi';
 
-  return `detect_skill_domain() {
+  return `# BEGIN detect_skill_domain
+detect_skill_domain() {
     local file="$1"
     local detected_skills=""
 
@@ -150,7 +160,8 @@ export function generateDomainPatterns(rules) {
 ${body}
 
     echo "$detected_skills"
-}`;
+}
+# END detect_skill_domain`;
 }
 
 /**
@@ -197,7 +208,7 @@ export function mergeSettings(existing, template) {
       if (aspensCommands.length === 0) {
         // Not an aspens hook — check for duplicates before appending
         const isDuplicate = merged.hooks[eventType].some(e =>
-          JSON.stringify(e) === JSON.stringify(templateEntry)
+          stableStringify(e) === stableStringify(templateEntry)
         );
         if (!isDuplicate) {
           merged.hooks[eventType].push(templateEntry);
@@ -404,13 +415,22 @@ function extractDistinctiveParts(pattern) {
 }
 
 function generateEmptyDetectFunction() {
-  return `detect_skill_domain() {
+  return `# BEGIN detect_skill_domain
+detect_skill_domain() {
     local file="$1"
     local detected_skills=""
 
     # No domain patterns generated -- add skills with filePatterns first
     echo "$detected_skills"
-}`;
+}
+# END detect_skill_domain`;
+}
+
+function stableStringify(obj) {
+  if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+  if (Array.isArray(obj)) return '[' + obj.map(stableStringify).join(',') + ']';
+  const keys = Object.keys(obj).sort();
+  return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
 }
 
 function escapeRegex(str) {
@@ -418,7 +438,18 @@ function escapeRegex(str) {
 }
 
 function dedupeStrings(arr) {
-  return [...new Set(arr.map(s => s.toLowerCase()))];
+  const seen = new Set();
+  const result = [];
+  for (const s of arr) {
+    const cleaned = s.trim().replace(/[,.:;!?]+$/, '');
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(cleaned);
+    }
+  }
+  return result;
 }
 
 // Path segments too generic for keyword derivation or bash patterns

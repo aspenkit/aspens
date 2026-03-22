@@ -34,7 +34,7 @@ SCRIPT_DIR="$(get_script_dir)"
 log_debug "SCRIPT_DIR=$SCRIPT_DIR"
 log_debug "CLAUDE_PROJECT_DIR=$CLAUDE_PROJECT_DIR"
 
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR" || { echo "⚡ [Skills] Failed to cd to $SCRIPT_DIR" >&2; exit 0; }
 
 # ---------------------------------------------------------------------------
 # Capture stdin

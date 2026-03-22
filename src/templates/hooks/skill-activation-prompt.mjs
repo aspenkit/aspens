@@ -14,7 +14,7 @@
  */
 
 import { readFileSync, existsSync, writeFileSync } from 'fs';
-import { join, basename } from 'path';
+import { join, basename, resolve } from 'path';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { tmpdir } from 'os';
@@ -33,15 +33,23 @@ import { tmpdir } from 'os';
  * @returns {string|null} Skill markdown content, or null if not found
  */
 export function readSkillContent(projectDir, skillName) {
+  // Guard against path traversal
+  if (!skillName || skillName.includes('..') || skillName.startsWith('/') || skillName.includes('\\')) {
+    return null;
+  }
+
+  const skillsRoot = resolve(projectDir, '.claude', 'skills');
   const possiblePaths = [
-    join(projectDir, '.claude', 'skills', skillName, 'skill.md'),
-    join(projectDir, '.claude', 'skills', `${skillName}.md`),
+    resolve(skillsRoot, skillName, 'skill.md'),
+    resolve(skillsRoot, `${skillName}.md`),
   ];
 
-  for (const skillPath of possiblePaths) {
-    if (existsSync(skillPath)) {
+  for (const candidate of possiblePaths) {
+    // Verify resolved path stays within skills directory (use sep to prevent prefix attacks)
+    if (!candidate.startsWith(skillsRoot + '/') && candidate !== skillsRoot) continue;
+    if (existsSync(candidate)) {
       try {
-        return readFileSync(skillPath, 'utf-8');
+        return readFileSync(candidate, 'utf-8');
       } catch {
         // Continue to next path
       }
@@ -216,16 +224,7 @@ export function formatOutput(matched, currentRepo, projectDir) {
     return '';
   }
 
-  // Load skill content for each matched skill
-  for (const skill of matched) {
-    if (!skill.content) {
-      const content = readSkillContent(projectDir, skill.name);
-      if (content) {
-        skill.content = content;
-      }
-    }
-  }
-
+  // Content should already be set by main(); this is a no-op guard
   const skillsWithContent = matched.filter(s => s.content);
   const skillsWithoutContent = matched.filter(s => !s.content);
 

@@ -407,7 +407,7 @@ export async function docInitCommand(path, options) {
   }
 
   // Step 9: Generate skill-rules.json + install hooks (unless --no-hooks)
-  if (!options.noHooks) {
+  if (options.hooks !== false) {
     await installHooks(repoPath, options);
   }
 
@@ -489,6 +489,8 @@ async function installHooks(repoPath, options) {
 
     if (!options.dryRun) {
       writeFileSync(rulesPath, JSON.stringify(rules, null, 2) + '\n');
+    } else {
+      p.log.info(pc.dim(`[dry-run] Would write ${rulesPath} (${skillCount} skills)`));
     }
 
     // 9b: Copy hook files
@@ -522,10 +524,16 @@ async function installHooks(repoPath, options) {
 
       // Inject generated domain patterns into detect_skill_domain()
       const domainPatterns = generateDomainPatterns(rules);
-      // Replace the stub function with the generated one
-      const stubRegex = /detect_skill_domain\(\)\s*\{[\s\S]*?\n\}/;
-      if (stubRegex.test(trackerContent)) {
-        trackerContent = trackerContent.replace(stubRegex, domainPatterns.trim());
+      // Replace using BEGIN/END markers (preferred), fall back to regex
+      const markerRegex = /# BEGIN detect_skill_domain[\s\S]*?# END detect_skill_domain/;
+      if (markerRegex.test(trackerContent)) {
+        trackerContent = trackerContent.replace(markerRegex, domainPatterns.trim());
+      } else {
+        // Fallback for templates without markers
+        const stubRegex = /detect_skill_domain\(\)\s*\{[\s\S]*?\n\}/;
+        if (stubRegex.test(trackerContent)) {
+          trackerContent = trackerContent.replace(stubRegex, domainPatterns.trim());
+        }
       }
 
       if (!options.dryRun) {
