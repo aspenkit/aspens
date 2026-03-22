@@ -1,0 +1,255 @@
+{
+  "version": "2.0",
+  "skills": {
+    "agent-customization": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "src/commands/customize.js",
+        "src/prompts/customize-agents.md"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "agent",
+          "customization",
+          "agent customization",
+          "llm-powered",
+          "injection",
+          "project",
+          "context",
+          "installed",
+          "commands",
+          "customize",
+          "prompts",
+          "customize-agents"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*agent customization",
+          "agent customization.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*agent.*customization"
+        ]
+      }
+    },
+    "base": {
+      "type": "base",
+      "enforcement": "suggest",
+      "priority": "critical",
+      "scope": "all",
+      "alwaysActivate": true,
+      "filePatterns": [],
+      "promptTriggers": {
+        "keywords": [
+          "core",
+          "conventions,",
+          "tech",
+          "stack,",
+          "project"
+        ],
+        "intentPatterns": []
+      }
+    },
+    "claude-runner": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "src/lib/runner.js",
+        "src/lib/skill-writer.js",
+        "src/prompts/**/*.md",
+        "tests/*extract*"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "claude",
+          "runner",
+          "claude runner",
+          "execution",
+          "layer",
+          "prompt",
+          "loading,",
+          "skill-writer",
+          "prompts",
+          "tests",
+          "extract"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*claude runner",
+          "claude runner.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*claude.*runner"
+        ]
+      }
+    },
+    "doc-sync": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "src/commands/doc-sync.js",
+        "src/prompts/doc-sync.md"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "doc",
+          "sync",
+          "doc sync",
+          "incremental",
+          "skill",
+          "updater",
+          "maps",
+          "diffs",
+          "commands",
+          "doc-sync",
+          "prompts"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*doc sync",
+          "doc sync.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*doc.*sync"
+        ]
+      }
+    },
+    "import-graph": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "src/lib/graph-builder.js",
+        "tests/graph-builder.test.js"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "import",
+          "graph",
+          "import graph",
+          "static",
+          "analysis",
+          "builds",
+          "dependency",
+          "graph-builder",
+          "tests",
+          "graph-builder.test"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import graph",
+          "import graph.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import.*graph"
+        ]
+      }
+    },
+    "repo-scanning": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "src/lib/scanner.js",
+        "src/commands/scan.js",
+        "tests/scanner.test.js"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "repo",
+          "scanning",
+          "repo scanning",
+          "deterministic",
+          "analysis",
+          "language/framework",
+          "detection,",
+          "scanner",
+          "commands",
+          "scan",
+          "tests",
+          "scanner.test"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*repo scanning",
+          "repo scanning.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*repo.*scanning"
+        ]
+      }
+    },
+    "skill-generation": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "src/commands/doc-init.js",
+        "src/commands/doc-sync.js",
+        "src/commands/customize.js",
+        "src/lib/context-builder.js",
+        "src/lib/runner.js",
+        "src/lib/skill-writer.js",
+        "src/prompts/**/*"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "skill",
+          "generation",
+          "skill generation",
+          "llm-powered",
+          "pipeline",
+          "claude",
+          "code",
+          "commands",
+          "doc-init",
+          "doc-sync",
+          "customize",
+          "context-builder",
+          "runner",
+          "skill-writer",
+          "prompts"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*skill generation",
+          "skill generation.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*skill.*generation"
+        ]
+      }
+    },
+    "template-library": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "src/commands/add.js",
+        "src/commands/customize.js",
+        "src/templates/**/*"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "template",
+          "library",
+          "template library",
+          "bundled",
+          "agents,",
+          "commands,",
+          "hooks",
+          "users",
+          "commands",
+          "add",
+          "customize",
+          "templates"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*template library",
+          "template library.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*template.*library"
+        ]
+      }
+    }
+  }
+}
