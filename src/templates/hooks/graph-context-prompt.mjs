@@ -75,12 +75,12 @@ export function matchPromptAgainstIndex(prompt, index) {
     }
   }
 
-  // Tier 3: Export/function names — match words against export index
-  // Only match word-like tokens that could be identifiers (camelCase, snake_case, PascalCase)
-  const wordRe = /\b([a-zA-Z_]\w{2,})\b/g;
-  while ((m = wordRe.exec(prompt)) !== null) {
-    const word = m[1];
-    if (index.exports[word]) {
+  // Tier 3: Export/function names — only match code-shaped identifiers
+  // Must look like code: camelCase, PascalCase, snake_case, or backtick-wrapped
+  const codeIdentRe = /`(\w{3,})`|\b([a-z]+[A-Z]\w*|[A-Z][a-z]+[A-Z]\w*|\w+_\w+)\b/g;
+  while ((m = codeIdentRe.exec(prompt)) !== null) {
+    const word = m[1] || m[2]; // m[1] = backtick-wrapped, m[2] = code-shaped
+    if (word && index.exports[word]) {
       matches.add(index.exports[word]);
     }
   }
@@ -333,70 +333,66 @@ async function main() {
       process.exit(0);
     }
 
-    // Step 1: Load tiny index (~1KB, ~1ms)
-    const index = loadGraphIndex(projectDir);
-    if (!index) {
-      process.exit(0);
-    }
-
-    // Step 2: Fast match against index (~1ms)
-    const indexMatches = matchPromptAgainstIndex(prompt, index);
-    if (indexMatches.length === 0) {
-      process.exit(0);
-    }
-
-    // Step 3: Match found — load full graph for detailed context
-    const graph = loadGraphJson(projectDir);
-    if (!graph) {
-      process.exit(0);
-    }
-
-    // Step 4: Resolve index matches to validated file paths
-    const filePaths = resolveMatches(indexMatches, graph);
-    if (filePaths.length === 0) {
-      process.exit(0);
-    }
-
-    // Step 5: Build neighborhood and format
-    const neighborhood = buildNeighborhood(graph, filePaths);
-    const context = formatNavContext(neighborhood);
-
-    if (!context) {
-      process.exit(0);
-    }
-
-    // Debug output
-    if (process.env.ASPENS_DEBUG === '1') {
-      try {
-        const { writeFileSync: wfs } = await import('fs');
-        wfs('/tmp/aspens-debug-graph-context.json', JSON.stringify({
-          timestamp: new Date().toISOString(),
-          projectDir,
-          prompt: prompt.substring(0, 500),
-          indexMatches,
-          filePaths,
-          neighborhoodSize: neighborhood.mentionedFiles.length + neighborhood.neighbors.length,
-        }, null, 2));
-      } catch { /* ignore */ }
-    }
-
-    // Load code-map overview (already on disk, only read when we have a match)
-    let codeMap = '';
+    // Step 1: Always load code-map overview (~1ms)
     const codeMapPath = join(projectDir, '.claude', 'code-map.md');
+    let codeMap = '';
     if (existsSync(codeMapPath)) {
       try {
         codeMap = readFileSync(codeMapPath, 'utf-8');
       } catch { /* ignore */ }
     }
 
-    // Emit graph context (injected into Claude's context via stdout)
+    // If no code-map exists, nothing to do
+    if (!codeMap) {
+      process.exit(0);
+    }
+
+    // Step 2: Try to enrich with detailed neighborhood (best-effort)
+    let detailedContext = '';
+    let debugInfo = null;
+    try {
+      const index = loadGraphIndex(projectDir);
+      if (index) {
+        const indexMatches = matchPromptAgainstIndex(prompt, index);
+        if (indexMatches.length > 0) {
+          const graph = loadGraphJson(projectDir);
+          if (graph) {
+            const filePaths = resolveMatches(indexMatches, graph);
+            if (filePaths.length > 0) {
+              const neighborhood = buildNeighborhood(graph, filePaths);
+              detailedContext = formatNavContext(neighborhood);
+              debugInfo = { indexMatches, filePaths, neighborhoodSize: neighborhood.mentionedFiles.length + neighborhood.neighbors.length };
+            }
+          }
+        }
+      }
+    } catch { /* matching failed — still emit code-map */ }
+
+    // Debug output
+    if (process.env.ASPENS_DEBUG === '1' && debugInfo) {
+      try {
+        const { writeFileSync: wfs } = await import('fs');
+        wfs('/tmp/aspens-debug-graph-context.json', JSON.stringify({
+          timestamp: new Date().toISOString(),
+          projectDir,
+          prompt: prompt.substring(0, 500),
+          ...debugInfo,
+        }, null, 2));
+      } catch { /* ignore */ }
+    }
+
+    // Emit: always code-map, optionally detailed neighborhood
     let output = '<!-- graph-context -->\n';
-    if (codeMap) output += codeMap;
-    output += context;
+    output += codeMap;
+    if (detailedContext) output += '\n' + detailedContext;
     output += '<!-- /graph-context -->\n';
     process.stdout.write(output);
 
-    process.stderr.write(`[Graph] Context: ${filePaths.length} files, ${neighborhood.neighbors.length} neighbors\n`);
+    if (detailedContext) {
+      process.stderr.write(`[Graph] Code map + ${debugInfo.filePaths.length} matched files\n`);
+    } else {
+      process.stderr.write('[Graph] Code map loaded\n');
+    }
 
     process.exit(0);
   } catch (err) {
