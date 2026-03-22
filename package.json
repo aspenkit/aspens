@@ -25,7 +25,7 @@
     "lint": "echo 'No linter configured yet' && exit 0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
     "@clack/prompts": "^0.8.0",
