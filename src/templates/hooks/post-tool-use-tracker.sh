@@ -1,9 +1,16 @@
 #!/bin/bash
 # Note: Removed set -e to prevent hook failures from blocking edits
 
+# IMPORTANT: All output MUST go to stderr (>&2), not stdout.
+# stdout from PostToolUse hooks is injected into Claude's context.
+
 # Post-tool-use hook that tracks edited files and their repos
 # This runs after Edit, MultiEdit, or Write tools complete successfully
 
+# Require jq for JSON parsing
+if ! command -v jq &> /dev/null; then
+    exit 0
+fi
 
 # Exit early if CLAUDE_PROJECT_DIR is not set
 if [[ -z "$CLAUDE_PROJECT_DIR" ]]; then

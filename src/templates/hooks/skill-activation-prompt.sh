@@ -1,41 +1,67 @@
 #!/bin/bash
-# Note: Removed set -e to prevent hook failures from blocking prompts
+# Skill Activation Prompt Hook — Shell Wrapper
+# Called by Claude Code on every UserPromptSubmit.
+# Captures stdin, runs the Node.js matching engine, separates stdout/stderr.
+# Always exits 0 — NEVER blocks the user's prompt.
+#
+# Note: No set -e — hook failures must not block prompts.
 
-# Resolve the actual directory where this script lives (handling symlinks)
-# This ensures we can find the TypeScript file even when the hook is symlinked
+# ---------------------------------------------------------------------------
+# Debug logging (opt-in via ASPENS_DEBUG=1 to avoid leaking prompt data)
+# ---------------------------------------------------------------------------
+log_debug() {
+    if [ "$ASPENS_DEBUG" = "1" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "${TMPDIR:-/tmp}/claude-skill-hook-debug-$(id -u).log"
+    fi
+}
+
+log_debug "HOOK SCRIPT STARTED - PID $$"
+
+# ---------------------------------------------------------------------------
+# Resolve script directory (handles symlinks — essential for hub support)
+# ---------------------------------------------------------------------------
 get_script_dir() {
     local source="${BASH_SOURCE[0]}"
-    # Resolve symlinks
     while [ -h "$source" ]; do
         local dir="$(cd -P "$(dirname "$source")" && pwd)"
         source="$(readlink "$source")"
-        # Handle relative symlinks
         [[ $source != /* ]] && source="$dir/$source"
     done
     cd -P "$(dirname "$source")" && pwd
 }
 
 SCRIPT_DIR="$(get_script_dir)"
+log_debug "SCRIPT_DIR=$SCRIPT_DIR"
+log_debug "CLAUDE_PROJECT_DIR=$CLAUDE_PROJECT_DIR"
 
-# Change to the script directory and run the TypeScript hook
 cd "$SCRIPT_DIR"
 
-# Capture stdin (printf preserves payload shape, unlike echo which can mangle escapes)
+# ---------------------------------------------------------------------------
+# Capture stdin
+# ---------------------------------------------------------------------------
 INPUT=$(cat)
+log_debug "Input received: ${INPUT:0:200}..."
 
-# Temp files for clean stdout/stderr separation
+# ---------------------------------------------------------------------------
+# Run matching engine with clean stdout/stderr separation
+# ---------------------------------------------------------------------------
 STDOUT_FILE=$(mktemp)
 STDERR_FILE=$(mktemp)
 trap 'rm -f "$STDOUT_FILE" "$STDERR_FILE"' EXIT
 
-# Run the TypeScript hook with stdout and stderr captured separately
-printf '%s' "$INPUT" | NODE_NO_WARNINGS=1 npx tsx skill-activation-prompt.ts \
+printf '%s' "$INPUT" | NODE_NO_WARNINGS=1 node skill-activation-prompt.mjs \
     >"$STDOUT_FILE" 2>"$STDERR_FILE"
 EXIT_CODE=$?
 
-# Parse stderr for skill activation info and relay to terminal
+log_debug "Exit code: $EXIT_CODE"
+log_debug "Stderr: $(cat "$STDERR_FILE" 2>/dev/null | head -5)"
+
+# ---------------------------------------------------------------------------
+# Terminal status output (stderr — visible in verbose mode via Ctrl+O)
+# ---------------------------------------------------------------------------
 if [ $EXIT_CODE -ne 0 ]; then
     echo "⚡ [Skills] Hook error (exit $EXIT_CODE)" >&2
+    log_debug "ERROR: Hook failed with exit code $EXIT_CODE"
 else
     SKILL_LINE=$(grep -o '\[Skills\] Activated: [^"]*' "$STDERR_FILE" | head -1)
     if [ -n "$SKILL_LINE" ]; then
@@ -45,7 +71,9 @@ else
     fi
 fi
 
-# Output pristine stdout only (no grep filtering needed)
+# ---------------------------------------------------------------------------
+# Emit pristine stdout (injected into Claude's context)
+# ---------------------------------------------------------------------------
 cat "$STDOUT_FILE"
 
 exit 0
