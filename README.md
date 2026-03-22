@@ -47,7 +47,7 @@ npx aspens doc init .                # Generate skills + CLAUDE.md
 npx aspens doc sync --install-hook   # Auto-update on every commit
 ```
 
-Requires [Node.js 18+](https://nodejs.org) and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code).
+Requires [Node.js 20+](https://nodejs.org) and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code).
 
 ## Commands
 
@@ -292,7 +292,7 @@ Less context searching. More code shipping.
 
 ## Requirements
 
-- **Node.js 18+**
+- **Node.js 20+**
 - **Claude Code CLI** — `npm install -g @anthropic-ai/claude-code`
 
 ## License

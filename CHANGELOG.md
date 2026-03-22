@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-03-22
+
+### Upgrade notice
+If upgrading from 0.2.1 or earlier, run `aspens doc init --hooks-only` in each repo that already has skills.
+
+### Added
+- **Skill activation hooks** — `doc init` now auto-generates `skill-rules.json`, shell + Node.js hooks, and `settings.json` entries so skills activate automatically on every prompt
+- **Session-sticky skills** — editing a file activates its domain skill for the rest of the session via `PostToolUse` tracking hook
+- **`--hooks-only` flag** — run `aspens doc init --hooks-only` to install/update hooks without regenerating skills
+- **`--no-hooks` flag** — skip hook installation during `doc init`
+- **Missing hooks warning** — CLI warns when skills exist but activation hooks are missing, with fix command
+- **Postinstall upgrade notice** — npm prints a message after install/update telling users to run `--hooks-only` if upgrading
+- **Domain skill validation** — `validateSkillFiles` now checks for required sections (Activation, Key Files, Key Concepts, Critical Rules)
+
+### Fixed
+- **Hook settings merge** — order-independent duplicate detection using stable key-sorted stringify
+- **Bash pattern injection** — `generateDomainPatterns` validates patterns against a safe character whitelist before emitting bash conditions
+- **Keyword normalization** — `dedupeStrings` trims whitespace and strips trailing punctuation while preserving original casing
+- **Dry-run side effects** — `mkdirSync` for hooks directory now guarded by `!options.dryRun`
+- **Dry-run feedback** — rules file write now logs a message during `--dry-run` instead of silently skipping
+- **`--no-hooks` CLI mapping** — uses Commander's `options.hooks !== false` instead of broken `options.noHooks`
+- **Path containment** — `readSkillContent` and `validateSkillFiles` use `path.relative()` instead of hardcoded `/` separator
+- **Session file location** — shell hooks use `${TMPDIR:-/tmp}` to match Node's `os.tmpdir()`
+- **Session repo check** — `getSessionActiveSkills` validates `session.repo` matches current repo before returning sticky skills
+- **Marker-based replacement** — `detect_skill_domain` stub uses `BEGIN/END` markers instead of fragile regex
+- **Fence detection** — `parseFileOutput` handles fenced code blocks at start-of-string and unclosed fences
+- **`</file>` at position 0** — closing tag regex matches start-of-string, not just after newline
+- **Portable hash** — git hook falls back from `shasum` to `sha1sum` to `md5sum`
+- **Windows path lookup** — `resolveAspensPath` uses `where` on win32, `which` elsewhere
+
+## [0.2.1] - 2026-03-21
+
 ### Added
 - **CLAUDE.md retry logic** — if Claude generates content without `<file>` tags, aspens detects the failure and retries with a format reminder
 - **Base skill retry logic** — same retry mechanism for the base skill

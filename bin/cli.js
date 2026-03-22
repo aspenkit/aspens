@@ -2,8 +2,8 @@
 
 import { program } from 'commander';
 import pc from 'picocolors';
-import { readFileSync, readdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { readFileSync, readdirSync, existsSync } from 'fs';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { scanCommand } from '../src/commands/scan.js';
 import { docInitCommand } from '../src/commands/doc-init.js';
@@ -28,7 +28,7 @@ function showWelcome() {
 
   ${pc.bold('Quick Start')}
     ${pc.green('aspens scan')}                       See your repo's tech stack and domains
-    ${pc.green('aspens doc init')}                   Generate skills + CLAUDE.md
+    ${pc.green('aspens doc init')}                   Generate skills + hooks + CLAUDE.md
     ${pc.green('aspens doc sync --install-hook')}    Auto-update on every commit
 
   ${pc.bold('Generate & Sync')}
@@ -52,6 +52,7 @@ function showWelcome() {
     ${pc.yellow('--force')}            Overwrite existing files     ${pc.yellow('--model')} ${pc.dim('<m>')}   Choose Claude model
     ${pc.yellow('--mode')} ${pc.dim('<mode>')}       all, chunked, base-only     ${pc.yellow('--timeout')} ${pc.dim('<s>')}  Seconds per call
     ${pc.yellow('--strategy')} ${pc.dim('<s>')}    improve, rewrite, skip      ${pc.yellow('--json')}      JSON output (scan)
+    ${pc.yellow('--no-hooks')}         Skip hook installation       ${pc.yellow('--hooks-only')}  Update hooks only
 
   ${pc.bold('Typical Workflow')}
     ${pc.dim('$')} aspens scan                              ${pc.dim('1. See what\'s in your repo')}
@@ -61,7 +62,29 @@ function showWelcome() {
     ${pc.dim('$')} aspens doc sync --install-hook           ${pc.dim('5. Auto-update on every commit')}
 
   ${pc.dim('Run')} ${pc.cyan('aspens <command> --help')} ${pc.dim('for detailed usage.')}
+
+  ${pc.dim('🌲 aspens is in active development — please keep it up to date.')}
+  ${pc.dim('   Run into issues? Let us know:')} ${pc.cyan('https://github.com/aspenkit/aspens/issues')}
 `);
+}
+
+/**
+ * Check if a target repo has skills but is missing hooks.
+ * Warns users who ran doc init before hooks were available (pre-0.2.2).
+ */
+function checkMissingHooks(repoPath) {
+  const skillsDir = join(repoPath, '.claude', 'skills');
+  const hookFile = join(repoPath, '.claude', 'hooks', 'skill-activation-prompt.sh');
+  const rulesFile = join(repoPath, '.claude', 'skills', 'skill-rules.json');
+
+  if (existsSync(skillsDir) && (!existsSync(hookFile) || !existsSync(rulesFile))) {
+    console.log(
+      pc.yellow('\n  ⚠  Skills found but activation hooks are missing.') +
+      pc.dim('\n     Skills won\'t auto-activate without hooks.') +
+      '\n     Run: ' + pc.cyan('aspens doc init --hooks-only') +
+      pc.dim(' to install them.\n')
+    );
+  }
 }
 
 program
@@ -101,6 +124,8 @@ doc
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--no-hook', 'Skip post-commit hook prompt')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
+  .option('--no-hooks', 'Skip hook/rules/settings installation')
+  .option('--hooks-only', 'Skip skill generation, just install/update hooks')
   .action(docInitCommand);
 
 doc
@@ -114,7 +139,10 @@ doc
   .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
-  .action(docSyncCommand);
+  .action((path, options) => {
+    checkMissingHooks(resolve(path));
+    return docSyncCommand(path, options);
+  });
 
 // Add command
 program
@@ -123,7 +151,10 @@ program
   .argument('<type>', 'What to add: agent, hook, command')
   .argument('[name]', 'Name of the resource')
   .option('--list', 'List available resources')
-  .action(addCommand);
+  .action((type, name, options) => {
+    checkMissingHooks(resolve('.'));
+    return addCommand(type, name, options);
+  });
 
 // Customize command
 program
@@ -134,7 +165,10 @@ program
   .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
-  .action(customizeCommand);
+  .action((what, options) => {
+    checkMissingHooks(resolve('.'));
+    return customizeCommand(what, options);
+  });
 
 program.parseAsync().catch((err) => {
   console.error(pc.red('Error:'), err.message);
