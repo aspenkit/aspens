@@ -8,8 +8,8 @@ import {
   extractFileReferences,
   extractSubgraph,
   formatNavigationContext,
-  generateCodeMapSkill,
-  writeCodeMapSkill,
+  generateCodeMap,
+  writeCodeMap,
   generateGraphIndex,
   saveGraphIndex,
   persistGraphArtifacts,
@@ -363,57 +363,50 @@ describe('formatNavigationContext', () => {
 });
 
 // ---------------------------------------------------------------------------
-// generateCodeMapSkill
+// generateCodeMap
 // ---------------------------------------------------------------------------
-describe('generateCodeMapSkill', () => {
+describe('generateCodeMap', () => {
   const graph = serializeGraph(makeRawGraph(), FIXTURES_DIR);
 
-  it('produces valid skill frontmatter', () => {
-    const skill = generateCodeMapSkill(graph);
-    expect(skill).toContain('---');
-    expect(skill).toContain('name: code-map');
-    expect(skill).toContain('description:');
+  it('produces codebase structure header', () => {
+    const map = generateCodeMap(graph);
+    expect(map).toContain('## Codebase Structure');
   });
 
   it('includes hub files', () => {
-    const skill = generateCodeMapSkill(graph);
-    expect(skill).toContain('## Hub Files');
-    expect(skill).toContain('src/lib/scanner.js');
+    const map = generateCodeMap(graph);
+    expect(map).toContain('Hub files');
+    expect(map).toContain('src/lib/scanner.js');
   });
 
   it('includes hotspots', () => {
-    const skill = generateCodeMapSkill(graph);
-    expect(skill).toContain('## Hotspots');
+    const map = generateCodeMap(graph);
+    expect(map).toContain('Hotspots');
   });
 
   it('includes graph stats', () => {
-    const skill = generateCodeMapSkill(graph);
-    expect(skill).toContain('**Graph:**');
-    expect(skill).toContain('6 files');
-  });
-
-  it('includes activation section', () => {
-    const skill = generateCodeMapSkill(graph);
-    expect(skill).toContain('## Activation');
+    const map = generateCodeMap(graph);
+    expect(map).toContain('6 files');
+    expect(map).toContain('5 edges');
   });
 });
 
 // ---------------------------------------------------------------------------
-// writeCodeMapSkill
+// writeCodeMap
 // ---------------------------------------------------------------------------
-describe('writeCodeMapSkill', () => {
-  it('writes skill.md to correct path', () => {
+describe('writeCodeMap', () => {
+  it('writes code-map.md to .claude/', () => {
     const dir = join(FIXTURES_DIR, 'code-map-write');
     mkdirSync(dir, { recursive: true });
 
     const graph = serializeGraph(makeRawGraph(), dir);
-    writeCodeMapSkill(dir, graph);
+    writeCodeMap(dir, graph);
 
-    const skillPath = join(dir, '.claude', 'skills', 'code-map', 'skill.md');
-    expect(existsSync(skillPath)).toBe(true);
+    const mapPath = join(dir, '.claude', 'code-map.md');
+    expect(existsSync(mapPath)).toBe(true);
 
-    const content = readFileSync(skillPath, 'utf-8');
-    expect(content).toContain('name: code-map');
+    const content = readFileSync(mapPath, 'utf-8');
+    expect(content).toContain('## Codebase Structure');
   });
 });
 
@@ -476,7 +469,7 @@ describe('saveGraphIndex', () => {
 // persistGraphArtifacts
 // ---------------------------------------------------------------------------
 describe('persistGraphArtifacts', () => {
-  it('writes graph.json, code-map skill, and index in one call', () => {
+  it('writes graph.json, code-map.md, and index in one call', () => {
     const dir = join(FIXTURES_DIR, 'persist-all');
     mkdirSync(dir, { recursive: true });
 
@@ -485,6 +478,6 @@ describe('persistGraphArtifacts', () => {
 
     expect(existsSync(join(dir, '.claude', 'graph.json'))).toBe(true);
     expect(existsSync(join(dir, '.claude', 'graph-index.json'))).toBe(true);
-    expect(existsSync(join(dir, '.claude', 'skills', 'code-map', 'skill.md'))).toBe(true);
+    expect(existsSync(join(dir, '.claude', 'code-map.md'))).toBe(true);
   });
 });

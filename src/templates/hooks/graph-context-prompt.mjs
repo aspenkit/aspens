@@ -380,8 +380,20 @@ async function main() {
       } catch { /* ignore */ }
     }
 
+    // Load code-map overview (already on disk, only read when we have a match)
+    let codeMap = '';
+    const codeMapPath = join(projectDir, '.claude', 'code-map.md');
+    if (existsSync(codeMapPath)) {
+      try {
+        codeMap = readFileSync(codeMapPath, 'utf-8');
+      } catch { /* ignore */ }
+    }
+
     // Emit graph context (injected into Claude's context via stdout)
-    const output = `<!-- graph-context -->\n${context}<!-- /graph-context -->\n`;
+    let output = '<!-- graph-context -->\n';
+    if (codeMap) output += codeMap;
+    output += context;
+    output += '<!-- /graph-context -->\n';
     process.stdout.write(output);
 
     process.stderr.write(`[Graph] Context: ${filePaths.length} files, ${neighborhood.neighbors.length} neighbors\n`);

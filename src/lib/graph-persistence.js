@@ -339,39 +339,28 @@ function shortPath(p) {
 }
 
 // ---------------------------------------------------------------------------
-// Code-map skill generation
+// Code-map generation — standalone overview, independent of skills
 // ---------------------------------------------------------------------------
 
-const MAX_SKILL_HUBS = 10;
-const MAX_SKILL_HOTSPOTS = 5;
+const CODE_MAP_PATH = '.claude/code-map.md';
+const MAX_MAP_HUBS = 10;
+const MAX_MAP_HOTSPOTS = 5;
 
 /**
- * Generate a static code-map skill.md from the serialized graph.
- * This skill provides Claude with a structural overview of the codebase
- * via the existing skill activation system — no hook needed.
+ * Generate a standalone code-map overview from the serialized graph.
+ * Written to .claude/code-map.md — loaded by the graph hook when it fires,
+ * independent of the skill activation system.
  *
  * @param {Object} serializedGraph - Output of serializeGraph()
- * @returns {string} Markdown content for code-map/skill.md
+ * @returns {string} Markdown content for code-map.md
  */
-export function generateCodeMapSkill(serializedGraph) {
-  const lines = [
-    '---',
-    'name: code-map',
-    'description: Import graph overview — hub files, domain clusters, and codebase structure',
-    '---',
-    '',
-    '## Activation',
-    '',
-    'This skill activates when navigating code, understanding file relationships, debugging, or exploring architecture.',
-    '',
-    '---',
-    '',
-  ];
+export function generateCodeMap(serializedGraph) {
+  const lines = ['## Codebase Structure\n'];
 
   // Hub files
   if (serializedGraph.hubs?.length > 0) {
-    lines.push('## Hub Files (most depended-on — prioritize reading these)');
-    for (const h of serializedGraph.hubs.slice(0, MAX_SKILL_HUBS)) {
+    lines.push('**Hub files (most depended-on — prioritize reading these):**');
+    for (const h of serializedGraph.hubs.slice(0, MAX_MAP_HUBS)) {
       const exports = (h.exports || []).slice(0, 6).join(', ');
       lines.push(`- \`${h.path}\` — ${h.fanIn} dependents${exports ? ' | exports: ' + exports : ''}`);
     }
@@ -382,7 +371,7 @@ export function generateCodeMapSkill(serializedGraph) {
   if (serializedGraph.clusters?.length > 0) {
     const multiFileClusters = serializedGraph.clusters.filter(c => c.size > 1);
     if (multiFileClusters.length > 0) {
-      lines.push('## Domain Clusters');
+      lines.push('**Domain clusters:**');
       for (const c of multiFileClusters) {
         const topFiles = c.files
           .filter(f => serializedGraph.files[f])
@@ -398,7 +387,7 @@ export function generateCodeMapSkill(serializedGraph) {
 
   // Cross-domain coupling
   if (serializedGraph.coupling?.length > 0) {
-    lines.push('## Cross-Domain Dependencies');
+    lines.push('**Cross-domain dependencies:**');
     for (const c of serializedGraph.coupling.slice(0, 5)) {
       lines.push(`- ${c.from} \u2192 ${c.to} (${c.edges} imports)`);
     }
@@ -407,29 +396,27 @@ export function generateCodeMapSkill(serializedGraph) {
 
   // Hotspots
   if (serializedGraph.hotspots?.length > 0) {
-    lines.push('## Hotspots (high churn — review carefully)');
-    for (const h of serializedGraph.hotspots.slice(0, MAX_SKILL_HOTSPOTS)) {
+    lines.push('**Hotspots (high churn):**');
+    for (const h of serializedGraph.hotspots.slice(0, MAX_MAP_HOTSPOTS)) {
       lines.push(`- \`${h.path}\` — ${h.churn} changes, ${h.lines} lines`);
     }
     lines.push('');
   }
 
-  // Stats
-  lines.push(`**Graph:** ${serializedGraph.meta.totalFiles} files, ${serializedGraph.meta.totalEdges} edges`);
-  lines.push(`**Last Updated:** ${serializedGraph.meta.generatedAt.split('T')[0]}`);
+  lines.push(`*${serializedGraph.meta.totalFiles} files, ${serializedGraph.meta.totalEdges} edges — updated ${serializedGraph.meta.generatedAt.split('T')[0]}*`);
   lines.push('');
 
   return lines.join('\n');
 }
 
 /**
- * Write the code-map skill to .claude/skills/code-map/skill.md.
+ * Write code-map to .claude/code-map.md.
  */
-export function writeCodeMapSkill(repoPath, serializedGraph) {
-  const content = generateCodeMapSkill(serializedGraph);
-  const skillDir = join(repoPath, '.claude', 'skills', 'code-map');
-  mkdirSync(skillDir, { recursive: true });
-  writeFileSync(join(skillDir, 'skill.md'), content);
+export function writeCodeMap(repoPath, serializedGraph) {
+  const content = generateCodeMap(serializedGraph);
+  const dir = join(repoPath, '.claude');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(repoPath, CODE_MAP_PATH), content);
 }
 
 // ---------------------------------------------------------------------------
@@ -483,12 +470,12 @@ export function saveGraphIndex(repoPath, index) {
 }
 
 /**
- * Convenience: persist graph, code-map skill, and index in one call.
+ * Convenience: persist graph, code-map, and index in one call.
  */
 export function persistGraphArtifacts(repoPath, rawGraph) {
   const serialized = serializeGraph(rawGraph, repoPath);
   saveGraph(repoPath, serialized);
-  writeCodeMapSkill(repoPath, serialized);
+  writeCodeMap(repoPath, serialized);
   const index = generateGraphIndex(serialized);
   saveGraphIndex(repoPath, index);
   return serialized;
