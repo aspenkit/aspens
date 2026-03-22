@@ -1,11 +1,12 @@
 import { resolve, join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles } from '../lib/skill-writer.js';
+import { installGitHook } from './doc-sync.js';
 
 // Read-only tools — Claude explores the repo itself
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
@@ -362,6 +363,23 @@ export async function docInitCommand(path, options) {
   }
 
   showTokenSummary(startTime);
+
+  // Offer auto-sync hook
+  if (options.hook !== false && !options.dryRun && existsSync(join(repoPath, '.git'))) {
+    const hookPath = join(repoPath, '.git', 'hooks', 'post-commit');
+    const hookInstalled = existsSync(hookPath) &&
+      readFileSync(hookPath, 'utf8').includes('aspens doc');
+    if (!hookInstalled) {
+      console.log();
+      const wantHook = await p.confirm({
+        message: 'Install post-commit hook to keep docs in sync automatically?',
+        initialValue: true,
+      });
+      if (!p.isCancel(wantHook) && wantHook) {
+        installGitHook(repoPath);
+      }
+    }
+  }
 
   console.log();
   p.outro(

@@ -99,6 +99,7 @@ doc
   .option('--strategy <strategy>', 'Existing docs: improve, rewrite, skip (skips interactive prompt)')
   .option('--domains <domains>', 'Additional domains to include (comma-separated, e.g., "backtest,advisory")')
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
+  .option('--no-hook', 'Skip post-commit hook prompt')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
   .action(docInitCommand);
 
@@ -108,6 +109,7 @@ doc
   .argument('[path]', 'Path to repo', '.')
   .option('--commits <n>', 'Number of commits to analyze', '1')
   .option('--install-hook', 'Install git post-commit hook')
+  .option('--remove-hook', 'Remove git post-commit hook')
   .option('--dry-run', 'Preview without writing files')
   .option('--timeout <seconds>', 'Claude timeout in seconds', '300')
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')

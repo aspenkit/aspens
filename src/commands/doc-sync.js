@@ -1,5 +1,5 @@
 import { resolve, join, relative } from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
@@ -15,9 +15,12 @@ export async function docSyncCommand(path, options) {
   const verbose = !!options.verbose;
   const commits = parseInt(options.commits) || 1;
 
-  // Install hook mode
+  // Install/remove hook mode
   if (options.installHook) {
     return installGitHook(repoPath);
+  }
+  if (options.removeHook) {
+    return removeGitHook(repoPath);
   }
 
   p.intro(pc.cyan('aspens doc sync'));
@@ -318,7 +321,18 @@ function mapChangesToSkills(changedFiles, existingSkills, scan) {
 
 // --- Git hook ---
 
-function installGitHook(repoPath) {
+function resolveAspensPath() {
+  try {
+    const resolved = execSync('which aspens', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    if (resolved && existsSync(resolved)) return resolved;
+  } catch { /* not in PATH */ }
+  return 'npx aspens';
+}
+
+export function installGitHook(repoPath) {
   const hookDir = join(repoPath, '.git', 'hooks');
   const hookPath = join(hookDir, 'post-commit');
 
@@ -329,48 +343,96 @@ function installGitHook(repoPath) {
 
   mkdirSync(hookDir, { recursive: true });
 
-  const hookCommand = `
-# aspens doc sync — auto-update skills after commit
-# Installed by: aspens doc sync --install-hook
+  const aspensCmd = resolveAspensPath();
 
-# Cooldown: skip if last sync was less than 5 minutes ago
-ASPENS_LOCK="/tmp/aspens-sync-\$(git rev-parse --show-toplevel | shasum | cut -c1-8).lock"
-if [ -f "\$ASPENS_LOCK" ]; then
-  LAST_RUN=\$(cat "\$ASPENS_LOCK" 2>/dev/null || echo 0)
-  NOW=\$(date +%s)
-  if [ \$((NOW - LAST_RUN)) -lt 300 ]; then
-    exit 0  # Too soon since last sync
+  const hookBlock = `
+# >>> aspens doc-sync hook (do not edit) >>>
+__aspens_doc_sync() {
+  REPO_ROOT="\$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+  REPO_HASH="\$(echo "\$REPO_ROOT" | shasum | cut -c1-8)"
+  ASPENS_LOCK="/tmp/aspens-sync-\${REPO_HASH}.lock"
+  ASPENS_LOG="/tmp/aspens-sync-\${REPO_HASH}.log"
+
+  # Cooldown: skip if last sync was less than 5 minutes ago
+  if [ -f "\$ASPENS_LOCK" ]; then
+    LAST_RUN=\$(cat "\$ASPENS_LOCK" 2>/dev/null || echo 0)
+    NOW=\$(date +%s)
+    if [ \$((NOW - LAST_RUN)) -lt 300 ]; then
+      return 0
+    fi
   fi
-fi
-echo \$(date +%s) > "\$ASPENS_LOCK"
+  echo \$(date +%s) > "\$ASPENS_LOCK"
 
-# Clean up stale lock files older than 1 hour
-find /tmp -maxdepth 1 -name "aspens-sync-*.lock" -mmin +60 -delete 2>/dev/null
+  # Clean up stale lock files older than 1 hour
+  find /tmp -maxdepth 1 -name "aspens-sync-*.lock" -mmin +60 -delete 2>/dev/null
 
-# Run in background so commit isn't blocked
-npx aspens doc sync --commits 1 "\$(git rev-parse --show-toplevel)" &
+  # Truncate log if over 200 lines
+  if [ -f "\$ASPENS_LOG" ] && [ "\$(wc -l < "\$ASPENS_LOG" 2>/dev/null || echo 0)" -gt 200 ]; then
+    tail -100 "\$ASPENS_LOG" > "\$ASPENS_LOG.tmp" && mv "\$ASPENS_LOG.tmp" "\$ASPENS_LOG"
+  fi
+
+  # Run in background with logging
+  (echo "[sync] \$(date '+%Y-%m-%d %H:%M:%S') started" >> "\$ASPENS_LOG" && ${aspensCmd} doc sync --commits 1 "\$REPO_ROOT" >> "\$ASPENS_LOG" 2>&1; echo "[sync] \$(date '+%Y-%m-%d %H:%M:%S') finished (exit \$?)" >> "\$ASPENS_LOG") &
+}
+__aspens_doc_sync
+# <<< aspens doc-sync hook <<<
 `;
-
-  const hookFull = `#!/bin/sh${hookCommand}`;
 
   // Check for existing hook
   if (existsSync(hookPath)) {
     const existing = readFileSync(hookPath, 'utf8');
-    if (existing.includes('aspens doc sync')) {
+    if (existing.includes('aspens doc-sync hook') || existing.includes('aspens doc sync')) {
       console.log(pc.yellow('\n  Hook already installed.\n'));
       return;
     }
-    // Append command to existing hook (without shebang)
-    writeFileSync(hookPath, existing + '\n' + hookCommand, 'utf8');
-    console.log(pc.green('\n  Appended aspens doc sync to existing post-commit hook.\n'));
+    // Append to existing hook (outside shebang)
+    writeFileSync(hookPath, existing + '\n' + hookBlock, 'utf8');
+    console.log(pc.green('\n  Appended aspens doc-sync to existing post-commit hook.\n'));
   } else {
-    writeFileSync(hookPath, hookFull, 'utf8');
+    writeFileSync(hookPath, '#!/bin/sh\n' + hookBlock, 'utf8');
     execSync(`chmod +x "${hookPath}"`);
     console.log(pc.green('\n  Installed post-commit hook.\n'));
   }
 
   console.log(pc.dim('  Skills will auto-update after every commit.'));
-  console.log(pc.dim('  Remove with: rm .git/hooks/post-commit\n'));
+  console.log(pc.dim('  Log: /tmp/aspens-sync-*.log'));
+  console.log(pc.dim('  Remove with: aspens doc sync --remove-hook\n'));
+}
+
+export function removeGitHook(repoPath) {
+  const hookPath = join(repoPath, '.git', 'hooks', 'post-commit');
+
+  if (!existsSync(hookPath)) {
+    console.log(pc.yellow('\n  No post-commit hook found.\n'));
+    return;
+  }
+
+  const content = readFileSync(hookPath, 'utf8');
+  const hasMarkers = content.includes('# >>> aspens doc-sync hook');
+  const hasLegacy = !hasMarkers && content.includes('aspens doc sync');
+
+  if (!hasMarkers && !hasLegacy) {
+    console.log(pc.yellow('\n  Post-commit hook does not contain aspens.\n'));
+    return;
+  }
+
+  if (hasMarkers) {
+    const cleaned = content
+      .replace(/\n?# >>> aspens doc-sync hook \(do not edit\) >>>[\s\S]*?# <<< aspens doc-sync hook <<<\n?/, '')
+      .trim();
+
+    if (!cleaned || cleaned === '#!/bin/sh') {
+      unlinkSync(hookPath);
+      console.log(pc.green('\n  Removed post-commit hook.\n'));
+    } else {
+      writeFileSync(hookPath, cleaned + '\n', 'utf8');
+      console.log(pc.green('\n  Removed aspens doc-sync from post-commit hook.\n'));
+    }
+  } else {
+    console.log(pc.yellow('\n  Legacy aspens hook detected (no removal markers).'));
+    console.log(pc.dim('  Re-install first: aspens doc sync --install-hook'));
+    console.log(pc.dim('  Or edit manually: .git/hooks/post-commit\n'));
+  }
 }
 
 // --- Helpers ---
