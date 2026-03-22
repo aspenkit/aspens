@@ -28,7 +28,7 @@ function showWelcome() {
 
   ${pc.bold('Quick Start')}
     ${pc.green('aspens scan')}                       See your repo's tech stack and domains
-    ${pc.green('aspens doc init')}                   Generate skills + CLAUDE.md
+    ${pc.green('aspens doc init')}                   Generate skills + hooks + CLAUDE.md
     ${pc.green('aspens doc sync --install-hook')}    Auto-update on every commit
 
   ${pc.bold('Generate & Sync')}
@@ -52,6 +52,7 @@ function showWelcome() {
     ${pc.yellow('--force')}            Overwrite existing files     ${pc.yellow('--model')} ${pc.dim('<m>')}   Choose Claude model
     ${pc.yellow('--mode')} ${pc.dim('<mode>')}       all, chunked, base-only     ${pc.yellow('--timeout')} ${pc.dim('<s>')}  Seconds per call
     ${pc.yellow('--strategy')} ${pc.dim('<s>')}    improve, rewrite, skip      ${pc.yellow('--json')}      JSON output (scan)
+    ${pc.yellow('--no-hooks')}         Skip hook installation       ${pc.yellow('--hooks-only')}  Update hooks only
 
   ${pc.bold('Typical Workflow')}
     ${pc.dim('$')} aspens scan                              ${pc.dim('1. See what\'s in your repo')}
@@ -100,6 +101,8 @@ doc
   .option('--domains <domains>', 'Additional domains to include (comma-separated, e.g., "backtest,advisory")')
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
+  .option('--no-hooks', 'Skip hook/rules/settings installation')
+  .option('--hooks-only', 'Skip skill generation, just install/update hooks')
   .action(docInitCommand);
 
 doc

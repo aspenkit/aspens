@@ -159,20 +159,64 @@ export function loadPrompt(name, vars = {}) {
 export function parseFileOutput(output) {
   let files = [];
 
-  // Primary: XML tags — <file path="...">content</file>
-  // Unambiguous, handles code blocks inside content
-  const xmlPattern = /<file\s+path=["'](.+?)["']>\n?([\s\S]*?)<\/file>/g;
-  let match;
-  while ((match = xmlPattern.exec(output)) !== null) {
-    const filePath = sanitizePath(match[1].trim());
-    if (filePath) {
-      files.push({ path: filePath, content: match[2].trim() + '\n' });
+  // Primary: Split on <file path="..."> tags and match to next </file> outside code fences.
+  // Strategy: find all </file> positions that are NOT inside ``` fenced code blocks,
+  // then match each <file> open tag to the nearest valid </file>.
+  const openTagPattern = /<file\s+path=["'](.+?)["']>/g;
+
+  // Pre-compute which character positions are inside fenced code blocks
+  const fenceRanges = [];
+  const fenceRegex = /^```[^\n]*\n[\s\S]*?\n```/gm;
+  let fm;
+  while ((fm = fenceRegex.exec(output)) !== null) {
+    fenceRanges.push([fm.index, fm.index + fm[0].length]);
+  }
+  function isInsideFence(pos) {
+    for (const [start, end] of fenceRanges) {
+      if (pos >= start && pos < end) return true;
+    }
+    return false;
+  }
+
+  // Find all valid </file> positions (at line start, outside code fences)
+  const closePositions = [];
+  const closeRegex = /\n<\/file>/g;
+  let cm;
+  while ((cm = closeRegex.exec(output)) !== null) {
+    if (!isInsideFence(cm.index)) {
+      closePositions.push(cm.index);
     }
   }
 
-  // Fallback 1: HTML comment markers with content between them
+  let openMatch;
+  while ((openMatch = openTagPattern.exec(output)) !== null) {
+    const filePath = sanitizePath(openMatch[1].trim());
+    if (!filePath) continue;
+
+    const contentStart = openMatch.index + openMatch[0].length;
+
+    // Find the first valid </file> AFTER this open tag
+    const closePos = closePositions.find(p => p >= contentStart);
+
+    let content;
+    if (closePos !== undefined) {
+      content = output.slice(contentStart, closePos).trim() + '\n';
+      // Advance past this </file> tag
+      openTagPattern.lastIndex = closePos + '\n</file>'.length;
+    } else {
+      // No valid closing tag — take up to next <file or end (don't eat next file)
+      const remaining = output.slice(contentStart);
+      const nextOpen = remaining.match(/<file\s+path=/);
+      content = (nextOpen ? remaining.slice(0, nextOpen.index) : remaining).trim() + '\n';
+    }
+
+    files.push({ path: filePath, content });
+  }
+
+  // Fallback: HTML comment markers with content between them
   if (files.length === 0) {
     const commentPattern = /<!--\s*file:\s*(.+?)\s*-->\s*\n([\s\S]*?)(?=<!--\s*file:|<file\s|$)/g;
+    let match;
     while ((match = commentPattern.exec(output)) !== null) {
       const filePath = sanitizePath(match[1].trim());
       const content = match[2].trim() + '\n';
@@ -183,6 +227,59 @@ export function parseFileOutput(output) {
   }
 
   return files;
+}
+
+/**
+ * Validate generated skill files for common issues.
+ * Returns { valid: true } or { valid: false, issues: [...] }
+ */
+export function validateSkillFiles(files, repoPath) {
+  const issues = [];
+
+  for (const file of files) {
+    const { path: filePath, content } = file;
+
+    // Check for truncated content (likely XML parser collision)
+    // Only flag <file path="..."> as a raw tag — ignore mentions inside backticks/code blocks
+    const hasRawFileTag = content.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '').match(/<file\s+path=/);
+    if (content.endsWith('<\n') || content.endsWith('`<\n') || hasRawFileTag) {
+      issues.push({ file: filePath, issue: 'truncated', detail: 'Content appears truncated — likely XML tag collision' });
+    }
+
+    // Check skills have required sections
+    if (filePath.includes('/skills/') && filePath.endsWith('.md')) {
+      const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+      if (!frontmatterMatch || !frontmatterMatch[1].includes('name:')) {
+        issues.push({ file: filePath, issue: 'missing-frontmatter', detail: 'Missing YAML frontmatter (name, description)' });
+      }
+
+      // Check for at least some content beyond frontmatter
+      const fmEnd = content.match(/^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n/);
+      const contentAfterFrontmatter = fmEnd ? content.slice(fmEnd[0].length).trim() : content.trim();
+      if (contentAfterFrontmatter.length < 50) {
+        issues.push({ file: filePath, issue: 'too-short', detail: 'Skill content is too short (< 50 chars after frontmatter)' });
+      }
+    }
+
+    // Validate referenced file paths exist (check paths in backticks)
+    if (repoPath && filePath.includes('/skills/')) {
+      const referencedPaths = [...content.matchAll(/`([^`]+\.[a-z]{1,8})`/g)]
+        .map(m => m[1])
+        .filter(p => p.startsWith('src/') || p.startsWith('bin/') || p.startsWith('tests/') || p.startsWith('app/'));
+
+      for (const refPath of referencedPaths) {
+        // Skip glob patterns and path traversal
+        if (refPath.includes('*') || refPath.includes('?') || refPath.includes('..')) continue;
+        const resolved = join(repoPath, refPath);
+        if (!resolved.startsWith(repoPath)) continue;
+        if (!existsSync(resolved)) {
+          issues.push({ file: filePath, issue: 'bad-path', detail: `Referenced path \`${refPath}\` does not exist` });
+        }
+      }
+    }
+  }
+
+  return { valid: issues.length === 0, issues };
 }
 
 /**

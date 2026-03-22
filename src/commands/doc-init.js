@@ -1,11 +1,15 @@
-import { resolve, join } from 'path';
-import { existsSync } from 'fs';
+import { resolve, join, dirname } from 'path';
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync } from 'fs';
+import { fileURLToPath } from 'url';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
-import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
-import { writeSkillFiles } from '../lib/skill-writer.js';
+import { runClaude, loadPrompt, parseFileOutput, validateSkillFiles } from '../lib/runner.js';
+import { writeSkillFiles, extractRulesFromSkills, generateDomainPatterns, mergeSettings } from '../lib/skill-writer.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const TEMPLATES_DIR = join(__dirname, '..', 'templates');
 
 // Read-only tools — Claude explores the repo itself
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
@@ -47,6 +51,19 @@ export async function docInitCommand(path, options) {
   const repoPath = resolve(path);
   const verbose = !!options.verbose;
   const model = options.model || null;
+
+  // --hooks-only: skip skill generation, just install/update hooks
+  if (options.hooksOnly) {
+    p.intro(pc.cyan('aspens doc init --hooks-only'));
+    const skillsDir = join(repoPath, '.claude', 'skills');
+    if (!existsSync(skillsDir)) {
+      p.log.error('No skills found in .claude/skills/. Run `aspens doc init` first.');
+      process.exit(1);
+    }
+    await installHooks(repoPath, options);
+    p.outro(pc.green('Hooks updated'));
+    return;
+  }
 
   // Reset token tracker for this run
   const startTime = Date.now();
@@ -293,7 +310,7 @@ export async function docInitCommand(path, options) {
     }
   }
 
-  // Step 4: Generate (Layer 3) — write skills from findings
+  // Step 5: Generate skills
   let allFiles = [];
 
   if (mode === 'all-at-once') {
@@ -310,11 +327,38 @@ export async function docInitCommand(path, options) {
     process.exit(1);
   }
 
-  // Step 4: Show what will be written
+  // Step 6: Validate generated files
+  let validation = { valid: true, issues: [] };
+  try {
+    validation = validateSkillFiles(allFiles, repoPath);
+  } catch (err) {
+    p.log.warn(`Validation failed: ${err.message}`);
+  }
+
+  if (!validation.valid) {
+    console.log();
+    p.log.warn(`Found ${validation.issues.length} issue(s) in generated skills:`);
+    for (const issue of validation.issues) {
+      const icon = issue.issue === 'bad-path' ? pc.yellow('?') : pc.red('!');
+      console.log(pc.dim('  ') + `${icon} ${pc.dim(issue.file)} — ${issue.detail}`);
+    }
+
+    // Filter out truncated files — they'd be useless
+    const truncated = validation.issues.filter(i => i.issue === 'truncated').map(i => i.file);
+    if (truncated.length > 0) {
+      allFiles = allFiles.filter(f => !truncated.includes(f.path));
+      p.log.warn(`Removed ${truncated.length} truncated file(s). Re-run to regenerate them.`);
+    }
+    console.log();
+  }
+
+  // Step 7: Show what will be written
   console.log();
   p.log.info('Files to write:');
   for (const file of allFiles) {
-    console.log(pc.dim('  ') + pc.green(file.path));
+    const hasIssues = validation.issues?.some(i => i.file === file.path) ?? false;
+    const icon = hasIssues ? pc.yellow('~') : pc.green('+');
+    console.log(pc.dim('  ') + icon + ' ' + file.path);
   }
   console.log();
 
@@ -341,7 +385,7 @@ export async function docInitCommand(path, options) {
     process.exit(0);
   }
 
-  // Step 5: Write files
+  // Step 8: Write files
   const writeSpinner = p.spinner();
   writeSpinner.start('Writing files...');
   const results = writeSkillFiles(repoPath, allFiles, { force: options.force });
@@ -359,6 +403,11 @@ export async function docInitCommand(path, options) {
       : pc.dim('-');
     const status = result.status === 'skipped' ? pc.dim(` (${result.reason})`) : '';
     console.log(`  ${icon} ${result.path}${status}`);
+  }
+
+  // Step 9: Generate skill-rules.json + install hooks (unless --no-hooks)
+  if (!options.noHooks) {
+    await installHooks(repoPath, options);
   }
 
   showTokenSummary(startTime);
@@ -390,6 +439,136 @@ function showTokenSummary(startTime) {
     parts.push(timeStr);
     console.log();
     console.log(pc.dim(`  ${parts.join(' | ')}`));
+  }
+}
+
+// --- Hook installation ---
+
+async function installHooks(repoPath, options) {
+  const skillsDir = join(repoPath, '.claude', 'skills');
+  const hooksDir = join(repoPath, '.claude', 'hooks');
+  const settingsPath = join(repoPath, '.claude', 'settings.json');
+
+  if (!existsSync(skillsDir)) {
+    p.log.warn('No skills directory found — skipping hook installation.');
+    return;
+  }
+
+  const hookSpinner = p.spinner();
+  hookSpinner.start('Installing skill activation hooks...');
+
+  try {
+    // 9a: Generate skill-rules.json
+    const rules = extractRulesFromSkills(skillsDir);
+    const skillCount = Object.keys(rules.skills).length;
+
+    if (skillCount === 0) {
+      hookSpinner.stop(pc.dim('No skills found — skipping hooks'));
+      return;
+    }
+
+    const rulesPath = join(skillsDir, 'skill-rules.json');
+
+    if (!options.dryRun) {
+      writeFileSync(rulesPath, JSON.stringify(rules, null, 2) + '\n');
+    }
+
+    // 9b: Copy hook files
+    mkdirSync(hooksDir, { recursive: true });
+
+    const hookFiles = [
+      { src: 'hooks/skill-activation-prompt.sh', dest: 'skill-activation-prompt.sh', chmod: true },
+      { src: 'hooks/skill-activation-prompt.mjs', dest: 'skill-activation-prompt.mjs', chmod: false },
+    ];
+
+    for (const hf of hookFiles) {
+      const srcPath = join(TEMPLATES_DIR, hf.src);
+      const destPath = join(hooksDir, hf.dest);
+      if (!existsSync(srcPath)) {
+        p.log.warn(`Template not found: ${hf.src}`);
+        continue;
+      }
+      if (!options.dryRun) {
+        copyFileSync(srcPath, destPath);
+        if (hf.chmod) {
+          chmodSync(destPath, 0o755);
+        }
+      }
+    }
+
+    // 9c: Generate post-tool-use-tracker with domain patterns
+    const trackerSrc = join(TEMPLATES_DIR, 'hooks', 'post-tool-use-tracker.sh');
+    const trackerDest = join(hooksDir, 'post-tool-use-tracker.sh');
+    if (existsSync(trackerSrc)) {
+      let trackerContent = readFileSync(trackerSrc, 'utf8');
+
+      // Inject generated domain patterns into detect_skill_domain()
+      const domainPatterns = generateDomainPatterns(rules);
+      // Replace the stub function with the generated one
+      const stubRegex = /detect_skill_domain\(\)\s*\{[\s\S]*?\n\}/;
+      if (stubRegex.test(trackerContent)) {
+        trackerContent = trackerContent.replace(stubRegex, domainPatterns.trim());
+      }
+
+      if (!options.dryRun) {
+        writeFileSync(trackerDest, trackerContent);
+        chmodSync(trackerDest, 0o755);
+      }
+    }
+
+    // 9d: Merge settings.json
+    let templateSettings;
+    try {
+      templateSettings = JSON.parse(
+        readFileSync(join(TEMPLATES_DIR, 'settings', 'settings.json'), 'utf8')
+      );
+    } catch (err) {
+      hookSpinner.stop(pc.yellow('Hook installation incomplete'));
+      p.log.warn(`Could not read template settings: ${err.message}`);
+      return;
+    }
+
+    let existingSettings = null;
+    if (existsSync(settingsPath)) {
+      try {
+        existingSettings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+        // Backup existing settings
+        if (!options.dryRun) {
+          writeFileSync(settingsPath + '.bak', JSON.stringify(existingSettings, null, 2) + '\n');
+        }
+      } catch {
+        // Existing settings malformed — overwrite
+      }
+    }
+
+    const merged = mergeSettings(existingSettings, templateSettings);
+
+    if (!options.dryRun) {
+      mkdirSync(dirname(settingsPath), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify(merged, null, 2) + '\n');
+    }
+
+    hookSpinner.stop(pc.green(`Hooks installed (${skillCount} skills in rules)`));
+
+    // Show what was done
+    console.log();
+    const items = [
+      `${pc.green('+')} .claude/skills/skill-rules.json ${pc.dim(`(${skillCount} skills)`)}`,
+      `${pc.green('+')} .claude/hooks/skill-activation-prompt.sh`,
+      `${pc.green('+')} .claude/hooks/skill-activation-prompt.mjs`,
+      `${pc.green('+')} .claude/hooks/post-tool-use-tracker.sh ${pc.dim('(with domain patterns)')}`,
+      `${existingSettings ? pc.yellow('~') : pc.green('+')} .claude/settings.json ${pc.dim(existingSettings ? '(merged)' : '(created)')}`,
+    ];
+    for (const item of items) {
+      console.log(`  ${item}`);
+    }
+    if (existingSettings && !options.dryRun) {
+      console.log(pc.dim('  Backup: .claude/settings.json.bak'));
+    }
+    console.log();
+  } catch (err) {
+    hookSpinner.stop(pc.red('Hook installation failed'));
+    p.log.error(err.message);
   }
 }
 
