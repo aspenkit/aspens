@@ -399,7 +399,7 @@ __aspens_doc_sync
   console.log(pc.dim('  Remove with: aspens doc sync --remove-hook\n'));
 }
 
-function removeGitHook(repoPath) {
+export function removeGitHook(repoPath) {
   const hookPath = join(repoPath, '.git', 'hooks', 'post-commit');
 
   if (!existsSync(hookPath)) {
