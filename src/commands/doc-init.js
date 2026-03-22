@@ -494,7 +494,9 @@ async function installHooks(repoPath, options) {
     }
 
     // 9b: Copy hook files
-    mkdirSync(hooksDir, { recursive: true });
+    if (!options.dryRun) {
+      mkdirSync(hooksDir, { recursive: true });
+    }
 
     const hookFiles = [
       { src: 'hooks/skill-activation-prompt.sh', dest: 'skill-activation-prompt.sh', chmod: true },

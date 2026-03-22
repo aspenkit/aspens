@@ -322,8 +322,9 @@ function mapChangesToSkills(changedFiles, existingSkills, scan) {
 // --- Git hook ---
 
 function resolveAspensPath() {
+  const cmd = process.platform === 'win32' ? 'where aspens' : 'which aspens';
   try {
-    const resolved = execSync('which aspens', {
+    const resolved = execSync(cmd, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
@@ -349,7 +350,7 @@ export function installGitHook(repoPath) {
 # >>> aspens doc-sync hook (do not edit) >>>
 __aspens_doc_sync() {
   REPO_ROOT="\$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
-  REPO_HASH="\$(echo "\$REPO_ROOT" | shasum | cut -c1-8)"
+  REPO_HASH="\$(echo "\$REPO_ROOT" | (shasum 2>/dev/null || sha1sum 2>/dev/null || md5sum 2>/dev/null) | cut -c1-8)"
   ASPENS_LOCK="/tmp/aspens-sync-\${REPO_HASH}.lock"
   ASPENS_LOG="/tmp/aspens-sync-\${REPO_HASH}.log"
 

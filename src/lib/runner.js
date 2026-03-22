@@ -261,6 +261,16 @@ export function validateSkillFiles(files, repoPath) {
       if (contentAfterFrontmatter.length < 50) {
         issues.push({ file: filePath, issue: 'too-short', detail: 'Skill content is too short (< 50 chars after frontmatter)' });
       }
+
+      // Validate required sections for domain skills (not base)
+      const isBase = contentAfterFrontmatter.includes('**base skill**');
+      if (!isBase) {
+        const requiredSections = ['Activation', 'Key Files', 'Key Concepts', 'Critical Rules'];
+        const missing = requiredSections.filter(s => !new RegExp(`^#+\\s*${s}\\b`, 'm').test(contentAfterFrontmatter));
+        if (missing.length > 0) {
+          issues.push({ file: filePath, issue: 'missing-sections', detail: `Missing sections: ${missing.join(', ')}` });
+        }
+      }
     }
 
     // Validate referenced file paths exist (check paths in backticks)

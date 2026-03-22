@@ -14,7 +14,7 @@
  */
 
 import { readFileSync, existsSync, writeFileSync } from 'fs';
-import { join, basename, resolve } from 'path';
+import { join, basename, resolve, relative } from 'path';
 import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { tmpdir } from 'os';
@@ -45,8 +45,9 @@ export function readSkillContent(projectDir, skillName) {
   ];
 
   for (const candidate of possiblePaths) {
-    // Verify resolved path stays within skills directory (use sep to prevent prefix attacks)
-    if (!candidate.startsWith(skillsRoot + '/') && candidate !== skillsRoot) continue;
+    // Verify resolved path stays within skills directory
+    const rel = relative(skillsRoot, candidate);
+    if (rel.startsWith('..') || resolve(rel) === rel) continue;
     if (existsSync(candidate)) {
       try {
         return readFileSync(candidate, 'utf-8');
@@ -91,7 +92,7 @@ export function detectCurrentRepo(projectDir) {
  * @param {string} projectDir - Absolute path to the project root
  * @returns {string[]} Array of active skill names
  */
-export function getSessionActiveSkills(projectDir) {
+export function getSessionActiveSkills(projectDir, currentRepo) {
   try {
     const hash = createHash('md5').update(projectDir).digest('hex');
     const sessionFile = join(tmpdir(), `claude-skills-${hash}.json`);
@@ -99,6 +100,10 @@ export function getSessionActiveSkills(projectDir) {
     if (existsSync(sessionFile)) {
       const content = readFileSync(sessionFile, 'utf-8');
       const session = JSON.parse(content);
+      // Only return skills if session repo matches current repo
+      if (currentRepo && session.repo && session.repo !== currentRepo) {
+        return [];
+      }
       return session.active_skills || [];
     }
   } catch {
@@ -319,7 +324,7 @@ async function main() {
     const currentRepo = detectCurrentRepo(projectDir);
 
     // Get session-sticky skills
-    const sessionSkills = getSessionActiveSkills(projectDir);
+    const sessionSkills = getSessionActiveSkills(projectDir, currentRepo);
 
     // Match skills against the prompt
     const matched = matchSkills(prompt, rules, currentRepo, sessionSkills);

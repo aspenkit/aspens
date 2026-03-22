@@ -240,7 +240,7 @@ detect_skill_domain() {
 get_session_file() {
     local project_dir="$1"
     local hash=$(echo -n "$project_dir" | md5 2>/dev/null || echo -n "$project_dir" | md5sum | cut -d' ' -f1)
-    echo "/tmp/claude-skills-${hash}.json"
+    echo "${TMPDIR:-/tmp}/claude-skills-${hash}.json"
 }
 
 # Add skill to session state
