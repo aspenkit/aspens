@@ -303,6 +303,7 @@ function getGitLog(repoPath) {
     return execSync('git log --oneline -20', {
       cwd: repoPath,
       encoding: 'utf8',
+      timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
   } catch {

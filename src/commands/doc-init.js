@@ -7,15 +7,15 @@ import { buildRepoGraph } from '../lib/graph-builder.js';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles } from '../lib/skill-writer.js';
 import { installGitHook } from './doc-sync.js';
+import { CliError } from '../lib/errors.js';
 
 // Read-only tools — Claude explores the repo itself
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 // Auto-scale timeout based on repo size
 function autoTimeout(scan, userTimeout) {
-  if (userTimeout) {
-    const parsed = parseInt(userTimeout) * 1000;
-    if (!isNaN(parsed) && parsed > 0) return parsed;
+  if (typeof userTimeout === 'number' && userTimeout > 0) {
+    return userTimeout * 1000;
   }
   const defaults = { 'small': 120000, 'medium': 300000, 'large': 600000, 'very-large': 900000 };
   return defaults[scan.size?.category] || 300000;
@@ -207,8 +207,7 @@ export async function docInitCommand(path, options) {
     const strategyMap = { 'improve': 'improve', 'rewrite': 'rewrite', 'skip': 'skip-existing' };
     existingDocsStrategy = strategyMap[options.strategy] || options.strategy;
     if (!['improve', 'rewrite', 'skip-existing', 'fresh'].includes(existingDocsStrategy)) {
-      p.log.error(`Unknown strategy: ${options.strategy}. Use: improve, rewrite, or skip`);
-      process.exit(1);
+      throw new CliError(`Unknown strategy: ${options.strategy}. Use: improve, rewrite, or skip`);
     }
   } else if ((scan.hasClaudeConfig || scan.hasClaudeMd) && !options.force) {
     const strategy = await p.select({
@@ -222,7 +221,7 @@ export async function docInitCommand(path, options) {
 
     if (p.isCancel(strategy)) {
       p.cancel('Aborted');
-      process.exit(0);
+      return;
     }
     existingDocsStrategy = strategy;
 
@@ -240,8 +239,7 @@ export async function docInitCommand(path, options) {
     const modeMap = { 'all': 'all-at-once', 'chunked': 'chunked', 'base-only': 'base-only' };
     mode = modeMap[options.mode] || options.mode;
     if (!['all-at-once', 'chunked', 'base-only'].includes(mode)) {
-      p.log.error(`Unknown mode: ${options.mode}. Use: all, chunked, or base-only`);
-      process.exit(1);
+      throw new CliError(`Unknown mode: ${options.mode}. Use: all, chunked, or base-only`);
     }
   } else if (effectiveDomains.length === 0) {
     p.log.info('No domains detected — generating base skill only.');
@@ -270,7 +268,7 @@ export async function docInitCommand(path, options) {
 
     if (p.isCancel(modeChoice)) {
       p.cancel('Aborted');
-      process.exit(0);
+      return;
     }
     mode = modeChoice;
 
@@ -287,7 +285,7 @@ export async function docInitCommand(path, options) {
 
       if (p.isCancel(picked)) {
         p.cancel('Aborted');
-        process.exit(0);
+        return;
       }
       selectedDomains = effectiveDomains.filter(d => picked.includes(d.name));
       mode = 'chunked';
@@ -304,11 +302,10 @@ export async function docInitCommand(path, options) {
   }
 
   if (allFiles.length === 0) {
-    p.log.error('No skill files generated.');
     if (tokenTracker.calls > 0) {
       console.log(pc.dim(`  ${tokenTracker.calls} Claude call(s) made, but no parseable output.`));
     }
-    process.exit(1);
+    throw new CliError('No skill files generated.', { logged: true });
   }
 
   // Step 4: Show what will be written
@@ -339,7 +336,7 @@ export async function docInitCommand(path, options) {
 
   if (p.isCancel(proceed) || !proceed) {
     p.cancel('Aborted');
-    process.exit(0);
+    return;
   }
 
   // Step 5: Write files
@@ -536,7 +533,7 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
       initialValue: true,
     });
     if (p.isCancel(retry) || !retry) {
-      process.exit(1);
+      throw new CliError('Generation failed.', { logged: true });
     }
     return generateChunked(repoPath, scan, repoGraph, selectedDomains, false, timeoutMs, strategy, verbose, model, findings);
   }
