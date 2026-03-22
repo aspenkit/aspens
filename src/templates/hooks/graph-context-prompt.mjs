@@ -66,12 +66,13 @@ export function matchPromptAgainstIndex(prompt, index) {
     matches.add(candidate);
   }
 
-  // Tier 2: Bare filenames matching hub basenames
+  // Tier 2: Bare filenames matching hub basenames (index values are arrays)
   const bareRe = /\b([\w.-]+\.(js|ts|tsx|jsx|py|go|rs|rb))\b/g;
   while ((m = bareRe.exec(prompt)) !== null) {
     const filename = m[1];
-    if (index.hubBasenames[filename]) {
-      matches.add(index.hubBasenames[filename]);
+    const hubPaths = index.hubBasenames[filename];
+    if (hubPaths) {
+      for (const p of (Array.isArray(hubPaths) ? hubPaths : [hubPaths])) matches.add(p);
     }
   }
 
@@ -80,8 +81,9 @@ export function matchPromptAgainstIndex(prompt, index) {
   const codeIdentRe = /`(\w{3,})`|\b([a-z]+[A-Z]\w*|[A-Z][a-z]+[A-Z]\w*|\w+_\w+)\b/g;
   while ((m = codeIdentRe.exec(prompt)) !== null) {
     const word = m[1] || m[2]; // m[1] = backtick-wrapped, m[2] = code-shaped
-    if (word && index.exports[word]) {
-      matches.add(index.exports[word]);
+    const exportPaths = word && index.exports[word];
+    if (exportPaths) {
+      for (const p of (Array.isArray(exportPaths) ? exportPaths : [exportPaths])) matches.add(p);
     }
   }
 

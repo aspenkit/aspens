@@ -98,7 +98,13 @@ export function loadGraph(repoPath) {
   const fullPath = join(repoPath, GRAPH_PATH);
   if (!existsSync(fullPath)) return null;
   try {
-    return JSON.parse(readFileSync(fullPath, 'utf-8'));
+    const parsed = JSON.parse(readFileSync(fullPath, 'utf-8'));
+    // Minimal structure validation
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed.files || typeof parsed.files !== 'object') return null;
+    if (!Array.isArray(parsed.hubs)) return null;
+    if (!Array.isArray(parsed.clusters)) return null;
+    return parsed;
   } catch {
     return null;
   }
@@ -184,6 +190,9 @@ const MAX_HOTSPOTS = 3;
 /**
  * Extract the neighborhood of mentioned files from the graph.
  * Returns: mentioned files + 1-hop neighbors, relevant hubs, hotspots, cluster info.
+ *
+ * Note: this logic is mirrored in graph-context-prompt.mjs::buildNeighborhood
+ * (the hook is standalone with no aspens imports). Keep both in sync.
  */
 export function extractSubgraph(graph, filePaths) {
   if (!filePaths || filePaths.length === 0) {
@@ -433,22 +442,30 @@ const INDEX_PATH = '.claude/graph-index.json';
  * @returns {Object} The index object
  */
 export function generateGraphIndex(serializedGraph) {
-  // Export name → file path (inverted index)
+  // Export name → file paths (inverted index, array to handle duplicates)
   const exports = {};
   for (const [path, info] of Object.entries(serializedGraph.files)) {
     for (const exp of (info.exports || [])) {
       // Skip very short or generic exports (1-2 chars like 'x', 'a')
       if (exp.length > 2) {
-        exports[exp] = path;
+        if (!exports[exp]) {
+          exports[exp] = [path];
+        } else {
+          exports[exp].push(path);
+        }
       }
     }
   }
 
-  // Hub basenames → full path
+  // Hub basenames → full paths (array to handle duplicates like src/utils.js + lib/utils.js)
   const hubBasenames = {};
   for (const h of (serializedGraph.hubs || [])) {
     const basename = h.path.split('/').pop();
-    hubBasenames[basename] = h.path;
+    if (!hubBasenames[basename]) {
+      hubBasenames[basename] = [h.path];
+    } else {
+      hubBasenames[basename].push(h.path);
+    }
   }
 
   // Cluster labels

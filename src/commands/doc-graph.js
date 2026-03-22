@@ -25,7 +25,12 @@ export async function docGraphCommand(path, options) {
     throw new CliError(`Failed to build import graph: ${err.message}`);
   }
 
-  persistGraphArtifacts(repoPath, repoGraph);
+  try {
+    persistGraphArtifacts(repoPath, repoGraph);
+  } catch (err) {
+    spinner.stop(pc.red('Failed to save graph'));
+    throw new CliError(`Failed to persist graph artifacts: ${err.message}`);
+  }
 
   spinner.stop(pc.green('Graph saved'));
 

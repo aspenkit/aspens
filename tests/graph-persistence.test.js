@@ -416,15 +416,15 @@ describe('writeCodeMap', () => {
 describe('generateGraphIndex', () => {
   const graph = serializeGraph(makeRawGraph(), FIXTURES_DIR);
 
-  it('builds export name index', () => {
+  it('builds export name index as arrays', () => {
     const index = generateGraphIndex(graph);
-    expect(index.exports.scanRepo).toBe('src/lib/scanner.js');
-    expect(index.exports.buildRepoGraph).toBe('src/lib/graph-builder.js');
+    expect(index.exports.scanRepo).toEqual(['src/lib/scanner.js']);
+    expect(index.exports.buildRepoGraph).toEqual(['src/lib/graph-builder.js']);
   });
 
-  it('builds hub basenames index', () => {
+  it('builds hub basenames index as arrays', () => {
     const index = generateGraphIndex(graph);
-    expect(index.hubBasenames['scanner.js']).toBe('src/lib/scanner.js');
+    expect(index.hubBasenames['scanner.js']).toEqual(['src/lib/scanner.js']);
   });
 
   it('includes cluster labels', () => {
@@ -459,7 +459,7 @@ describe('saveGraphIndex', () => {
     expect(existsSync(indexPath)).toBe(true);
 
     const loaded = JSON.parse(readFileSync(indexPath, 'utf-8'));
-    expect(loaded.exports.scanRepo).toBe('src/lib/scanner.js');
+    expect(loaded.exports.scanRepo).toEqual(['src/lib/scanner.js']);
     expect(loaded.hubBasenames).toBeDefined();
     expect(loaded.clusterLabels).toBeDefined();
   });
