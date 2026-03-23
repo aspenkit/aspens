@@ -81,7 +81,11 @@ export function runClaude(prompt, options = {}) {
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
+      if (process.platform === 'win32' && child.pid) {
+        try { execSync(`taskkill /pid ${child.pid} /t /f`, { stdio: 'ignore' }); } catch { /* ignore */ }
+      } else {
+        child.kill('SIGTERM');
+      }
     }, timeout);
 
     child.on('close', (code, signal) => {

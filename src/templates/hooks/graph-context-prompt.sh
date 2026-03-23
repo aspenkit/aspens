@@ -50,7 +50,7 @@ STDOUT_FILE=$(mktemp)
 STDERR_FILE=$(mktemp)
 trap 'rm -f "$STDOUT_FILE" "$STDERR_FILE"' EXIT
 
-printf '%s' "$INPUT" | NODE_NO_WARNINGS=1 timeout 5s node graph-context-prompt.mjs \
+printf '%s' "$INPUT" | NODE_NO_WARNINGS=1 node graph-context-prompt.mjs \
     >"$STDOUT_FILE" 2>"$STDERR_FILE"
 EXIT_CODE=$?
 

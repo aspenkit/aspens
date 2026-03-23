@@ -124,8 +124,9 @@ export async function docInitCommand(path, options) {
   let discoveryFindings = null;
   let discoveredDomains = [];
 
-  const skipDiscovery = options.mode === 'base-only' || (options.mode === 'chunked' && extraDomains && extraDomains.length > 0);
-  if (repoGraph && repoGraph.stats.totalFiles > 0 && !skipDiscovery) {
+  const isBaseOnly = options.mode === 'base-only';
+  const isDomainsOnly = options.mode === 'chunked' && extraDomains && extraDomains.length > 0;
+  if (repoGraph && repoGraph.stats.totalFiles > 0 && !isBaseOnly && !isDomainsOnly) {
     console.log(pc.dim('  Running 2 discovery agents in parallel...'));
     console.log();
     const discoverSpinner = p.spinner();
@@ -232,7 +233,7 @@ export async function docInitCommand(path, options) {
     if (!['improve', 'rewrite', 'skip-existing', 'fresh'].includes(existingDocsStrategy)) {
       throw new CliError(`Unknown strategy: ${options.strategy}. Use: improve, rewrite, or skip`);
     }
-  } else if ((scan.hasClaudeConfig || scan.hasClaudeMd) && !options.force && !skipDiscovery) {
+  } else if ((scan.hasClaudeConfig || scan.hasClaudeMd) && !options.force && !isDomainsOnly) {
     const strategy = await p.select({
       message: 'Existing CLAUDE.md and/or skills detected. How to proceed:',
       options: [
@@ -333,7 +334,7 @@ export async function docInitCommand(path, options) {
   if (mode === 'all-at-once') {
     allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings);
   } else {
-    const domainsOnly = skipDiscovery; // retrying specific domains — skip base + CLAUDE.md
+    const domainsOnly = isDomainsOnly; // retrying specific domains — skip base + CLAUDE.md
     allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, domainsOnly);
   }
 
@@ -871,8 +872,8 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
   if (skippedDomains.length > 0) {
     console.log();
     p.log.warn(`${skippedDomains.length} domain(s) skipped: ${skippedDomains.join(', ')}`);
-    console.log(pc.dim(`  Retry just these: aspens doc init --mode chunked --domains "${skippedDomains.join(',')}"`));
-    console.log(pc.dim('  Or retry all: aspens doc init --mode chunked --timeout 600'));
+    console.log(pc.dim(`  Retry just these: aspens doc init --mode chunked --domains "${skippedDomains.join(',')}" ${repoPath}`));
+    console.log(pc.dim(`  Or retry all: aspens doc init --mode chunked --timeout 600 ${repoPath}`));
   }
 
   // 3. Generate CLAUDE.md (skip when retrying specific domains, or if strategy says so)
