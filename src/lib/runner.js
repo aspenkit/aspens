@@ -52,6 +52,7 @@ export function runClaude(prompt, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
     });
 
     const chunks = [];
