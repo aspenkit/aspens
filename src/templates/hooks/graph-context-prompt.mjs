@@ -405,5 +405,9 @@ async function main() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main();
+  const timer = setTimeout(() => {
+    process.stderr.write('[Graph] Timeout after 5s\n');
+    process.exit(0);
+  }, 5000);
+  main().finally(() => clearTimeout(timer));
 }

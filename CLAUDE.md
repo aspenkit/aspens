@@ -47,10 +47,26 @@ The project ships as both a CLI and a set of Claude Code skills registered in th
 | skill-generation | LLM generation pipeline for skills and CLAUDE.md |
 | template-library | Bundled agents, commands, hooks installed via `aspens add` |
 
+## Dev docs
+
+Extended dev documentation lives outside this repo at `../dev/`:
+
+- `release.md` — release workflow, publish steps, git tagging, GitHub Discussions
+- `roadmap.md` — planned features and direction
+
+
+## Code review
+
+```bash
+cr review --plain   # run CodeRabbit review from CLI
+```
+
+Or comment `@coderabbitai review` on any open PR.
+
 ## Conventions
 
 - **ESM only** — `"type": "module"` everywhere, no CommonJS
-- **Node >= 18** required
+- **Node >= 20** required
 - No linter configured yet; `npm run lint` is a no-op
 - Dependencies: commander, es-module-lexer, picocolors, @clack/prompts
 - Tests live in `tests/` and use vitest — run with `npm test`

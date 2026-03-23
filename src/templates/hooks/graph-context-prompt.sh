@@ -24,7 +24,8 @@ log_debug "HOOK SCRIPT STARTED - PID $$"
 get_script_dir() {
     local source="${BASH_SOURCE[0]}"
     while [ -h "$source" ]; do
-        local dir="$(cd -P "$(dirname "$source")" && pwd)"
+        local dir
+        dir="$(cd -P "$(dirname "$source")" && pwd)" || return 1
         source="$(readlink "$source")"
         [[ $source != /* ]] && source="$dir/$source"
     done

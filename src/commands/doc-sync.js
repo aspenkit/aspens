@@ -81,7 +81,9 @@ export async function docSyncCommand(path, options) {
       const subgraph = extractSubgraph(repoGraph, changedFiles);
       graphContext = formatNavigationContext(subgraph);
     }
-  } catch { /* proceed without graph */ }
+  } catch (err) {
+    p.log.warn(`Graph context unavailable — proceeding without it. (${err.message})`);
+  }
 
   const affectedSkills = mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph);
 

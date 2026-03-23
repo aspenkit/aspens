@@ -52,6 +52,7 @@ export function runClaude(prompt, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
     });
 
     const chunks = [];
@@ -80,7 +81,11 @@ export function runClaude(prompt, options = {}) {
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
+      if (process.platform === 'win32' && child.pid) {
+        try { execSync(`taskkill /pid ${child.pid} /t /f`, { stdio: 'ignore' }); } catch { /* ignore */ }
+      } else {
+        child.kill('SIGTERM');
+      }
     }, timeout);
 
     child.on('close', (code, signal) => {

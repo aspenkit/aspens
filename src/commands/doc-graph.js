@@ -39,7 +39,7 @@ export async function docGraphCommand(path, options) {
   console.log(pc.dim('  Files:    ') + repoGraph.stats.totalFiles);
   console.log(pc.dim('  Edges:    ') + repoGraph.stats.totalEdges);
   console.log(pc.dim('  Hubs:     ') + repoGraph.hubs.length);
-  console.log(pc.dim('  Clusters: ') + repoGraph.clusters.components.length);
+  console.log(pc.dim('  Clusters: ') + (repoGraph.clusters?.components?.length ?? 0));
   console.log(pc.dim('  Hotspots: ') + repoGraph.hotspots.length);
   console.log();
 
@@ -51,5 +51,5 @@ export async function docGraphCommand(path, options) {
     console.log();
   }
 
-  p.outro(pc.dim('Saved to .claude/graph.json + .claude/skills/code-map/skill.md'));
+  p.outro(pc.dim('Saved to .claude/graph.json + .claude/code-map.md'));
 }

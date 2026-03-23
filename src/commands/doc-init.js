@@ -124,7 +124,9 @@ export async function docInitCommand(path, options) {
   let discoveryFindings = null;
   let discoveredDomains = [];
 
-  if (repoGraph && repoGraph.stats.totalFiles > 0 && options.mode !== 'base-only') {
+  const isBaseOnly = options.mode === 'base-only';
+  const isDomainsOnly = options.mode === 'chunked' && extraDomains && extraDomains.length > 0;
+  if (repoGraph && repoGraph.stats.totalFiles > 0 && !isBaseOnly && !isDomainsOnly) {
     console.log(pc.dim('  Running 2 discovery agents in parallel...'));
     console.log();
     const discoverSpinner = p.spinner();
@@ -231,7 +233,7 @@ export async function docInitCommand(path, options) {
     if (!['improve', 'rewrite', 'skip-existing', 'fresh'].includes(existingDocsStrategy)) {
       throw new CliError(`Unknown strategy: ${options.strategy}. Use: improve, rewrite, or skip`);
     }
-  } else if ((scan.hasClaudeConfig || scan.hasClaudeMd) && !options.force) {
+  } else if ((scan.hasClaudeConfig || scan.hasClaudeMd) && !options.force && !isDomainsOnly) {
     const strategy = await p.select({
       message: 'Existing CLAUDE.md and/or skills detected. How to proceed:',
       options: [
@@ -262,6 +264,18 @@ export async function docInitCommand(path, options) {
     mode = modeMap[options.mode] || options.mode;
     if (!['all-at-once', 'chunked', 'base-only'].includes(mode)) {
       throw new CliError(`Unknown mode: ${options.mode}. Use: all, chunked, or base-only`);
+    }
+    // --domains flag filters which domains to generate (useful for retrying failed domains)
+    if (extraDomains && extraDomains.length > 0 && mode === 'chunked') {
+      selectedDomains = effectiveDomains.filter(d =>
+        extraDomains.includes(d.name.toLowerCase())
+      );
+      if (selectedDomains.length === 0) {
+        p.log.warn(`No matching domains found for: ${extraDomains.join(', ')}`);
+        p.log.info(`Available: ${effectiveDomains.map(d => d.name).join(', ')}`);
+        return;
+      }
+      p.log.info(`Generating ${selectedDomains.length} domain(s): ${selectedDomains.map(d => d.name).join(', ')}`);
     }
   } else if (effectiveDomains.length === 0) {
     p.log.info('No domains detected — generating base skill only.');
@@ -320,7 +334,8 @@ export async function docInitCommand(path, options) {
   if (mode === 'all-at-once') {
     allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings);
   } else {
-    allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings);
+    const domainsOnly = isDomainsOnly; // retrying specific domains — skip base + CLAUDE.md
+    allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, domainsOnly);
   }
 
   if (allFiles.length === 0) {
@@ -650,7 +665,7 @@ function buildGraphContext(graph) {
   }
 
   // File ranking (top files Claude should prioritize reading)
-  if (graph.ranked.length > 0) {
+  if (graph.ranked?.length > 0) {
     sections.push('### File Priority Ranking (read in this order)\n');
     for (const file of graph.ranked.slice(0, 15)) {
       sections.push(`- \`${file.path}\` — priority ${file.priority.toFixed(1)} (${file.fanIn} dependents, ${file.exportCount} exports, ${file.lines} lines)`);
@@ -681,7 +696,7 @@ function buildDomainGraphContext(graph, domain) {
   }
 
   // External deps used by this domain
-  const externalDeps = new Set(domainFiles.flatMap(([, info]) => info.externalImports));
+  const externalDeps = new Set(domainFiles.flatMap(([, info]) => info.externalImports || []));
   if (externalDeps.size > 0) {
     sections.push(`\nExternal dependencies: ${[...externalDeps].join(', ')}`);
   }
@@ -737,23 +752,30 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
   }
 }
 
-async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, timeoutMs, strategy, verbose, model, findings) {
+async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, timeoutMs, strategy, verbose, model, findings, domainsOnly = false) {
   const allFiles = [];
   const skippedDomains = [];
   const today = new Date().toISOString().split('T')[0];
   const scanSummary = buildScanSummary(scan);
   const graphContext = buildGraphContext(repoGraph);
   const findingsSection = findings ? `\n\n## Architecture Analysis (from discovery pass)\n\n${findings}` : '';
+  const strategyNote = buildStrategyInstruction(strategy);
 
-  // 1. Generate base skill
+  // 1. Generate base skill (skip when retrying specific domains)
+  let baseSkillContent = null;
+  if (domainsOnly) {
+    // Load existing base skill for context (used in domain prompts)
+    const existingBase = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
+    if (existsSync(existingBase)) {
+      baseSkillContent = readFileSync(existingBase, 'utf8');
+    }
+  } else {
   const baseSpinner = p.spinner();
   baseSpinner.start('Generating base skill...');
 
-  const strategyNote = buildStrategyInstruction(strategy);
   const basePrompt = loadPrompt('doc-init') + strategyNote +
     `\n\n---\n\nGenerate ONLY the base skill for this repository at ${repoPath} (no domain skills, no CLAUDE.md). Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}`;
 
-  let baseSkillContent = null;
   try {
     let { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
     trackUsage(usage, basePrompt.length);
@@ -783,6 +805,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
     p.log.error(err.message);
     return allFiles;
   }
+  } // end if (!domainsOnly)
 
   // 2. Generate domain skills (in parallel batches for speed)
   if (!baseOnly) {
@@ -849,13 +872,13 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
   if (skippedDomains.length > 0) {
     console.log();
     p.log.warn(`${skippedDomains.length} domain(s) skipped: ${skippedDomains.join(', ')}`);
-    console.log(pc.dim('  Retry with: aspens doc init --mode chunked --timeout 600'));
-    console.log(pc.dim('  Or pick just these: aspens doc init (select "Pick specific domains")'));
+    console.log(pc.dim(`  Retry just these: aspens doc init --mode chunked --domains "${skippedDomains.join(',')}" ${repoPath}`));
+    console.log(pc.dim(`  Or retry all: aspens doc init --mode chunked --timeout 600 ${repoPath}`));
   }
 
-  // 3. Generate CLAUDE.md (skip if it already exists and strategy says so)
+  // 3. Generate CLAUDE.md (skip when retrying specific domains, or if strategy says so)
   const claudeMdExists = existsSync(join(repoPath, 'CLAUDE.md'));
-  if (allFiles.length > 0 && !(strategy === 'skip-existing' && claudeMdExists)) {
+  if (allFiles.length > 0 && !domainsOnly && !(strategy === 'skip-existing' && claudeMdExists)) {
     const claudeMdSpinner = p.spinner();
     claudeMdSpinner.start('Generating CLAUDE.md...');
 
