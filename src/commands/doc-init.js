@@ -7,6 +7,7 @@ import { scanRepo } from '../lib/scanner.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
 import { runClaude, loadPrompt, parseFileOutput, validateSkillFiles } from '../lib/runner.js';
 import { writeSkillFiles, extractRulesFromSkills, generateDomainPatterns, mergeSettings } from '../lib/skill-writer.js';
+import { persistGraphArtifacts } from '../lib/graph-persistence.js';
 import { installGitHook } from './doc-sync.js';
 import { CliError } from '../lib/errors.js';
 
@@ -90,6 +91,10 @@ export async function docInitCommand(path, options) {
   let repoGraph = null;
   try {
     repoGraph = await buildRepoGraph(repoPath, scan.languages);
+    // Persist graph, code-map skill, and index for runtime use
+    try {
+      persistGraphArtifacts(repoPath, repoGraph);
+    } catch { /* graph persistence failed — non-fatal */ }
   } catch { /* graph building failed — continue without it */ }
 
   scanSpinner.stop(`Scanned ${pc.bold(scan.name)} (${scan.repoType})`);
@@ -498,6 +503,8 @@ async function installHooks(repoPath, options) {
     const hookFiles = [
       { src: 'hooks/skill-activation-prompt.sh', dest: 'skill-activation-prompt.sh', chmod: true },
       { src: 'hooks/skill-activation-prompt.mjs', dest: 'skill-activation-prompt.mjs', chmod: false },
+      { src: 'hooks/graph-context-prompt.sh', dest: 'graph-context-prompt.sh', chmod: true },
+      { src: 'hooks/graph-context-prompt.mjs', dest: 'graph-context-prompt.mjs', chmod: false },
     ];
 
     for (const hf of hookFiles) {
@@ -581,6 +588,8 @@ async function installHooks(repoPath, options) {
       `${pc.green('+')} .claude/skills/skill-rules.json ${pc.dim(`(${skillCount} skills)`)}`,
       `${pc.green('+')} .claude/hooks/skill-activation-prompt.sh`,
       `${pc.green('+')} .claude/hooks/skill-activation-prompt.mjs`,
+      `${pc.green('+')} .claude/hooks/graph-context-prompt.sh`,
+      `${pc.green('+')} .claude/hooks/graph-context-prompt.mjs`,
       `${pc.green('+')} .claude/hooks/post-tool-use-tracker.sh ${pc.dim('(with domain patterns)')}`,
       `${existingSettings ? pc.yellow('~') : pc.green('+')} .claude/settings.json ${pc.dim(existingSettings ? '(merged)' : '(created)')}`,
     ];
