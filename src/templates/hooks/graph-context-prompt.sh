@@ -24,7 +24,8 @@ log_debug "HOOK SCRIPT STARTED - PID $$"
 get_script_dir() {
     local source="${BASH_SOURCE[0]}"
     while [ -h "$source" ]; do
-        local dir="$(cd -P "$(dirname "$source")" && pwd)"
+        local dir
+        dir="$(cd -P "$(dirname "$source")" && pwd)" || return 1
         source="$(readlink "$source")"
         [[ $source != /* ]] && source="$dir/$source"
     done
@@ -49,7 +50,7 @@ STDOUT_FILE=$(mktemp)
 STDERR_FILE=$(mktemp)
 trap 'rm -f "$STDOUT_FILE" "$STDERR_FILE"' EXIT
 
-printf '%s' "$INPUT" | NODE_NO_WARNINGS=1 node graph-context-prompt.mjs \
+printf '%s' "$INPUT" | NODE_NO_WARNINGS=1 timeout 5s node graph-context-prompt.mjs \
     >"$STDOUT_FILE" 2>"$STDERR_FILE"
 EXIT_CODE=$?
 

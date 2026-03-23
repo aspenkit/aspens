@@ -124,7 +124,7 @@ export async function docInitCommand(path, options) {
   let discoveryFindings = null;
   let discoveredDomains = [];
 
-  const skipDiscovery = options.mode === 'base-only' || (options.mode && extraDomains && extraDomains.length > 0);
+  const skipDiscovery = options.mode === 'base-only' || (options.mode === 'chunked' && extraDomains && extraDomains.length > 0);
   if (repoGraph && repoGraph.stats.totalFiles > 0 && !skipDiscovery) {
     console.log(pc.dim('  Running 2 discovery agents in parallel...'));
     console.log();
@@ -664,7 +664,7 @@ function buildGraphContext(graph) {
   }
 
   // File ranking (top files Claude should prioritize reading)
-  if (graph.ranked.length > 0) {
+  if (graph.ranked?.length > 0) {
     sections.push('### File Priority Ranking (read in this order)\n');
     for (const file of graph.ranked.slice(0, 15)) {
       sections.push(`- \`${file.path}\` — priority ${file.priority.toFixed(1)} (${file.fanIn} dependents, ${file.exportCount} exports, ${file.lines} lines)`);
@@ -695,7 +695,7 @@ function buildDomainGraphContext(graph, domain) {
   }
 
   // External deps used by this domain
-  const externalDeps = new Set(domainFiles.flatMap(([, info]) => info.externalImports));
+  const externalDeps = new Set(domainFiles.flatMap(([, info]) => info.externalImports || []));
   if (externalDeps.size > 0) {
     sections.push(`\nExternal dependencies: ${[...externalDeps].join(', ')}`);
   }

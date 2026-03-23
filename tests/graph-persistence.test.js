@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import {
   serializeGraph,
   saveGraph,
@@ -15,7 +16,8 @@ import {
   persistGraphArtifacts,
 } from '../src/lib/graph-persistence.js';
 
-const FIXTURES_DIR = join(import.meta.dirname, 'fixtures', 'graph-persistence');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURES_DIR = join(__dirname, 'fixtures', 'graph-persistence');
 
 beforeAll(() => {
   mkdirSync(FIXTURES_DIR, { recursive: true });
