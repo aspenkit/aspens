@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-23
+
+### Added
+- **Import graph persistence** — `aspens doc graph` analyzes the repo and saves `.claude/graph.json`, `.claude/graph-index.json`, and `.claude/code-map.md` for use across sessions
+- **Graph context hook** — `graph-context-prompt.sh` + `graph-context-prompt.mjs` inject navigation context (hub files, clusters, neighbors) into every Claude prompt when relevant files are mentioned
+- **Code-map skill** — auto-generated `.claude/code-map.md` gives Claude a codebase overview (hub files, domain clusters, hotspots, stats) loaded on every prompt
+- **`aspens doc graph` command** — standalone command to build and persist the import graph with stats output
+- **Graph-aware doc sync** — `aspens doc sync` now rebuilds the graph on every sync and uses it to improve skill change detection
+- **`--domains` flag for `doc init`** — retry specific failed domains without regenerating the base skill or CLAUDE.md: `aspens doc init --mode chunked --domains "auth,payments"`
+
+### Fixed
+- **Windows `spawn` ENOENT** — Claude CLI now resolves correctly on Windows where npm installs `claude.cmd`; `shell: true` scoped to win32 only
+- **Windows timeout kill** — timeout handler now uses `taskkill /t /f` on Windows to kill the full process tree, not just the shell
+- **`base-only` mode skipping base skill** — split `skipDiscovery` into `isBaseOnly`/`isDomainsOnly` so base-only runs correctly generate the base skill and show the existing-docs strategy prompt
+- **`--domains` with non-chunked modes** — `--domains` flag no longer erroneously skips discovery when used with `--mode all`
+- **Retry hints include repo path** — skipped-domain retry commands now include the target repo path
+- **Graph hook portability** — removed `timeout 5s` (requires GNU coreutils); timeout is now a portable `setTimeout` inside the Node script
+- **Graph persistence error handling** — spinner correctly stops on `persistGraphArtifacts` failure; wrong output path in outro corrected
+- **`clusters.components` null guard** — defensive check added in `doc graph` stats output
+- **`graph.ranked` guard** — `buildGraphContext` uses optional chaining on `ranked` to handle serialized graphs
+- **`externalImports` guard** — `buildDomainGraphContext` safely handles serialized graphs where `externalImports` is dropped
+- **Silent graph failures** — `doc sync` now warns the user when graph context is unavailable instead of silently skipping
+- **Node 18/20 test compatibility** — `import.meta.dirname` replaced with portable `fileURLToPath` + `dirname` pattern in graph persistence tests
+- **Shell `local` masking** — `local dir=` in `graph-context-prompt.sh` split into separate declaration and assignment
+
 ## [0.2.2] - 2026-03-22
 
 ### Upgrade notice
