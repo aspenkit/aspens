@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { existsSync, readFileSync, rmSync, mkdirSync, writeFileSync, statSync } from 'fs';
 import { join } from 'path';
-import { installGitHook, removeGitHook } from '../src/commands/doc-sync.js';
+import { installGitHook, removeGitHook } from '../src/lib/git-hook.js';
 
 const TEST_DIR = join(import.meta.dirname, 'tmp-hook');
 const HOOKS_DIR = join(TEST_DIR, '.git', 'hooks');

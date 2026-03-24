@@ -1,6 +1,5 @@
 import { resolve, join, relative, dirname } from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
-import { execSync, execFileSync } from 'child_process';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
@@ -8,10 +7,13 @@ import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles, extractRulesFromSkills } from '../lib/skill-writer.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
 import { persistGraphArtifacts, loadGraph, extractSubgraph, formatNavigationContext } from '../lib/graph-persistence.js';
-import { findSkillFiles, parseActivationPatterns } from '../lib/skill-reader.js';
+import { findSkillFiles, parseActivationPatterns, getActivationBlock, fileMatchesActivation } from '../lib/skill-reader.js';
 import { buildDomainContext, buildBaseContext } from '../lib/context-builder.js';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
+import { installGitHook, removeGitHook } from '../lib/git-hook.js';
+import { isGitRepo, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
+import { getSelectedFilesDiff, buildPrioritizedDiff, truncate } from '../lib/diff-helpers.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 const PARALLEL_LIMIT = 3;
@@ -112,13 +114,7 @@ export async function docSyncCommand(path, options) {
 
   // Skill-relevant files (for diff prioritization and interactive picker pre-selection)
   const relevantFiles = changedFiles.filter(f =>
-    affectedSkills.some(skill => {
-      const block = (skill.content.match(/## Activation[\s\S]*?---/) || [''])[0].toLowerCase();
-      const name = f.toLowerCase().split('/').pop();
-      if (block.includes(name)) return true;
-      const segs = f.toLowerCase().split('/').filter(seg => !GENERIC_PATH_SEGMENTS.has(seg) && seg.length > 2);
-      return segs.some(seg => block.includes(seg));
-    })
+    affectedSkills.some(skill => fileMatchesActivation(f, getActivationBlock(skill.content)))
   );
 
   // Interactive file picker: offer when diff is large and a TTY is available
@@ -215,7 +211,7 @@ ${truncate(claudeMdContent, 5000)}
     });
   } catch (err) {
     syncSpinner.stop(pc.red('Failed'));
-    throw new CliError(err.message);
+    throw new CliError(err.message, { cause: err });
   }
 
   // Step 6: Parse output
@@ -260,65 +256,6 @@ ${truncate(claudeMdContent, 5000)}
   p.outro(`${results.length} file(s) updated`);
 }
 
-// --- Git helpers ---
-
-function isGitRepo(repoPath) {
-  try {
-    execSync('git rev-parse --git-dir', { cwd: repoPath, stdio: 'pipe', timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function getGitDiff(repoPath, commits) {
-  // Try requested commit count, fall back to fewer
-  for (let n = commits; n >= 1; n--) {
-    try {
-      const diff = execSync(`git diff HEAD~${n}..HEAD`, {
-        cwd: repoPath,
-        encoding: 'utf8',
-        maxBuffer: 10 * 1024 * 1024,
-        timeout: 30000,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      return { diff, actualCommits: n };
-    } catch {
-      continue;
-    }
-  }
-  return { diff: '', actualCommits: 0 };
-}
-
-function getGitLog(repoPath, commits) {
-  try {
-    return execSync(`git log --oneline -${commits}`, {
-      cwd: repoPath,
-      encoding: 'utf8',
-      maxBuffer: 5 * 1024 * 1024,
-      timeout: 10000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-  } catch {
-    return '';
-  }
-}
-
-function getChangedFiles(repoPath, commits) {
-  try {
-    const output = execSync(`git diff --name-only HEAD~${commits}..HEAD`, {
-      cwd: repoPath,
-      encoding: 'utf8',
-      maxBuffer: 5 * 1024 * 1024,
-      timeout: 15000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    return output.trim().split('\n').filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
 // --- Skill mapping ---
 
 function findExistingSkills(repoPath) {
@@ -330,50 +267,23 @@ function findExistingSkills(repoPath) {
   }));
 }
 
-// Path segments too generic to use for skill matching
-const GENERIC_PATH_SEGMENTS = new Set([
-  'src', 'app', 'lib', 'api', 'v1', 'v2', 'components', 'services',
-  'utils', 'helpers', 'common', 'core', 'config', 'middleware',
-  'models', 'types', 'hooks', 'pages', 'routes', 'tests', 'test',
-  'public', 'assets', 'styles', 'scripts',
-]);
-
 function mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph = null) {
   const affected = [];
 
   for (const skill of existingSkills) {
     if (skill.name === 'base') continue; // base handled separately below
 
-    // Extract file paths and specific names from the activation section
-    const activationMatch = skill.content.match(/## Activation[\s\S]*?---/);
-    if (!activationMatch) continue;
+    const activationBlock = getActivationBlock(skill.content);
+    if (!activationBlock) continue;
 
-    const activationBlock = activationMatch[0].toLowerCase();
-
-    let isAffected = changedFiles.some(file => {
-      const fileLower = file.toLowerCase();
-      // Check the filename itself (e.g., billing_service.py)
-      const fileName = fileLower.split('/').pop();
-      if (activationBlock.includes(fileName)) return true;
-
-      // Check meaningful path segments (skip generic ones)
-      const segs = fileLower.split('/').filter(seg => !GENERIC_PATH_SEGMENTS.has(seg) && seg.length > 2);
-      return segs.some(seg => activationBlock.includes(seg));
-    });
+    let isAffected = changedFiles.some(file => fileMatchesActivation(file, activationBlock));
 
     // Graph-aware: check if changed files are imported by files in this skill's domain
     if (!isAffected && repoGraph) {
       isAffected = changedFiles.some(file => {
         const info = repoGraph.files[file];
         if (!info) return false;
-        // Check if any file that imports the changed file matches the activation block
-        return (info.importedBy || []).some(dep => {
-          const depLower = dep.toLowerCase();
-          const depName = depLower.split('/').pop();
-          if (activationBlock.includes(depName)) return true;
-          const segs = depLower.split('/').filter(seg => !GENERIC_PATH_SEGMENTS.has(seg) && seg.length > 2);
-          return segs.some(seg => activationBlock.includes(seg));
-        });
+        return (info.importedBy || []).some(dep => fileMatchesActivation(dep, activationBlock));
       });
     }
 
@@ -603,7 +513,7 @@ async function refreshAllSkills(repoPath, options) {
  * Convert a skill's activation patterns into a domain object
  * compatible with buildDomainContext().
  */
-function skillToDomain(skill) {
+export function skillToDomain(skill) {
   const patterns = parseActivationPatterns(skill.content);
   const directories = new Set();
   const files = [];
@@ -626,187 +536,4 @@ function skillToDomain(skill) {
     directories: [...directories],
     files,
   };
-}
-
-// --- Git hook ---
-
-function resolveAspensPath() {
-  const cmd = process.platform === 'win32' ? 'where aspens' : 'which aspens';
-  try {
-    const resolved = execSync(cmd, {
-      encoding: 'utf8',
-      timeout: 5000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    if (resolved && existsSync(resolved)) return resolved;
-  } catch { /* not in PATH */ }
-  return 'npx aspens';
-}
-
-export function installGitHook(repoPath) {
-  const hookDir = join(repoPath, '.git', 'hooks');
-  const hookPath = join(hookDir, 'post-commit');
-
-  if (!existsSync(join(repoPath, '.git'))) {
-    throw new CliError('Not a git repository.');
-  }
-
-  mkdirSync(hookDir, { recursive: true });
-
-  const aspensCmd = resolveAspensPath();
-
-  const hookBlock = `
-# >>> aspens doc-sync hook (do not edit) >>>
-__aspens_doc_sync() {
-  REPO_ROOT="\$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
-  REPO_HASH="\$(echo "\$REPO_ROOT" | (shasum 2>/dev/null || sha1sum 2>/dev/null || md5sum 2>/dev/null) | cut -c1-8)"
-  ASPENS_LOCK="/tmp/aspens-sync-\${REPO_HASH}.lock"
-  ASPENS_LOG="/tmp/aspens-sync-\${REPO_HASH}.log"
-
-  # Skip aspens-only commits (skills, CLAUDE.md, graph artifacts)
-  CHANGED="\$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)"
-  NON_ASPENS="\$(echo "\$CHANGED" | grep -v '^\.claude/' | grep -v '^CLAUDE\.md\$' || true)"
-  if [ -z "\$NON_ASPENS" ]; then
-    return 0
-  fi
-
-  # Cooldown: skip if last sync was less than 5 minutes ago
-  if [ -f "\$ASPENS_LOCK" ]; then
-    LAST_RUN=\$(cat "\$ASPENS_LOCK" 2>/dev/null || echo 0)
-    NOW=\$(date +%s)
-    if [ \$((NOW - LAST_RUN)) -lt 300 ]; then
-      return 0
-    fi
-  fi
-  echo \$(date +%s) > "\$ASPENS_LOCK"
-
-  # Clean up stale lock files older than 1 hour
-  find /tmp -maxdepth 1 -name "aspens-sync-*.lock" -mmin +60 -delete 2>/dev/null
-
-  # Truncate log if over 200 lines
-  if [ -f "\$ASPENS_LOG" ] && [ "\$(wc -l < "\$ASPENS_LOG" 2>/dev/null || echo 0)" -gt 200 ]; then
-    tail -100 "\$ASPENS_LOG" > "\$ASPENS_LOG.tmp" && mv "\$ASPENS_LOG.tmp" "\$ASPENS_LOG"
-  fi
-
-  # Run fully detached so git returns immediately (POSIX-compatible — no disown needed)
-  (echo "[sync] \$(date '+%Y-%m-%d %H:%M:%S') started" >> "\$ASPENS_LOG" && ${aspensCmd} doc sync --commits 1 "\$REPO_ROOT" >> "\$ASPENS_LOG" 2>&1; echo "[sync] \$(date '+%Y-%m-%d %H:%M:%S') finished (exit \$?)" >> "\$ASPENS_LOG") </dev/null >/dev/null 2>&1 &
-}
-__aspens_doc_sync
-# <<< aspens doc-sync hook <<<
-`;
-
-  // Check for existing hook
-  if (existsSync(hookPath)) {
-    const existing = readFileSync(hookPath, 'utf8');
-    if (existing.includes('aspens doc-sync hook') || existing.includes('aspens doc sync')) {
-      console.log(pc.yellow('\n  Hook already installed.\n'));
-      return;
-    }
-    // Append to existing hook (outside shebang)
-    writeFileSync(hookPath, existing + '\n' + hookBlock, 'utf8');
-    console.log(pc.green('\n  Appended aspens doc-sync to existing post-commit hook.\n'));
-  } else {
-    writeFileSync(hookPath, '#!/bin/sh\n' + hookBlock, 'utf8');
-    execSync(`chmod +x "${hookPath}"`);
-    console.log(pc.green('\n  Installed post-commit hook.\n'));
-  }
-
-  console.log(pc.dim('  Skills will auto-update after every commit.'));
-  console.log(pc.dim('  Log: /tmp/aspens-sync-*.log'));
-  console.log(pc.dim('  Remove with: aspens doc sync --remove-hook\n'));
-}
-
-export function removeGitHook(repoPath) {
-  const hookPath = join(repoPath, '.git', 'hooks', 'post-commit');
-
-  if (!existsSync(hookPath)) {
-    console.log(pc.yellow('\n  No post-commit hook found.\n'));
-    return;
-  }
-
-  const content = readFileSync(hookPath, 'utf8');
-  const hasMarkers = content.includes('# >>> aspens doc-sync hook');
-  const hasLegacy = !hasMarkers && content.includes('aspens doc sync');
-
-  if (!hasMarkers && !hasLegacy) {
-    console.log(pc.yellow('\n  Post-commit hook does not contain aspens.\n'));
-    return;
-  }
-
-  if (hasMarkers) {
-    const cleaned = content
-      .replace(/\n?# >>> aspens doc-sync hook \(do not edit\) >>>[\s\S]*?# <<< aspens doc-sync hook <<<\n?/, '')
-      .trim();
-
-    if (!cleaned || cleaned === '#!/bin/sh') {
-      unlinkSync(hookPath);
-      console.log(pc.green('\n  Removed post-commit hook.\n'));
-    } else {
-      writeFileSync(hookPath, cleaned + '\n', 'utf8');
-      console.log(pc.green('\n  Removed aspens doc-sync from post-commit hook.\n'));
-    }
-  } else {
-    console.log(pc.yellow('\n  Legacy aspens hook detected (no removal markers).'));
-    console.log(pc.dim('  Re-install first: aspens doc sync --install-hook'));
-    console.log(pc.dim('  Or edit manually: .git/hooks/post-commit\n'));
-  }
-}
-
-// --- Helpers ---
-
-// Build a diff from a user-selected subset of files
-function getSelectedFilesDiff(repoPath, files, commits) {
-  try {
-    const result = execFileSync('git', ['diff', `HEAD~${commits}..HEAD`, '--', ...files], {
-      cwd: repoPath,
-      encoding: 'utf8',
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 30000,
-    });
-    return truncateDiff(result, 80000);
-  } catch {
-    return '';
-  }
-}
-
-// Build a diff that puts skill-relevant files first so they survive truncation.
-// Relevant files get 60k, everything else gets 20k (80k total).
-function buildPrioritizedDiff(fullDiff, relevantFiles) {
-  const MAX_CHARS = 80000;
-  if (fullDiff.length <= MAX_CHARS || relevantFiles.length === 0) {
-    return truncateDiff(fullDiff, MAX_CHARS);
-  }
-
-  // Split full diff into per-file chunks
-  const chunks = [];
-  const parts = fullDiff.split(/(?=^diff --git )/m);
-  for (const part of parts) {
-    const m = part.match(/^diff --git a\/(.*?) b\//m);
-    chunks.push({ file: m ? m[1] : '', text: part });
-  }
-
-  // Separate relevant from other chunks
-  const relevantSet = new Set(relevantFiles);
-  const relevant = chunks.filter(c => relevantSet.has(c.file));
-  const others = chunks.filter(c => !relevantSet.has(c.file));
-
-  // Relevant files get the bulk of the budget; others get a smaller slice
-  const relevantDiff = truncateDiff(relevant.map(c => c.text).join(''), 60000);
-  const otherDiff = truncateDiff(others.map(c => c.text).join(''), 20000);
-
-  return (relevantDiff + (otherDiff ? '\n' + otherDiff : '')).trim();
-}
-
-function truncateDiff(diff, maxChars) {
-  if (diff.length <= maxChars) return diff;
-  // Cut at the last complete diff hunk boundary to avoid mid-line truncation
-  const truncated = diff.slice(0, maxChars);
-  const lastHunkBoundary = truncated.lastIndexOf('\ndiff --git');
-  const cutPoint = lastHunkBoundary > 0 ? lastHunkBoundary : maxChars;
-  return diff.slice(0, cutPoint) + `\n\n... (diff truncated — use Read tool to see full files)`;
-}
-
-function truncate(text, maxChars) {
-  if (text.length <= maxChars) return text;
-  return text.slice(0, maxChars) + '\n... (truncated)';
 }

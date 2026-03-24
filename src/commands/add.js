@@ -358,7 +358,7 @@ ${refContent}
     });
   } catch (err) {
     genSpinner.stop(pc.red('Failed'));
-    throw new CliError(err.message);
+    throw new CliError(err.message, { cause: err });
   }
 
   const files = parseFileOutput(result.text);

@@ -8,7 +8,7 @@ import { buildRepoGraph } from '../lib/graph-builder.js';
 import { runClaude, loadPrompt, parseFileOutput, validateSkillFiles } from '../lib/runner.js';
 import { writeSkillFiles, extractRulesFromSkills, generateDomainPatterns, mergeSettings } from '../lib/skill-writer.js';
 import { persistGraphArtifacts } from '../lib/graph-persistence.js';
-import { installGitHook } from './doc-sync.js';
+import { installGitHook } from '../lib/git-hook.js';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
 

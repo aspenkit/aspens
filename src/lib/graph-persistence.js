@@ -515,7 +515,8 @@ function ensureGraphGitignore(repoPath) {
   let existing = '';
   try { existing = readFileSync(gitignorePath, 'utf8'); } catch { /* no .gitignore yet */ }
 
-  const toAdd = entries.filter(e => !existing.includes(e));
+  const existingLines = new Set(existing.split('\n').map(l => l.trim()));
+  const toAdd = entries.filter(e => !existingLines.has(e));
   if (toAdd.length === 0) return;
 
   const block = '\n# aspens graph artifacts (generated — do not commit)\n' + toAdd.join('\n') + '\n';
