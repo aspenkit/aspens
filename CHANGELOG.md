@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-24
+
+### Added
+- **`doc sync --refresh`** — review and update all skills against the current codebase state without requiring a git diff
+- **`add skill` command** — scaffold custom skills (`aspens add skill my-convention`) or generate from reference docs (`aspens add skill release --from dev/release.md`)
+- **Interactive file picker** — when diff exceeds 80k chars, prompts to select which files Claude should analyze (skill-relevant files pre-selected)
+- **Diff prioritization** — skill-relevant files get 60k of the 80k char budget so they survive truncation
+- **Git hook hardening** — 5-minute cooldown, skip aspens-only commits, log rotation, stale lock cleanup, POSIX-compatible cleanup
+- **Graph artifact gitignore** — `graph.json`, `graph-index.json`, `code-map.md` auto-added to `.gitignore` to prevent sync loops
+- **35 new tests** — coverage for `resolveTimeout`, activation matching (`getActivationBlock`, `fileMatchesActivation`), `skillToDomain`, and `add skill` scaffold mode (162 → 197 tests)
+
+### Changed
+- **Module split** — extracted `git-helpers.js`, `diff-helpers.js`, `git-hook.js` from doc-sync.js (813 → 540 lines); pure orchestration remains
+- **Shared activation matching** — deduplicated 3 copies of file-to-skill matching into `getActivationBlock()` and `fileMatchesActivation()` in skill-reader.js, fixing inconsistent regex
+- **Security hardening** — all git commands use `execFileSync` (no shell interpolation), `chmodSync` replaces shell `chmod`, `fileMatchesActivation` guards against empty inputs
+- **Skill rules regeneration** — `doc sync` now regenerates `skill-rules.json` after every write (was only done in refresh mode)
+- **Consistent timeout warnings** — all three commands (`doc-sync`, `doc-init`, `customize`) now surface warnings for invalid `ASPENS_TIMEOUT` values
+- **CliError cause chain** — errors from Claude calls now preserve the original error via `{ cause: err }` for better debugging
+- **Gitignore matching** — line-based `Set` lookup replaces substring `includes()` to prevent false positives
+
+### Fixed
+- **Empty file selection** — interactive picker now cancels cleanly instead of silently sending the full diff when all files are deselected
+- **Mid-line truncation** — `truncateDiff` falls back to last newline boundary instead of cutting mid-line when no hunk boundary is found
+
 ## [0.3.0] - 2026-03-23
 
 ### Added
