@@ -54,11 +54,13 @@ function showWelcome() {
     ${pc.green('aspens doc init --verbose')}         See what Claude is reading
     ${pc.green('aspens doc sync')} ${pc.dim('[path]')}          Update skills from recent commits
     ${pc.green('aspens doc sync --commits 5')}       Sync from last 5 commits
+    ${pc.green('aspens doc sync --refresh')}         Refresh all skills from current code
 
   ${pc.bold('Add Components')}
     ${pc.green('aspens add agent')} ${pc.dim('[name]')}         Add AI agents ${pc.dim(`(${countTemplates('agents')} available)`)}
     ${pc.green('aspens add command')} ${pc.dim('[name]')}       Add slash commands ${pc.dim(`(${countTemplates('commands')} available)`)}
     ${pc.green('aspens add hook')} ${pc.dim('[name]')}          Add auto-triggering hooks ${pc.dim(`(${countTemplates('hooks')} available)`)}
+    ${pc.green('aspens add skill')} ${pc.dim('<name>')}         Add custom skills (conventions, workflows)
     ${pc.green('aspens add agent --list')}           Browse the library
     ${pc.green('aspens customize agents')}           Inject project context into agents
 
@@ -148,6 +150,7 @@ doc
   .description('Update skills from recent commits')
   .argument('[path]', 'Path to repo', '.')
   .option('--commits <n>', 'Number of commits to analyze', parseCommits, 1)
+  .option('--refresh', 'Refresh all skills from current codebase state (no git diff)')
   .option('--install-hook', 'Install git post-commit hook')
   .option('--remove-hook', 'Remove git post-commit hook')
   .option('--dry-run', 'Preview without writing files')
@@ -169,10 +172,14 @@ doc
 // Add command
 program
   .command('add')
-  .description('Add agents, hooks, or commands from the library')
-  .argument('<type>', 'What to add: agent, hook, command')
+  .description('Add agents, hooks, commands, or custom skills')
+  .argument('<type>', 'What to add: agent, hook, command, skill')
   .argument('[name]', 'Name of the resource')
   .option('--list', 'List available resources')
+  .option('--from <path>', 'Generate skill from a reference document (skill type only)')
+  .option('--timeout <seconds>', 'Claude timeout in seconds (skill --from)', parseTimeout)
+  .option('--model <model>', 'Claude model to use (skill --from)')
+  .option('--verbose', 'Show Claude activity (skill --from)')
   .action((type, name, options) => {
     checkMissingHooks(resolve('.'));
     return addCommand(type, name, options);

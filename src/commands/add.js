@@ -1,9 +1,13 @@
 import { resolve, join, dirname, basename } from 'path';
-import { existsSync, readFileSync, copyFileSync, mkdirSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { CliError } from '../lib/errors.js';
+import { resolveTimeout } from '../lib/timeout.js';
+import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
+import { extractRulesFromSkills } from '../lib/skill-writer.js';
+import { findSkillFiles } from '../lib/skill-reader.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -32,6 +36,11 @@ const RESOURCE_TYPES = {
 export async function addCommand(type, name, options) {
   const repoPath = resolve('.');
 
+  // Skill type — handled separately (not template-based)
+  if (type === 'skill') {
+    return addSkillCommand(repoPath, name, options);
+  }
+
   // Validate type
   if (!RESOURCE_TYPES[type]) {
     console.log(`
@@ -41,11 +50,14 @@ export async function addCommand(type, name, options) {
     ${pc.green('agent')}     ${RESOURCE_TYPES.agent.description}
     ${pc.green('command')}   ${RESOURCE_TYPES.command.description}
     ${pc.green('hook')}      ${RESOURCE_TYPES.hook.description}
+    ${pc.green('skill')}     Custom skills for conventions, workflows, and processes
 
   Usage:
     ${pc.dim('aspens add agent [name]')}
     ${pc.dim('aspens add command [name]')}
     ${pc.dim('aspens add hook [name]')}
+    ${pc.dim('aspens add skill <name>')}
+    ${pc.dim('aspens add skill <name> --from doc.md')}
     ${pc.dim('aspens add agent --list')}
 `);
     throw new CliError(`Unknown type: ${type}`, { logged: true });
@@ -187,4 +199,195 @@ function addResource(repoPath, resourceType, name, available) {
 
   copyFileSync(sourceFile, targetFile);
   console.log(`  ${pc.green('+')} ${resourceType.targetDir}/${resource.fileName}`);
+}
+
+// --- Custom skill ---
+
+async function addSkillCommand(repoPath, name, options) {
+  const skillsDir = join(repoPath, '.claude', 'skills');
+
+  // --list mode: show existing skills
+  if (options.list) {
+    const skills = existsSync(skillsDir) ? findSkillFiles(skillsDir) : [];
+    console.log(`
+  ${pc.bold('Skills')} ${pc.dim(`(${skills.length} installed)`)}
+  ${pc.dim('Custom skills for conventions, workflows, and processes.')}
+`);
+    if (skills.length === 0) {
+      console.log(pc.dim('  None installed yet.\n'));
+    } else {
+      for (const skill of skills) {
+        const desc = skill.frontmatter?.description || '';
+        console.log(`  ${pc.green(skill.name)}`);
+        if (desc) console.log(`  ${pc.dim(desc)}`);
+        console.log();
+      }
+    }
+    console.log(pc.dim('  Create one:  aspens add skill my-convention'));
+    console.log(pc.dim('  From a doc:  aspens add skill release --from dev/release.md'));
+    console.log();
+    return;
+  }
+
+  // Name is required for skills
+  if (!name) {
+    console.log(`
+  ${pc.bold('Add a custom skill')}
+
+  Usage:
+    ${pc.green('aspens add skill <name>')}                 Scaffold a new skill
+    ${pc.green('aspens add skill <name> --from <file>')}   Generate from a reference doc
+    ${pc.green('aspens add skill --list')}                 Show existing skills
+
+  Examples:
+    ${pc.dim('aspens add skill ui-conventions')}
+    ${pc.dim('aspens add skill release --from dev/release.md')}
+    ${pc.dim('aspens add skill code-review --from docs/review-process.md')}
+`);
+    return;
+  }
+
+  // Sanitize skill name
+  const safeName = name.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  if (!safeName) {
+    throw new CliError('Invalid skill name. Use letters, numbers, and hyphens.');
+  }
+
+  const skillDir = join(skillsDir, safeName);
+  const skillPath = join(skillDir, 'skill.md');
+  const relPath = `.claude/skills/${safeName}/skill.md`;
+
+  if (existsSync(skillPath)) {
+    console.log(pc.yellow(`\n  Skill already exists: ${relPath}`));
+    console.log(pc.dim('  Edit it directly or delete and re-create.\n'));
+    return;
+  }
+
+  // --from mode: generate from reference doc
+  if (options.from) {
+    return generateSkillFromDoc(repoPath, safeName, options);
+  }
+
+  // Scaffold mode: create blank template
+  const today = new Date().toISOString().split('T')[0];
+  const scaffold = `---
+name: ${safeName}
+description: TODO — describe what this skill covers
+---
+
+## Activation
+
+This skill triggers when working on ${safeName}-related tasks.
+- \`TODO: add file patterns\`
+
+Keywords: ${safeName}
+
+---
+
+You are working on **${safeName}**.
+
+## Key Files
+- \`TODO\` — Add key files relevant to this skill
+
+## Key Concepts
+- **TODO:** Add key concepts, conventions, or workflows
+
+## Critical Rules
+- TODO: Add rules that must not be violated
+
+---
+**Last Updated:** ${today}
+`;
+
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(skillPath, scaffold, 'utf8');
+
+  console.log(`\n  ${pc.green('+')} ${relPath}`);
+  console.log(pc.dim(`\n  Edit the skill to add your conventions and file patterns.`));
+  console.log(pc.dim(`  Then run ${pc.cyan('aspens doc init --hooks-only')} to update activation rules.\n`));
+
+  updateSkillRules(skillsDir);
+}
+
+async function generateSkillFromDoc(repoPath, skillName, options) {
+  const fromPath = resolve(options.from);
+  if (!existsSync(fromPath)) {
+    throw new CliError(`Reference file not found: ${options.from}`);
+  }
+
+  const skillDir = join(repoPath, '.claude', 'skills', skillName);
+  const relPath = `.claude/skills/${skillName}/skill.md`;
+  const verbose = !!options.verbose;
+
+  const { timeoutMs } = resolveTimeout(options.timeout, 120);
+
+  let refContent = readFileSync(fromPath, 'utf8');
+  const REF_MAX_CHARS = 50000;
+  if (refContent.length > REF_MAX_CHARS) {
+    refContent = refContent.slice(0, REF_MAX_CHARS) + '\n... (truncated)';
+    p.log.warn(`Reference doc truncated to ${Math.round(REF_MAX_CHARS / 1024)}k chars.`);
+  }
+  const today = new Date().toISOString().split('T')[0];
+
+  const systemPrompt = loadPrompt('add-skill', {
+    skillPath: relPath,
+  });
+
+  const userPrompt = `Skill name: ${skillName}
+Today's date: ${today}
+Repository path: ${repoPath}
+
+## Reference Document (${options.from})
+\`\`\`
+${refContent}
+\`\`\``;
+
+  const fullPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
+
+  const genSpinner = p.spinner();
+  genSpinner.start(`Generating ${pc.cyan(skillName)} skill from ${options.from}...`);
+
+  let result;
+  try {
+    result = await runClaude(fullPrompt, {
+      timeout: timeoutMs,
+      allowedTools: ['Read', 'Glob', 'Grep'],
+      verbose,
+      model: options.model || null,
+      onActivity: verbose ? (msg) => genSpinner.message(pc.dim(msg)) : null,
+    });
+  } catch (err) {
+    genSpinner.stop(pc.red('Failed'));
+    throw new CliError(err.message);
+  }
+
+  const files = parseFileOutput(result.text);
+  if (files.length === 0) {
+    genSpinner.stop(pc.red('No skill generated'));
+    throw new CliError('Claude did not produce a skill file. Try a different reference document or write the skill manually.');
+  }
+
+  genSpinner.stop(`Generated ${pc.cyan(skillName)} skill`);
+
+  // Write the skill
+  mkdirSync(skillDir, { recursive: true });
+  for (const file of files) {
+    const fullPath = join(repoPath, file.path);
+    mkdirSync(dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, file.content, 'utf8');
+    console.log(`\n  ${pc.green('+')} ${file.path}`);
+  }
+
+  const skillsDir = join(repoPath, '.claude', 'skills');
+  updateSkillRules(skillsDir);
+
+  console.log(pc.dim(`\n  Review the generated skill and adjust as needed.`));
+  console.log(pc.dim(`  Run ${pc.cyan('aspens doc init --hooks-only')} to update activation hooks.\n`));
+}
+
+function updateSkillRules(skillsDir) {
+  try {
+    const rules = extractRulesFromSkills(skillsDir);
+    writeFileSync(join(skillsDir, 'skill-rules.json'), JSON.stringify(rules, null, 2) + '\n');
+  } catch { /* non-fatal — hooks-only will catch up */ }
 }

@@ -1,16 +1,20 @@
-import { resolve, join, relative } from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'fs';
-import { execSync } from 'child_process';
+import { resolve, join, relative, dirname } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
+import { execSync, execFileSync } from 'child_process';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
-import { writeSkillFiles } from '../lib/skill-writer.js';
+import { writeSkillFiles, extractRulesFromSkills } from '../lib/skill-writer.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
 import { persistGraphArtifacts, loadGraph, extractSubgraph, formatNavigationContext } from '../lib/graph-persistence.js';
+import { findSkillFiles, parseActivationPatterns } from '../lib/skill-reader.js';
+import { buildDomainContext, buildBaseContext } from '../lib/context-builder.js';
 import { CliError } from '../lib/errors.js';
+import { resolveTimeout } from '../lib/timeout.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
+const PARALLEL_LIMIT = 3;
 
 export async function docSyncCommand(path, options) {
   const repoPath = resolve(path);
@@ -23,6 +27,11 @@ export async function docSyncCommand(path, options) {
   }
   if (options.removeHook) {
     return removeGitHook(repoPath);
+  }
+
+  // Refresh mode — skip diff, review all skills against current codebase
+  if (options.refresh) {
+    return refreshAllSkills(repoPath, options);
   }
 
   p.intro(pc.cyan('aspens doc sync'));
@@ -93,9 +102,9 @@ export async function docSyncCommand(path, options) {
   }
 
   // Timeout priority: --timeout flag > ASPENS_TIMEOUT env var > auto-scaled default
-  const envTimeout = process.env.ASPENS_TIMEOUT ? parseInt(process.env.ASPENS_TIMEOUT, 10) : null;
   const autoTimeout = Math.min(300 + affectedSkills.length * 60, 900);
-  const timeoutMs = (typeof options.timeout === 'number' ? options.timeout : (envTimeout || autoTimeout)) * 1000;
+  const { timeoutMs, envWarning } = resolveTimeout(options.timeout, autoTimeout);
+  if (envWarning) p.log.warn('ASPENS_TIMEOUT is not a valid number — using auto-scaled timeout.');
 
   // Step 4: Build prompt
   const today = new Date().toISOString().split('T')[0];
@@ -107,8 +116,8 @@ export async function docSyncCommand(path, options) {
       const block = (skill.content.match(/## Activation[\s\S]*?---/) || [''])[0].toLowerCase();
       const name = f.toLowerCase().split('/').pop();
       if (block.includes(name)) return true;
-      const parts = f.toLowerCase().split('/').filter(p => !GENERIC_PATH_SEGMENTS.has(p) && p.length > 2);
-      return parts.some(p => block.includes(p));
+      const segs = f.toLowerCase().split('/').filter(seg => !GENERIC_PATH_SEGMENTS.has(seg) && seg.length > 2);
+      return segs.some(seg => block.includes(seg));
     })
   );
 
@@ -130,7 +139,7 @@ export async function docSyncCommand(path, options) {
     });
     if (p.isCancel(picked)) {
       p.cancel('Sync cancelled');
-      process.exit(0);
+      return;
     }
     selectedFiles = picked;
   }
@@ -143,7 +152,7 @@ export async function docSyncCommand(path, options) {
       p.log.warn('Selected files still exceed 80k — diff truncated. Claude will use Read tool for the rest.');
     }
   } else {
-    activeDiff = buildPrioritizedDiff(repoPath, diff, relevantFiles, actualCommits);
+    activeDiff = buildPrioritizedDiff(diff, relevantFiles);
     if (activeDiff.includes('(diff truncated')) {
       const fullKb = Math.round(diff.length / 1024);
       p.log.warn(`Large commit (${fullKb}k chars) — diff truncated. Claude will use Read tool for full file contents.`);
@@ -180,7 +189,7 @@ ${activeDiff}
 
 ## Changed Files
 ${selectedFiles.join('\n')}
-${graphContext ? `\n## Import Graph Context\n${graphContext}` : ''}
+${graphContext ? `\n## Import Graph Context\n${graphContext}\n` : ''}
 ## Existing Skills
 ${skillContents}
 
@@ -242,9 +251,9 @@ ${truncate(claudeMdContent, 5000)}
   const results = writeSkillFiles(repoPath, files, { force: true });
 
   console.log();
-  for (const result of results) {
-    const icon = result.status === 'overwritten' ? pc.yellow('~') : pc.green('+');
-    console.log(`  ${icon} ${result.path}`);
+  for (const wr of results) {
+    const icon = wr.status === 'overwritten' ? pc.yellow('~') : pc.green('+');
+    console.log(`  ${icon} ${wr.path}`);
   }
 
   console.log();
@@ -314,33 +323,11 @@ function getChangedFiles(repoPath, commits) {
 
 function findExistingSkills(repoPath) {
   const skillsDir = join(repoPath, '.claude', 'skills');
-  const skills = [];
-
-  if (!existsSync(skillsDir)) return skills;
-
-  function walkDir(dir) {
-    try {
-      const entries = readdirSync(dir);
-      for (const entry of entries) {
-        const full = join(dir, entry);
-        if (statSync(full).isDirectory()) {
-          walkDir(full);
-        } else if (entry === 'skill.md' || entry.endsWith('.md')) {
-          const content = readFileSync(full, 'utf8');
-          const nameMatch = content.match(/name:\s*(.+)/);
-          const relativePath = relative(repoPath, full);
-          skills.push({
-            name: nameMatch ? nameMatch[1].trim() : entry,
-            path: relativePath,
-            content,
-          });
-        }
-      }
-    } catch { /* skip unreadable dirs */ }
-  }
-
-  walkDir(skillsDir);
-  return skills;
+  return findSkillFiles(skillsDir).map(s => ({
+    name: s.name,
+    path: relative(repoPath, s.path),
+    content: s.content,
+  }));
 }
 
 // Path segments too generic to use for skill matching
@@ -370,8 +357,8 @@ function mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph = null
       if (activationBlock.includes(fileName)) return true;
 
       // Check meaningful path segments (skip generic ones)
-      const parts = fileLower.split('/').filter(p => !GENERIC_PATH_SEGMENTS.has(p) && p.length > 2);
-      return parts.some(part => activationBlock.includes(part));
+      const segs = fileLower.split('/').filter(seg => !GENERIC_PATH_SEGMENTS.has(seg) && seg.length > 2);
+      return segs.some(seg => activationBlock.includes(seg));
     });
 
     // Graph-aware: check if changed files are imported by files in this skill's domain
@@ -384,8 +371,8 @@ function mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph = null
           const depLower = dep.toLowerCase();
           const depName = depLower.split('/').pop();
           if (activationBlock.includes(depName)) return true;
-          const parts = depLower.split('/').filter(p => !GENERIC_PATH_SEGMENTS.has(p) && p.length > 2);
-          return parts.some(part => activationBlock.includes(part));
+          const segs = depLower.split('/').filter(seg => !GENERIC_PATH_SEGMENTS.has(seg) && seg.length > 2);
+          return segs.some(seg => activationBlock.includes(seg));
         });
       });
     }
@@ -405,6 +392,240 @@ function mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph = null
   }
 
   return affected;
+}
+
+// --- Refresh mode ---
+
+async function refreshAllSkills(repoPath, options) {
+  const verbose = !!options.verbose;
+
+  p.intro(pc.cyan('aspens doc sync --refresh'));
+
+  // Prerequisites
+  if (!isGitRepo(repoPath)) {
+    throw new CliError('Not a git repository.');
+  }
+  const skillsDir = join(repoPath, '.claude', 'skills');
+  if (!existsSync(skillsDir)) {
+    throw new CliError('No .claude/skills/ found. Run aspens doc init first.');
+  }
+
+  // Step 1: Scan + graph
+  const scanSpinner = p.spinner();
+  scanSpinner.start('Scanning repo and building import graph...');
+
+  const scan = scanRepo(repoPath);
+  try {
+    const rawGraph = await buildRepoGraph(repoPath, scan.languages);
+    persistGraphArtifacts(repoPath, rawGraph);
+  } catch (err) {
+    p.log.warn(`Graph build failed — continuing without it. (${err.message})`);
+  }
+
+  scanSpinner.stop('Scan complete');
+
+  // Step 2: Load existing skills
+  const existingSkills = findExistingSkills(repoPath);
+  if (existingSkills.length === 0) {
+    throw new CliError('No skills found in .claude/skills/. Run aspens doc init first.');
+  }
+
+  const baseSkill = existingSkills.find(s => s.name === 'base');
+  const domainSkills = existingSkills.filter(s => s.name !== 'base');
+
+  p.log.info(`Found ${existingSkills.length} skill(s): ${existingSkills.map(s => pc.cyan(s.name)).join(', ')}`);
+
+  // Timeout: --timeout flag > ASPENS_TIMEOUT env > auto-scaled
+  const autoTimeout = Math.min(120 + existingSkills.length * 60, 900);
+  const { timeoutMs: perSkillTimeout } = resolveTimeout(options.timeout, autoTimeout);
+
+  const today = new Date().toISOString().split('T')[0];
+  const systemPrompt = loadPrompt('doc-sync-refresh');
+  const allUpdatedFiles = [];
+
+  // Step 3: Refresh base skill first
+  if (baseSkill) {
+    const baseSpinner = p.spinner();
+    baseSpinner.start('Refreshing base skill...');
+
+    try {
+      const baseContext = buildBaseContext(repoPath, scan);
+      const prompt = `${systemPrompt}\n\n---\n\nRepository path: ${repoPath}\nToday's date: ${today}\n\n## Existing Skill\n\`\`\`\n${baseSkill.content}\n\`\`\`\n\n## Current Codebase\n${baseContext}`;
+
+      const result = await runClaude(prompt, {
+        timeout: perSkillTimeout,
+        allowedTools: READ_ONLY_TOOLS,
+        verbose,
+        model: options.model || null,
+        onActivity: verbose ? (msg) => baseSpinner.message(pc.dim(msg)) : null,
+      });
+
+      const files = parseFileOutput(result.text);
+      if (files.length > 0) {
+        allUpdatedFiles.push(...files);
+        baseSpinner.stop(pc.yellow('base') + ' — updated');
+      } else {
+        baseSpinner.stop(pc.dim('base') + ' — up to date');
+      }
+    } catch (err) {
+      baseSpinner.stop(pc.red('base — failed: ') + err.message);
+    }
+  }
+
+  // Step 4: Refresh domain skills in parallel batches
+  if (domainSkills.length > 0) {
+    for (let i = 0; i < domainSkills.length; i += PARALLEL_LIMIT) {
+      const batch = domainSkills.slice(i, i + PARALLEL_LIMIT);
+
+      const batchResults = await Promise.all(batch.map(async (skill) => {
+        const skillSpinner = p.spinner();
+        skillSpinner.start(`Refreshing ${pc.cyan(skill.name)}...`);
+
+        try {
+          const domain = skillToDomain(skill);
+          const domainContext = buildDomainContext(repoPath, scan, domain);
+
+          const prompt = `${systemPrompt}\n\n---\n\nRepository path: ${repoPath}\nToday's date: ${today}\n\n## Existing Skill\n\`\`\`\n${skill.content}\n\`\`\`\n\n## Current Codebase (${skill.name} domain)\n${domainContext}`;
+
+          const result = await runClaude(prompt, {
+            timeout: perSkillTimeout,
+            allowedTools: READ_ONLY_TOOLS,
+            verbose,
+            model: options.model || null,
+            onActivity: verbose ? (msg) => skillSpinner.message(pc.dim(msg)) : null,
+          });
+
+          const files = parseFileOutput(result.text);
+          if (files.length > 0) {
+            skillSpinner.stop(pc.yellow(skill.name) + ' — updated');
+            return files;
+          } else {
+            skillSpinner.stop(pc.dim(skill.name) + ' — up to date');
+            return [];
+          }
+        } catch (err) {
+          skillSpinner.stop(pc.red(`${skill.name} — failed: `) + err.message);
+          return [];
+        }
+      }));
+
+      for (const files of batchResults) {
+        allUpdatedFiles.push(...files);
+      }
+    }
+  }
+
+  // Step 5: Refresh CLAUDE.md if it exists
+  const claudeMdPath = join(repoPath, 'CLAUDE.md');
+  if (existsSync(claudeMdPath)) {
+    const claudeSpinner = p.spinner();
+    claudeSpinner.start('Checking CLAUDE.md...');
+
+    try {
+      const claudeMd = readFileSync(claudeMdPath, 'utf8');
+      const skillSummaries = existingSkills.map(s => {
+        const descMatch = s.content.match(/description:\s*(.+)/);
+        return `- **${s.name}**: ${descMatch ? descMatch[1].trim() : ''}`;
+      }).join('\n');
+
+      const claudePrompt = `${systemPrompt}\n\n---\n\nRepository path: ${repoPath}\nToday's date: ${today}\n\n## Existing Skill\n\`\`\`\n${claudeMd}\n\`\`\`\n\n## Installed Skills\n${skillSummaries}\n\n## Current Codebase\n${buildBaseContext(repoPath, scan)}`;
+
+      const claudeResult = await runClaude(claudePrompt, {
+        timeout: perSkillTimeout,
+        allowedTools: READ_ONLY_TOOLS,
+        verbose,
+        model: options.model || null,
+        onActivity: verbose ? (msg) => claudeSpinner.message(pc.dim(msg)) : null,
+      });
+
+      const claudeFiles = parseFileOutput(claudeResult.text);
+      if (claudeFiles.length > 0) {
+        allUpdatedFiles.push(...claudeFiles);
+        claudeSpinner.stop(pc.yellow('CLAUDE.md') + ' — updated');
+      } else {
+        claudeSpinner.stop(pc.dim('CLAUDE.md') + ' — up to date');
+      }
+    } catch (err) {
+      claudeSpinner.stop(pc.red('CLAUDE.md — failed: ') + err.message);
+    }
+  }
+
+  // Step 6: Check for uncovered domains
+  const coveredNames = new Set(existingSkills.map(s => s.name.toLowerCase()));
+  const uncoveredDomains = (scan.domains || []).filter(d =>
+    !coveredNames.has(d.name.toLowerCase())
+  );
+
+  if (uncoveredDomains.length > 0) {
+    console.log();
+    p.log.info(`Potential uncovered domains: ${uncoveredDomains.map(d => pc.yellow(d.name)).join(', ')}`);
+    p.log.info(pc.dim('Run aspens doc init --mode chunked --domains "' + uncoveredDomains.map(d => d.name).join(',') + '" to generate skills for these.'));
+  }
+
+  // Step 7: Write results
+  if (allUpdatedFiles.length === 0) {
+    console.log();
+    p.outro('All skills are up to date');
+    return;
+  }
+
+  // Dry run
+  if (options.dryRun) {
+    console.log();
+    p.log.info(`Dry run — ${allUpdatedFiles.length} file(s) would be updated:`);
+    for (const file of allUpdatedFiles) {
+      console.log(pc.dim('  ') + pc.yellow('~') + ' ' + file.path);
+    }
+    p.outro('Dry run complete');
+    return;
+  }
+
+  const results = writeSkillFiles(repoPath, allUpdatedFiles, { force: true });
+
+  console.log();
+  for (const result of results) {
+    const icon = result.status === 'overwritten' ? pc.yellow('~') : pc.green('+');
+    console.log(`  ${icon} ${result.path}`);
+  }
+
+  // Step 8: Regenerate skill-rules.json
+  try {
+    const rules = extractRulesFromSkills(skillsDir);
+    writeFileSync(join(skillsDir, 'skill-rules.json'), JSON.stringify(rules, null, 2) + '\n');
+    p.log.info('Updated skill-rules.json');
+  } catch { /* non-fatal */ }
+
+  console.log();
+  p.outro(`${results.length} file(s) refreshed`);
+}
+
+/**
+ * Convert a skill's activation patterns into a domain object
+ * compatible with buildDomainContext().
+ */
+function skillToDomain(skill) {
+  const patterns = parseActivationPatterns(skill.content);
+  const directories = new Set();
+  const files = [];
+
+  for (const pattern of patterns) {
+    if (pattern.includes('*')) {
+      // Glob pattern — extract directory prefix
+      const dir = pattern.replace(/\/\*.*$/, '').replace(/\*.*$/, '');
+      if (dir) directories.add(dir);
+    } else {
+      // Exact file path
+      files.push(pattern);
+      const dir = dirname(pattern);
+      if (dir && dir !== '.') directories.add(dir);
+    }
+  }
+
+  return {
+    name: skill.name,
+    directories: [...directories],
+    files,
+  };
 }
 
 // --- Git hook ---
@@ -442,6 +663,13 @@ __aspens_doc_sync() {
   ASPENS_LOCK="/tmp/aspens-sync-\${REPO_HASH}.lock"
   ASPENS_LOG="/tmp/aspens-sync-\${REPO_HASH}.log"
 
+  # Skip aspens-only commits (skills, CLAUDE.md, graph artifacts)
+  CHANGED="\$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)"
+  NON_ASPENS="\$(echo "\$CHANGED" | grep -v '^\.claude/' | grep -v '^CLAUDE\.md\$' || true)"
+  if [ -z "\$NON_ASPENS" ]; then
+    return 0
+  fi
+
   # Cooldown: skip if last sync was less than 5 minutes ago
   if [ -f "\$ASPENS_LOCK" ]; then
     LAST_RUN=\$(cat "\$ASPENS_LOCK" 2>/dev/null || echo 0)
@@ -460,8 +688,8 @@ __aspens_doc_sync() {
     tail -100 "\$ASPENS_LOG" > "\$ASPENS_LOG.tmp" && mv "\$ASPENS_LOG.tmp" "\$ASPENS_LOG"
   fi
 
-  # Run in background with logging
-  (echo "[sync] \$(date '+%Y-%m-%d %H:%M:%S') started" >> "\$ASPENS_LOG" && ${aspensCmd} doc sync --commits 1 "\$REPO_ROOT" >> "\$ASPENS_LOG" 2>&1; echo "[sync] \$(date '+%Y-%m-%d %H:%M:%S') finished (exit \$?)" >> "\$ASPENS_LOG") &
+  # Run fully detached so git returns immediately (POSIX-compatible — no disown needed)
+  (echo "[sync] \$(date '+%Y-%m-%d %H:%M:%S') started" >> "\$ASPENS_LOG" && ${aspensCmd} doc sync --commits 1 "\$REPO_ROOT" >> "\$ASPENS_LOG" 2>&1; echo "[sync] \$(date '+%Y-%m-%d %H:%M:%S') finished (exit \$?)" >> "\$ASPENS_LOG") </dev/null >/dev/null 2>&1 &
 }
 __aspens_doc_sync
 # <<< aspens doc-sync hook <<<
@@ -529,13 +757,11 @@ export function removeGitHook(repoPath) {
 // Build a diff from a user-selected subset of files
 function getSelectedFilesDiff(repoPath, files, commits) {
   try {
-    const quoted = files.map(f => `"${f.replace(/"/g, '\\"')}"`).join(' ');
-    const result = execSync(`git diff HEAD~${commits}..HEAD -- ${quoted}`, {
+    const result = execFileSync('git', ['diff', `HEAD~${commits}..HEAD`, '--', ...files], {
       cwd: repoPath,
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
       timeout: 30000,
-      stdio: ['pipe', 'pipe', 'pipe'],
     });
     return truncateDiff(result, 80000);
   } catch {
@@ -545,7 +771,7 @@ function getSelectedFilesDiff(repoPath, files, commits) {
 
 // Build a diff that puts skill-relevant files first so they survive truncation.
 // Relevant files get 60k, everything else gets 20k (80k total).
-function buildPrioritizedDiff(repoPath, fullDiff, relevantFiles, commits) {
+function buildPrioritizedDiff(fullDiff, relevantFiles) {
   const MAX_CHARS = 80000;
   if (fullDiff.length <= MAX_CHARS || relevantFiles.length === 0) {
     return truncateDiff(fullDiff, MAX_CHARS);
@@ -553,9 +779,9 @@ function buildPrioritizedDiff(repoPath, fullDiff, relevantFiles, commits) {
 
   // Split full diff into per-file chunks
   const chunks = [];
-  const parts = fullDiff.split(/(?=\ndiff --git )/);
+  const parts = fullDiff.split(/(?=^diff --git )/m);
   for (const part of parts) {
-    const m = part.match(/\ndiff --git a\/(.*?) b\//);
+    const m = part.match(/^diff --git a\/(.*?) b\//m);
     chunks.push({ file: m ? m[1] : '', text: part });
   }
 

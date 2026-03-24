@@ -10,6 +10,7 @@ import { writeSkillFiles, extractRulesFromSkills, generateDomainPatterns, mergeS
 import { persistGraphArtifacts } from '../lib/graph-persistence.js';
 import { installGitHook } from './doc-sync.js';
 import { CliError } from '../lib/errors.js';
+import { resolveTimeout } from '../lib/timeout.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -19,13 +20,10 @@ const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 // Auto-scale timeout based on repo size
 function autoTimeout(scan, userTimeout) {
-  if (typeof userTimeout === 'number' && userTimeout > 0) {
-    return userTimeout * 1000;
-  }
-  const envTimeout = process.env.ASPENS_TIMEOUT ? parseInt(process.env.ASPENS_TIMEOUT, 10) : null;
-  if (envTimeout > 0) return envTimeout * 1000;
-  const defaults = { 'small': 120000, 'medium': 300000, 'large': 600000, 'very-large': 900000 };
-  return defaults[scan.size?.category] || 300000;
+  const sizeDefaults = { 'small': 120, 'medium': 300, 'large': 600, 'very-large': 900 };
+  const fallback = sizeDefaults[scan.size?.category] || 300;
+  const { timeoutMs } = resolveTimeout(userTimeout, fallback);
+  return timeoutMs;
 }
 
 function makeClaudeOptions(timeoutMs, verbose, model, spinner) {

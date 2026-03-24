@@ -5,13 +5,13 @@ import * as p from '@clack/prompts';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles } from '../lib/skill-writer.js';
 import { CliError } from '../lib/errors.js';
+import { resolveTimeout } from '../lib/timeout.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 export async function customizeCommand(what, options) {
   const repoPath = resolve('.');
-  const envTimeout = process.env.ASPENS_TIMEOUT ? parseInt(process.env.ASPENS_TIMEOUT, 10) : null;
-  const timeoutMs = (typeof options.timeout === 'number' ? options.timeout : (envTimeout || 300)) * 1000;
+  const { timeoutMs } = resolveTimeout(options.timeout, 300);
   const verbose = !!options.verbose;
 
   if (what !== 'agents') {
