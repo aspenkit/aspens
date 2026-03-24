@@ -5,12 +5,14 @@ import * as p from '@clack/prompts';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles } from '../lib/skill-writer.js';
 import { CliError } from '../lib/errors.js';
+import { resolveTimeout } from '../lib/timeout.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 export async function customizeCommand(what, options) {
   const repoPath = resolve('.');
-  const timeoutMs = (typeof options.timeout === 'number' ? options.timeout : 300) * 1000;
+  const { timeoutMs, envWarning } = resolveTimeout(options.timeout, 300);
+  if (envWarning) p.log.warn('ASPENS_TIMEOUT is not a valid number — using default timeout.');
   const verbose = !!options.verbose;
 
   if (what !== 'agents') {

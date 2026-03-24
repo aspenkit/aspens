@@ -90,6 +90,38 @@ export function parseActivationPatterns(content) {
   return patterns;
 }
 
+// Path segments too generic to use for skill matching
+export const GENERIC_PATH_SEGMENTS = new Set([
+  'src', 'app', 'lib', 'api', 'v1', 'v2', 'components', 'services',
+  'utils', 'helpers', 'common', 'core', 'config', 'middleware',
+  'models', 'types', 'hooks', 'pages', 'routes', 'tests', 'test',
+  'public', 'assets', 'styles', 'scripts',
+]);
+
+/**
+ * Extract the ## Activation section from skill content, lowercased.
+ * Uses the robust lookahead regex that stops at --- or another ## heading.
+ */
+export function getActivationBlock(content) {
+  if (!content || typeof content !== 'string') return '';
+  const match = content.match(/## Activation[\s\S]*?(?=\n---|\n## (?!Activation)|$)/);
+  return match ? match[0].toLowerCase() : '';
+}
+
+/**
+ * Check if a file path matches an activation block.
+ * Tests filename and meaningful path segments (skipping generic ones).
+ */
+export function fileMatchesActivation(filePath, activationBlock, genericSegments = GENERIC_PATH_SEGMENTS) {
+  if (!filePath || !activationBlock) return false;
+  const lower = filePath.toLowerCase();
+  const parts = lower.split('/').filter(Boolean);
+  const name = parts.pop();
+  if (name && activationBlock.includes(name)) return true;
+  const segs = parts.filter(seg => !genericSegments.has(seg) && seg.length > 2);
+  return segs.some(seg => activationBlock.includes(seg));
+}
+
 /**
  * Extract keywords from ## Activation Keywords: line.
  * Returns string[] or empty array.

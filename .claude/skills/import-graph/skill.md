@@ -7,48 +7,42 @@ description: Static import analysis that builds dependency graphs, domain cluste
 
 This skill triggers when editing import-graph-related files:
 - `src/lib/graph-builder.js`
+- `src/lib/graph-persistence.js`
+- `src/commands/doc-graph.js`
 - `tests/graph-builder.test.js`
 
 ---
 
-You are working on the **import graph builder** — a static analysis module that parses JS/TS and Python source files to produce dependency graphs, hub rankings, domain clusters, and churn-based hotspots.
+You are working on the **import graph system** — static analysis that parses JS/TS and Python source files to produce dependency graphs, plus persistence/query layers for runtime use.
 
 ## Key Files
-- `src/lib/graph-builder.js` — All graph logic (691 lines, single file)
+- `src/lib/graph-builder.js` — Core graph logic: walk, parse, metrics, ranking, clustering (691 lines)
+- `src/lib/graph-persistence.js` — Serialize, persist, load, subgraph extraction, code-map, graph-index
+- `src/commands/doc-graph.js` — Standalone `aspens doc graph` command
+- `src/lib/scanner.js` — Provides `detectEntryPoints()`, only internal dependency of graph-builder
 - `tests/graph-builder.test.js` — Tests using temp fixture directories
-- `src/lib/scanner.js` — Provides `detectEntryPoints()`, the only internal dependency
 
 ## Key Concepts
-`buildRepoGraph(repoPath, languages?)` is the sole public entry point. It runs a **9-step pipeline**:
-1. Walk source files (skip `SKIP_DIRS`, vendored, generated)
-2. Parse imports per file (es-module-lexer for JS/TS, regex for Python)
-3. Populate `importedBy` reverse edges
-4. Git churn analysis (6-month window via `git log`)
-5. Compute per-file metrics (fanIn, fanOut, exportCount, churn, priority)
-6. Rank files by priority descending
-7. Identify hub files (top 20 by fanIn)
-8. Domain clustering via BFS connected components
-9. Identify hotspots (`churn > 3 && lines > 50`)
+**graph-builder.js** — `buildRepoGraph(repoPath, languages?)` runs a 9-step pipeline:
+1. Walk source files → 2. Parse imports → 3. Reverse edges → 4. Git churn → 5. Per-file metrics → 6. Priority ranking → 7. Hub detection → 8. Domain clustering → 9. Hotspots
+
+**graph-persistence.js** — Persistence and query layer:
+- `serializeGraph()` converts raw graph to indexed format (O(1) lookups, file→cluster mapping)
+- `persistGraphArtifacts()` writes `.claude/graph.json` + `.claude/code-map.md` + `.claude/graph-index.json` + auto-gitignores them
+- `extractSubgraph(graph, filePaths)` returns 1-hop neighborhood of mentioned files + relevant hubs/hotspots/clusters
+- `formatNavigationContext(subgraph)` renders compact markdown (~50 line budget) for prompt injection
+- `extractFileReferences(prompt, graph)` tiered extraction: explicit paths → bare filenames → cluster keywords
+- `generateCodeMap()` standalone overview for graph hook consumption
+- `generateGraphIndex()` tiny inverted index (export names → files, hub basenames, cluster labels)
 
 ## Critical Rules
-- **`await init` before any `parseJsImports` call.** es-module-lexer requires WASM initialization. `buildRepoGraph` calls it at the top; standalone usage of `parseJsImports` must also await it.
-- **Priority formula is load-bearing:** `fanIn * 3.0 + exportCount * 1.5 + (isEntry ? 10.0 : 0) + churn * 2.0 + (1/(depth+1)) * 1.0`. Downstream consumers (doc-init, scan commands) depend on this ranking.
-- **All paths are repo-relative strings** (e.g. `src/lib/scanner.js`), never absolute. Resolution functions convert abs→relative before returning.
-- **Import resolution tries extensions in order:** `.js, .ts, .tsx, .jsx, .mjs` then `/index` variants. Changing this order changes which file wins when ambiguous.
-- **Python regex uses global flags** — `lastIndex` is reset before each exec loop. Forgetting this causes missed imports.
-- **Errors are swallowed, not thrown:** parse failures, unreadable files, and missing git all return empty/null. The graph must always complete.
-
-## Key Patterns
-- **Internal vs external imports:** Relative/aliased imports that resolve to a file on disk → internal (edges). Everything else → `externalImports` array (no edges).
-- **Path alias support:** Reads `tsconfig.json`/`jsconfig.json` from root + monorepo subdirs. Strips comments before JSON.parse.
-- **Tests use `createFixture(name, files)`** to build temp directories under `tests/fixtures/graph-builder/`, cleaned up in `afterAll`.
-
-## Exported API
-- `buildRepoGraph(repoPath, languages?)` — main entry, returns `{ files, edges, ranked, hubs, clusters, hotspots, entryPoints, stats }`
-- `parseJsImports(content, relPath)` — `{ imports: string[], exports: string[] }`
-- `parsePyImports(content)` — `string[]` of raw specifiers
-- `resolveRelativeImport(repoPath, fromFile, specifier)` — `string | null`
-- `computeDomainClusters(files, edges)` — `{ components, coupling }`
+- **`await init` before any `parseJsImports` call.** es-module-lexer requires WASM initialization.
+- **Priority formula is load-bearing:** `fanIn * 3.0 + exportCount * 1.5 + (isEntry ? 10.0 : 0) + churn * 2.0 + (1/(depth+1)) * 1.0`. Downstream consumers depend on this ranking.
+- **All paths are repo-relative strings**, never absolute. Resolution functions convert abs→relative.
+- **Graph artifacts are gitignored** — `ensureGraphGitignore()` adds `.claude/graph.json`, `.claude/graph-index.json`, `.claude/code-map.md` to prevent commit loops.
+- **Errors are swallowed, not thrown** in graph-builder — parse failures return empty/null. The graph must always complete.
+- **`extractSubgraph` logic is mirrored** in `graph-context-prompt.mjs` (standalone hook, no imports). Keep both in sync.
+- **doc-sync rebuilds graph on every sync** — calls `buildRepoGraph` + `persistGraphArtifacts` to keep it fresh.
 
 ---
-**Last Updated:** 2026-03-21
+**Last Updated:** 2026-03-24

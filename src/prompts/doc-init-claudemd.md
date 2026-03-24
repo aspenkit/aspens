@@ -22,3 +22,5 @@ Return exactly one file:
 2. Reference skills by their path (e.g., `.claude/skills/billing/skill.md`).
 3. Include actual commands from the scan data, not placeholders.
 4. Do NOT duplicate what's already in the skills — just reference them.
+5. Always include a `## Behavior` section with this rule verbatim:
+   - **Verify before claiming** — Never state that something is configured, running, scheduled, or complete without confirming it first. If you haven't verified it in this session, say so rather than assuming.

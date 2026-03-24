@@ -9,8 +9,8 @@ export class CliError extends Error {
    *   - exitCode: process exit code (default 1)
    *   - logged: if true, the top-level handler won't re-print the message
    */
-  constructor(message, { exitCode = 1, logged = false } = {}) {
-    super(message);
+  constructor(message, { exitCode = 1, logged = false, cause } = {}) {
+    super(message, cause ? { cause } : undefined);
     this.name = 'CliError';
     this.exitCode = exitCode;
     this.logged = logged;
