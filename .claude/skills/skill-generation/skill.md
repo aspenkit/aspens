@@ -7,35 +7,44 @@ description: LLM-powered generation pipeline for Claude Code skills and CLAUDE.m
 
 This skill triggers when editing skill-generation files:
 - `src/commands/doc-init.js`
-- `src/commands/doc-sync.js`
-- `src/commands/customize.js`
+- `src/commands/doc-graph.js`
 - `src/lib/context-builder.js`
 - `src/lib/runner.js`
 - `src/lib/skill-writer.js`
+- `src/lib/skill-reader.js`
 - `src/prompts/**/*`
 
 ---
 
-You are working on **aspens' skill generation pipeline** — the system that scans repos and uses Claude CLI to generate `.claude/skills/` files and `CLAUDE.md`.
+You are working on **aspens' skill generation pipeline** — the system that scans repos and uses Claude CLI to generate `.claude/skills/` files, hooks, and `CLAUDE.md`.
 
 ## Key Files
-- `src/commands/doc-init.js` — Main pipeline: scan → parallel discovery → strategy → mode → generate → write
-- `src/lib/runner.js` — `runClaude()` spawns `claude -p --verbose --output-format stream-json`; `loadPrompt()` resolves `{{partial}}` from `src/prompts/partials/`; `parseFileOutput()` extracts `<file path="...">` XML tags
+- `src/commands/doc-init.js` — Main 9-step pipeline: scan → graph → discovery → strategy → mode → generate → validate → write → hooks
+- `src/commands/doc-graph.js` — Standalone graph rebuild command (`aspens doc graph`)
+- `src/lib/runner.js` — `runClaude()`, `loadPrompt()`, `parseFileOutput()`, `validateSkillFiles()`
 - `src/lib/context-builder.js` — Assembles prompt context from scan results, manifests, configs, domain files, git log
-- `src/lib/skill-writer.js` — Writes files with force/skip/overwrite semantics
-- `src/prompts/` — Prompt templates; partials in `src/prompts/partials/` are inlined via `{{name}}`
+- `src/lib/skill-writer.js` — Writes files, generates `skill-rules.json`, domain bash patterns, merges `settings.json`
+- `src/lib/skill-reader.js` — Parses skill frontmatter, activation patterns, keywords (used by skill-writer)
+- `src/prompts/` — Prompt templates; `discover-domains.md` and `discover-architecture.md` for discovery agents
 
 ## Key Concepts
-- **3-layer pipeline:** (1) `scanRepo` + `buildRepoGraph` (2) parallel discovery agents (domain + architecture via `Promise.all`) (3) generation (all-at-once or chunked)
-- **Generation modes:** `all-at-once` = single Claude call for everything; `chunked` = base skill + per-domain (up to 3 parallel via `PARALLEL_LIMIT`) + CLAUDE.md; `base-only` = just base skill
-- **Existing docs strategies:** `improve` (preserve hand-written content), `rewrite` (fresh), `skip-existing` (only generate new domains)
-- **Auto-timeout:** Scales by repo size category — small=120s, medium=300s, large=600s, very-large=900s
-- **Read-only tools:** Claude agents only get `['Read', 'Glob', 'Grep']` — no writes
-- **Output format:** Claude must return `<file path="...">content</file>` XML tags. If tags are missing, the pipeline retries with a format reminder.
+- **9-step pipeline:** (1) scan + graph (2) parallel discovery agents (3) strategy (4) mode (5) generate (6) validate (7) preview (8) write (9) install hooks
+- **Parallel discovery:** Two agents run via `Promise.all` — domain discovery and architecture analysis — before any user prompt
+- **Generation modes:** `all-at-once` = single Claude call; `chunked` = base + per-domain (up to 3 parallel via `PARALLEL_LIMIT`) + CLAUDE.md; `base-only` = just base skill
+- **`--domains` flag:** Filters which domains to generate in chunked mode; enables `domainsOnly` mode that skips base + CLAUDE.md (for retrying failed domains)
+- **`--hooks-only` flag:** Skips generation entirely, just installs/updates hooks from existing skills
+- **Retry logic:** Base skill and CLAUDE.md retry up to 2 times if `parseFileOutput` returns empty (format correction prompt)
+- **Validation:** `validateSkillFiles()` checks for truncation, missing frontmatter, missing sections, bad file path references
+- **Hook installation (step 9):** Generates `skill-rules.json`, copies hook scripts, generates `post-tool-use-tracker.sh` with domain patterns, merges `settings.json`
+- **Graph context:** `buildGraphContext()` and `buildDomainGraphContext()` inject import graph data into prompts
 
 ## Critical Rules
-- **Base skill + CLAUDE.md are essential** — if `parseFileOutput` returns empty for either, the pipeline retries automatically with a format correction prompt. Domain skills failing is acceptable (user can retry).
-- **`improve` strategy preserves hand-written content** — Claude must read existing skills first and not discard human-authored rules, conventions, or gotchas.
-- **Discovery runs before user prompt** — the domain picker shows Claude-discovered domains, not scanner directory names.
-- **PARALLEL_LIMIT = 3** — domain skills generate in batches of 3 concurrent Claude calls. Base skill is always sequential first. CLAUDE.md is always sequential last.
+- **Base skill + CLAUDE.md are essential** — pipeline retries automatically with format correction. Domain skill failures are acceptable (user retries with `--domains`).
+- **`improve` strategy preserves hand-written content** — Claude must read existing skills first and not discard human-authored rules.
+- **Discovery runs before user prompt** — domain picker shows Claude-discovered domains, not scanner directory names.
+- **PARALLEL_LIMIT = 3** — domain skills generate in batches of 3 concurrent Claude calls. Base skill always sequential first. CLAUDE.md always sequential last.
 - **Skills must be 35-60 lines** — every line earns its place. No generic advice, no framework documentation.
+- **CliError, not process.exit()** — all error exits throw `CliError`; cancellations `return` early.
+
+---
+**Last Updated:** 2026-03-24
