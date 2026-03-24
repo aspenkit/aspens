@@ -22,7 +22,8 @@ const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 function autoTimeout(scan, userTimeout) {
   const sizeDefaults = { 'small': 120, 'medium': 300, 'large': 600, 'very-large': 900 };
   const fallback = sizeDefaults[scan.size?.category] || 300;
-  const { timeoutMs } = resolveTimeout(userTimeout, fallback);
+  const { timeoutMs, envWarning } = resolveTimeout(userTimeout, fallback);
+  if (envWarning) console.warn('Warning: ASPENS_TIMEOUT is not a valid number — using auto-scaled timeout.');
   return timeoutMs;
 }
 

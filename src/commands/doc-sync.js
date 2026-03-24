@@ -137,6 +137,10 @@ export async function docSyncCommand(path, options) {
       p.cancel('Sync cancelled');
       return;
     }
+    if (picked.length === 0) {
+      p.cancel('No files selected');
+      return;
+    }
     selectedFiles = picked;
   }
 
@@ -251,6 +255,13 @@ ${truncate(claudeMdContent, 5000)}
     const icon = wr.status === 'overwritten' ? pc.yellow('~') : pc.green('+');
     console.log(`  ${icon} ${wr.path}`);
   }
+
+  // Regenerate skill-rules.json so hooks see updated activation patterns
+  try {
+    const skillsDir = join(repoPath, '.claude', 'skills');
+    const rules = extractRulesFromSkills(skillsDir);
+    writeFileSync(join(skillsDir, 'skill-rules.json'), JSON.stringify(rules, null, 2) + '\n');
+  } catch { /* non-fatal */ }
 
   console.log();
   p.outro(`${results.length} file(s) updated`);

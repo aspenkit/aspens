@@ -47,7 +47,14 @@ export function truncateDiff(diff, maxChars) {
   // Cut at the last complete diff hunk boundary to avoid mid-line truncation
   const truncated = diff.slice(0, maxChars);
   const lastHunkBoundary = truncated.lastIndexOf('\ndiff --git');
-  const cutPoint = lastHunkBoundary > 0 ? lastHunkBoundary : maxChars;
+  let cutPoint;
+  if (lastHunkBoundary > 0) {
+    cutPoint = lastHunkBoundary;
+  } else {
+    // No hunk boundary found — fall back to last newline to avoid mid-line cut
+    const lastNewline = truncated.lastIndexOf('\n');
+    cutPoint = lastNewline > 0 ? lastNewline : maxChars;
+  }
   return diff.slice(0, cutPoint) + `\n\n... (diff truncated — use Read tool to see full files)`;
 }
 

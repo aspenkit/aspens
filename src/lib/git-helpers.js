@@ -1,8 +1,8 @@
-import { execSync, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 export function isGitRepo(repoPath) {
   try {
-    execSync('git rev-parse --git-dir', { cwd: repoPath, stdio: 'pipe', timeout: 5000 });
+    execFileSync('git', ['rev-parse', '--git-dir'], { cwd: repoPath, stdio: 'pipe', timeout: 5000 });
     return true;
   } catch {
     return false;
