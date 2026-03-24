@@ -495,5 +495,29 @@ export function persistGraphArtifacts(repoPath, rawGraph) {
   writeCodeMap(repoPath, serialized);
   const index = generateGraphIndex(serialized);
   saveGraphIndex(repoPath, index);
+  ensureGraphGitignore(repoPath);
   return serialized;
+}
+
+/**
+ * Ensure .claude/graph artifacts are gitignored to prevent the post-commit
+ * loop where graph.json's gitHash/timestamp changes every sync → new commit
+ * → sync runs again → repeat.
+ */
+function ensureGraphGitignore(repoPath) {
+  const gitignorePath = join(repoPath, '.gitignore');
+  const entries = [
+    '.claude/graph.json',
+    '.claude/graph-index.json',
+    '.claude/code-map.md',
+  ];
+
+  let existing = '';
+  try { existing = readFileSync(gitignorePath, 'utf8'); } catch { /* no .gitignore yet */ }
+
+  const toAdd = entries.filter(e => !existing.includes(e));
+  if (toAdd.length === 0) return;
+
+  const block = '\n# aspens graph artifacts (generated — do not commit)\n' + toAdd.join('\n') + '\n';
+  writeFileSync(gitignorePath, existing + block, 'utf8');
 }
