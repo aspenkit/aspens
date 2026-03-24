@@ -22,6 +22,8 @@ function autoTimeout(scan, userTimeout) {
   if (typeof userTimeout === 'number' && userTimeout > 0) {
     return userTimeout * 1000;
   }
+  const envTimeout = process.env.ASPENS_TIMEOUT ? parseInt(process.env.ASPENS_TIMEOUT, 10) : null;
+  if (envTimeout > 0) return envTimeout * 1000;
   const defaults = { 'small': 120000, 'medium': 300000, 'large': 600000, 'very-large': 900000 };
   return defaults[scan.size?.category] || 300000;
 }

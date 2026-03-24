@@ -12,10 +12,11 @@ You are given:
 **How to work:**
 1. Read the git diff to understand what changed
 2. Read the existing skills that are affected
-3. If needed, use Read/Glob/Grep to understand the new code in context
-4. Update only the skills that need changes — don't rewrite skills for unrelated domains
-5. If a change introduces a new domain that has no skill yet, create one
-6. Update CLAUDE.md if the changes affect repo-level structure, commands, or conventions
+3. **If the diff ends with `... (diff truncated)`**, use the Read tool to read the full content of the changed files listed in the Changed Files section — do not assume changes are trivial just because the diff is cut off
+4. If needed, use Read/Glob/Grep to understand the new code in context
+5. Update only the skills that need changes — don't rewrite skills for unrelated domains
+6. If a change introduces a new domain that has no skill yet, create one
+7. Update CLAUDE.md if the changes affect repo-level structure, commands, or conventions
 
 ## Output format
 

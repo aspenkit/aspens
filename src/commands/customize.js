@@ -10,7 +10,8 @@ const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 export async function customizeCommand(what, options) {
   const repoPath = resolve('.');
-  const timeoutMs = (typeof options.timeout === 'number' ? options.timeout : 300) * 1000;
+  const envTimeout = process.env.ASPENS_TIMEOUT ? parseInt(process.env.ASPENS_TIMEOUT, 10) : null;
+  const timeoutMs = (typeof options.timeout === 'number' ? options.timeout : (envTimeout || 300)) * 1000;
   const verbose = !!options.verbose;
 
   if (what !== 'agents') {

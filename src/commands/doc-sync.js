@@ -14,7 +14,6 @@ const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 export async function docSyncCommand(path, options) {
   const repoPath = resolve(path);
-  const timeoutMs = (typeof options.timeout === 'number' ? options.timeout : 300) * 1000;
   const verbose = !!options.verbose;
   const commits = typeof options.commits === 'number' ? options.commits : 1;
 
@@ -93,9 +92,63 @@ export async function docSyncCommand(path, options) {
     p.log.info('No skills directly affected, but Claude will check for structural changes.');
   }
 
+  // Timeout priority: --timeout flag > ASPENS_TIMEOUT env var > auto-scaled default
+  const envTimeout = process.env.ASPENS_TIMEOUT ? parseInt(process.env.ASPENS_TIMEOUT, 10) : null;
+  const autoTimeout = Math.min(300 + affectedSkills.length * 60, 900);
+  const timeoutMs = (typeof options.timeout === 'number' ? options.timeout : (envTimeout || autoTimeout)) * 1000;
+
   // Step 4: Build prompt
   const today = new Date().toISOString().split('T')[0];
   const systemPrompt = loadPrompt('doc-sync');
+
+  // Skill-relevant files (for diff prioritization and interactive picker pre-selection)
+  const relevantFiles = changedFiles.filter(f =>
+    affectedSkills.some(skill => {
+      const block = (skill.content.match(/## Activation[\s\S]*?---/) || [''])[0].toLowerCase();
+      const name = f.toLowerCase().split('/').pop();
+      if (block.includes(name)) return true;
+      const parts = f.toLowerCase().split('/').filter(p => !GENERIC_PATH_SEGMENTS.has(p) && p.length > 2);
+      return parts.some(p => block.includes(p));
+    })
+  );
+
+  // Interactive file picker: offer when diff is large and a TTY is available
+  let selectedFiles = changedFiles;
+  if (diff.length > 80000 && process.stdout.isTTY) {
+    const fullKb = Math.round(diff.length / 1024);
+    console.log();
+    p.log.warn(`Large diff (${fullKb}k chars) — select which files Claude should analyze:`);
+    console.log(pc.dim('  Skill-relevant files are pre-selected. Deselect large docs/data files to save time.\n'));
+    const picked = await p.multiselect({
+      message: 'Files to include in analysis',
+      options: changedFiles.map(f => ({
+        value: f,
+        label: f,
+        hint: relevantFiles.includes(f) ? pc.cyan('skill-relevant') : '',
+      })),
+      initialValues: relevantFiles.length > 0 ? relevantFiles : changedFiles,
+    });
+    if (p.isCancel(picked)) {
+      p.cancel('Sync cancelled');
+      process.exit(0);
+    }
+    selectedFiles = picked;
+  }
+
+  // Build diff from selected files only, or use full prioritized diff
+  let activeDiff;
+  if (selectedFiles.length < changedFiles.length) {
+    activeDiff = getSelectedFilesDiff(repoPath, selectedFiles, actualCommits);
+    if (activeDiff.includes('(diff truncated')) {
+      p.log.warn('Selected files still exceed 80k — diff truncated. Claude will use Read tool for the rest.');
+    }
+  } else {
+    activeDiff = buildPrioritizedDiff(repoPath, diff, relevantFiles, actualCommits);
+    if (activeDiff.includes('(diff truncated')) {
+      const fullKb = Math.round(diff.length / 1024);
+      p.log.warn(`Large commit (${fullKb}k chars) — diff truncated. Claude will use Read tool for full file contents.`);
+    }
+  }
 
   // Send affected skills in full, others as just path + description (save tokens)
   const affectedPaths = new Set(affectedSkills.map(s => s.path));
@@ -122,11 +175,11 @@ ${commitLog}
 
 ## Git Diff
 \`\`\`diff
-${truncateDiff(diff, 15000)}
+${activeDiff}
 \`\`\`
 
 ## Changed Files
-${changedFiles.join('\n')}
+${selectedFiles.join('\n')}
 ${graphContext ? `\n## Import Graph Context\n${graphContext}` : ''}
 ## Existing Skills
 ${skillContents}
@@ -472,6 +525,51 @@ export function removeGitHook(repoPath) {
 }
 
 // --- Helpers ---
+
+// Build a diff from a user-selected subset of files
+function getSelectedFilesDiff(repoPath, files, commits) {
+  try {
+    const quoted = files.map(f => `"${f.replace(/"/g, '\\"')}"`).join(' ');
+    const result = execSync(`git diff HEAD~${commits}..HEAD -- ${quoted}`, {
+      cwd: repoPath,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 30000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return truncateDiff(result, 80000);
+  } catch {
+    return '';
+  }
+}
+
+// Build a diff that puts skill-relevant files first so they survive truncation.
+// Relevant files get 60k, everything else gets 20k (80k total).
+function buildPrioritizedDiff(repoPath, fullDiff, relevantFiles, commits) {
+  const MAX_CHARS = 80000;
+  if (fullDiff.length <= MAX_CHARS || relevantFiles.length === 0) {
+    return truncateDiff(fullDiff, MAX_CHARS);
+  }
+
+  // Split full diff into per-file chunks
+  const chunks = [];
+  const parts = fullDiff.split(/(?=\ndiff --git )/);
+  for (const part of parts) {
+    const m = part.match(/\ndiff --git a\/(.*?) b\//);
+    chunks.push({ file: m ? m[1] : '', text: part });
+  }
+
+  // Separate relevant from other chunks
+  const relevantSet = new Set(relevantFiles);
+  const relevant = chunks.filter(c => relevantSet.has(c.file));
+  const others = chunks.filter(c => !relevantSet.has(c.file));
+
+  // Relevant files get the bulk of the budget; others get a smaller slice
+  const relevantDiff = truncateDiff(relevant.map(c => c.text).join(''), 60000);
+  const otherDiff = truncateDiff(others.map(c => c.text).join(''), 20000);
+
+  return (relevantDiff + (otherDiff ? '\n' + otherDiff : '')).trim();
+}
 
 function truncateDiff(diff, maxChars) {
   if (diff.length <= maxChars) return diff;
