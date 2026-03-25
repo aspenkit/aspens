@@ -14,13 +14,15 @@ export async function scanCommand(path, options) {
   const result = scanRepo(repoPath, { extraDomains });
 
   // Build import graph
-  try {
-    const graph = await buildRepoGraph(repoPath, result.languages);
-    result.graph = formatGraphForDisplay(graph);
-  } catch (err) {
-    // Graph building failed — continue without it
-    if (options.verbose) {
-      console.error(pc.dim(`  Graph building failed: ${err.message}`));
+  if (options.graph !== false) {
+    try {
+      const graph = await buildRepoGraph(repoPath, result.languages);
+      result.graph = formatGraphForDisplay(graph);
+    } catch (err) {
+      // Graph building failed — continue without it
+      if (options.verbose) {
+        console.error(pc.dim(`  Graph building failed: ${err.message}`));
+      }
     }
   }
 

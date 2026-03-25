@@ -70,6 +70,7 @@ function showWelcome() {
     ${pc.yellow('--mode')} ${pc.dim('<mode>')}       all, chunked, base-only     ${pc.yellow('--timeout')} ${pc.dim('<s>')}  Seconds per call
     ${pc.yellow('--strategy')} ${pc.dim('<s>')}    improve, rewrite, skip      ${pc.yellow('--json')}      JSON output (scan)
     ${pc.yellow('--no-hooks')}         Skip hook installation       ${pc.yellow('--hooks-only')}  Update hooks only
+    ${pc.yellow('--no-graph')}         Skip import graph analysis
 
   ${pc.bold('Typical Workflow')}
     ${pc.dim('$')} aspens scan                              ${pc.dim('1. See what\'s in your repo')}
@@ -121,6 +122,7 @@ program
   .option('--json', 'Output as JSON')
   .option('--domains <domains>', 'Additional domains to include (comma-separated)')
   .option('--verbose', 'Show diagnostic output')
+  .option('--no-graph', 'Skip import graph analysis')
   .action(scanCommand);
 
 // Doc commands
@@ -143,6 +145,7 @@ doc
   .option('--verbose', 'Show what Claude is reading/doing in real time')
   .option('--no-hooks', 'Skip hook/rules/settings installation')
   .option('--hooks-only', 'Skip skill generation, just install/update hooks')
+  .option('--no-graph', 'Skip import graph analysis')
   .action(docInitCommand);
 
 doc
@@ -157,6 +160,7 @@ doc
   .option('--timeout <seconds>', 'Claude timeout in seconds', parseTimeout, 300)
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')
+  .option('--no-graph', 'Skip import graph analysis')
   .action((path, options) => {
     checkMissingHooks(resolve(path));
     return docSyncCommand(path, options);

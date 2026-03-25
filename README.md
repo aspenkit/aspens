@@ -196,15 +196,25 @@ $ aspens doc sync .
 | Option | Description |
 |--------|-------------|
 | `--commits <n>` | Number of commits to analyze (default: 1) |
+| `--refresh` | Review all skills against current codebase (no git diff needed) |
 | `--install-hook` | Install git post-commit hook for auto-sync |
+| `--remove-hook` | Remove the post-commit hook |
 | `--dry-run` | Preview without writing files |
 | `--timeout <seconds>` | Claude timeout (default: 300) |
 | `--model <model>` | Claude model (e.g., sonnet, opus, haiku) |
 | `--verbose` | Show what Claude is reading in real time |
 
+### `aspens doc graph [path]`
+
+Rebuild the import graph cache. Runs automatically during `doc init` and `doc sync`, but you can trigger it manually.
+
+```bash
+aspens doc graph .
+```
+
 ### `aspens add <type> [name]`
 
-Add individual components from the bundled library.
+Add individual components from the bundled library, or create custom skills.
 
 ```bash
 aspens add agent all              # Add all 9 AI agents
@@ -212,12 +222,15 @@ aspens add agent code-reviewer    # Add a specific agent
 aspens add agent --list           # Browse available agents
 aspens add hook skill-activation  # Add auto-triggering hooks
 aspens add command dev-docs       # Add slash commands
+aspens add skill my-convention    # Scaffold a custom skill
+aspens add skill release --from dev/release.md  # Generate from a reference doc
+aspens add skill --list           # Show existing skills
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--list` | Browse available components |
-| `--force` | Overwrite existing files |
+| `--from <file>` | Generate a skill from a reference document (skills only) |
 
 ### `aspens customize agents`
 
