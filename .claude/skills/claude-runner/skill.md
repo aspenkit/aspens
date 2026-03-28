@@ -9,8 +9,9 @@ This skill triggers when editing claude-runner files:
 - `src/lib/runner.js`
 - `src/lib/skill-writer.js`
 - `src/lib/skill-reader.js`
+- `src/lib/timeout.js`
 - `src/prompts/**/*.md`
-- `tests/*extract*`, `tests/*parse*`, `tests/*prompt*`, `tests/*skill-writer*`
+- `tests/*extract*`, `tests/*parse*`, `tests/*prompt*`, `tests/*skill-writer*`, `tests/*skill-mapper*`, `tests/*timeout*`
 
 ---
 
@@ -19,8 +20,9 @@ You are working on the **Claude CLI execution layer** — the bridge between ass
 ## Key Files
 - `src/lib/runner.js` — `runClaude()`, `loadPrompt()`, `parseFileOutput()`, `validateSkillFiles()`, `extractResultFromStream()`
 - `src/lib/skill-writer.js` — `writeSkillFiles()`, `extractRulesFromSkills()`, `generateDomainPatterns()`, `mergeSettings()`
-- `src/lib/skill-reader.js` — `findSkillFiles()`, `parseFrontmatter()`, `parseActivationPatterns()`, `parseKeywords()`
-- `src/prompts/` — Markdown prompt templates; `partials/` subdir holds reusable fragments
+- `src/lib/skill-reader.js` — `findSkillFiles()`, `parseFrontmatter()`, `parseActivationPatterns()`, `parseKeywords()`, `fileMatchesActivation()`, `getActivationBlock()`, `GENERIC_PATH_SEGMENTS`
+- `src/lib/timeout.js` — `resolveTimeout()` — priority: `--timeout` flag > `ASPENS_TIMEOUT` env var > caller fallback
+- `src/prompts/` — Markdown prompt templates; `partials/` subdir holds reusable fragments (`skill-format`, `guideline-format`, `examples`)
 
 ## Key Concepts
 - **Stream-JSON protocol:** `runClaude()` always passes `--verbose --output-format stream-json`. Output is NDJSON: `type: 'result'` has final text + usage; `type: 'assistant'` has text/tool_use blocks; `type: 'user'` has tool_result blocks.
@@ -35,8 +37,9 @@ You are working on the **Claude CLI execution layer** — the bridge between ass
 - **Both `--verbose` and `--output-format stream-json` are required** — omitting either breaks stream parsing.
 - **Path sanitization is non-negotiable** — `sanitizePath()` blocks `..` traversal, absolute paths, and any path not under `.claude/` or exactly `CLAUDE.md`.
 - **Prompt partials resolve before variables** — `{{skill-format}}` resolves to `partials/skill-format.md` first. If no file, falls through to variable substitution.
-- **Timeout auto-scales** — small: 120s, medium: 300s, large: 600s, very-large: 900s. User `--timeout` overrides.
+- **Timeout resolution:** `resolveTimeout(flagValue, fallbackSeconds)` — `--timeout` flag wins, then `ASPENS_TIMEOUT` env, then caller-provided fallback. Size-based defaults (small: 120s, medium: 300s, large: 600s, very-large: 900s) are set by command handlers, not runner.
 - **`mergeSettings` preserves non-aspens hooks** — identifies aspens hooks by `ASPENS_HOOK_MARKERS` (`skill-activation-prompt`, `post-tool-use-tracker`), replaces matching entries, preserves everything else.
+- **Debug mode:** Set `ASPENS_DEBUG=1` to dump raw stream-json to `/tmp/aspens-debug-stream.json`.
 
 ---
-**Last Updated:** 2026-03-24
+**Last Updated:** 2026-03-28

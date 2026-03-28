@@ -60,6 +60,8 @@
       "filePatterns": [
         "src/lib/runner.js",
         "src/lib/skill-writer.js",
+        "src/lib/skill-reader.js",
+        "src/lib/timeout.js",
         "src/prompts/**/*.md",
         "tests/*extract*"
       ],
@@ -73,6 +75,8 @@
           "prompt",
           "loading",
           "skill-writer",
+          "skill-reader",
+          "timeout",
           "prompts",
           "tests",
           "extract"
@@ -92,12 +96,19 @@
       "alwaysActivate": false,
       "filePatterns": [
         "src/commands/doc-sync.js",
-        "src/prompts/doc-sync.md"
+        "src/prompts/doc-sync.md",
+        "src/prompts/doc-sync-refresh.md",
+        "src/lib/git-helpers.js",
+        "src/lib/diff-helpers.js",
+        "src/lib/git-hook.js"
       ],
       "promptTriggers": {
         "keywords": [
-          "doc",
+          "doc-sync",
+          "refresh",
           "sync",
+          "git-hook",
+          "doc",
           "doc sync",
           "incremental",
           "skill",
@@ -105,8 +116,10 @@
           "maps",
           "diffs",
           "commands",
-          "doc-sync",
-          "prompts"
+          "prompts",
+          "doc-sync-refresh",
+          "git-helpers",
+          "diff-helpers"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*doc sync",
@@ -123,7 +136,12 @@
       "alwaysActivate": false,
       "filePatterns": [
         "src/lib/graph-builder.js",
-        "tests/graph-builder.test.js"
+        "src/lib/graph-persistence.js",
+        "src/commands/doc-graph.js",
+        "src/templates/hooks/graph-context-prompt.mjs",
+        "src/templates/hooks/graph-context-prompt.sh",
+        "tests/graph-builder.test.js",
+        "tests/graph-persistence.test.js"
       ],
       "promptTriggers": {
         "keywords": [
@@ -135,8 +153,15 @@
           "builds",
           "dependency",
           "graph-builder",
+          "graph-persistence",
+          "commands",
+          "doc-graph",
+          "templates",
+          "hooks",
+          "graph-context-prompt",
           "tests",
-          "graph-builder.test"
+          "graph-builder.test",
+          "graph-persistence.test"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import graph",
@@ -158,6 +183,12 @@
       ],
       "promptTriggers": {
         "keywords": [
+          "scanRepo",
+          "detectLanguages",
+          "detectFrameworks",
+          "detectDomains",
+          "detectEntryPoints",
+          "health check",
           "repo",
           "scanning",
           "repo scanning",
@@ -172,6 +203,8 @@
           "scanner.test"
         ],
         "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*health check",
+          "health check.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*repo scanning",
           "repo scanning.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*repo.*scanning"
@@ -186,15 +219,19 @@
       "alwaysActivate": false,
       "filePatterns": [
         "src/commands/doc-init.js",
-        "src/commands/doc-sync.js",
-        "src/commands/customize.js",
-        "src/lib/context-builder.js",
         "src/lib/runner.js",
         "src/lib/skill-writer.js",
+        "src/lib/skill-reader.js",
+        "src/lib/git-hook.js",
+        "src/lib/timeout.js",
         "src/prompts/**/*"
       ],
       "promptTriggers": {
         "keywords": [
+          "doc-init",
+          "generate skills",
+          "discovery agents",
+          "chunked generation",
           "skill",
           "generation",
           "skill generation",
@@ -203,18 +240,20 @@
           "claude",
           "code",
           "commands",
-          "doc-init",
-          "doc-sync",
-          "customize",
-          "context-builder",
           "runner",
           "skill-writer",
+          "skill-reader",
+          "git-hook",
+          "timeout",
           "prompts"
         ],
         "intentPatterns": [
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*skill generation",
-          "skill generation.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*skill.*generation"
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*generate skills",
+          "generate skills.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*discovery agents",
+          "discovery agents.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*chunked generation",
+          "chunked generation.*(create|update|fix|add|modify|change|debug|refactor|implement|build)"
         ]
       }
     },
@@ -226,27 +265,32 @@
       "alwaysActivate": false,
       "filePatterns": [
         "src/commands/add.js",
-        "src/commands/customize.js",
         "src/templates/**/*"
       ],
       "promptTriggers": {
         "keywords": [
           "template",
+          "add agent",
+          "add command",
+          "add hook",
+          "add skill",
           "library",
           "template library",
           "bundled",
           "agents",
           "commands",
           "hooks",
-          "users",
+          "settings",
           "add",
-          "customize",
           "templates"
         ],
         "intentPatterns": [
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*template library",
-          "template library.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*template.*library"
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*add agent",
+          "add agent.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*add command",
+          "add command.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*add hook",
+          "add hook.*(create|update|fix|add|modify|change|debug|refactor|implement|build)"
         ]
       }
     }

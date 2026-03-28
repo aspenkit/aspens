@@ -28,13 +28,18 @@ src/lib/
   runner.js             # Claude CLI execution, stream-json parsing, file output extraction
   skill-writer.js       # writes skill .md files, generates skill-rules.json, merges settings
   skill-reader.js       # parses skill frontmatter, activation patterns, keywords
+  diff-helpers.js       # git diff parsing and change extraction
+  git-helpers.js        # git operations (log, diff, rev-parse)
+  git-hook.js           # post-commit hook install/uninstall for doc-sync
+  timeout.js            # timeout calculation (auto-scales by repo size)
   errors.js             # CliError class for structured error handling
+src/prompts/            # prompt templates + partials/ subdir for reusable fragments
 src/templates/
-  agents/               # 9 agent templates (.md)
+  agents/               # 11 agent templates (.md)
   commands/             # 2 command templates (.md)
   hooks/                # 5 hook templates (.sh + .mjs)
   settings/             # settings templates
-tests/                   # vitest tests + fixtures
+tests/                  # vitest tests + fixtures
 ```
 
 ## Skills (Claude Code integration)
