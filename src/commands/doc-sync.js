@@ -213,7 +213,6 @@ ${truncate(claudeMdContent, 5000)}
       allowedTools: READ_ONLY_TOOLS,
       verbose,
       model: options.model || null,
-      maxTokens: 16000,
       onActivity: verbose ? (msg) => syncSpinner.message(pc.dim(msg)) : null,
     });
   } catch (err) {
@@ -383,7 +382,6 @@ async function refreshAllSkills(repoPath, options) {
         allowedTools: READ_ONLY_TOOLS,
         verbose,
         model: options.model || null,
-        maxTokens: 8000,
         onActivity: verbose ? (msg) => baseSpinner.message(pc.dim(msg)) : null,
       });
 
@@ -419,7 +417,6 @@ async function refreshAllSkills(repoPath, options) {
             allowedTools: READ_ONLY_TOOLS,
             verbose,
             model: options.model || null,
-            maxTokens: 8000,
             onActivity: verbose ? (msg) => skillSpinner.message(pc.dim(msg)) : null,
           });
 
@@ -463,7 +460,6 @@ async function refreshAllSkills(repoPath, options) {
         allowedTools: READ_ONLY_TOOLS,
         verbose,
         model: options.model || null,
-        maxTokens: 8000,
         onActivity: verbose ? (msg) => claudeSpinner.message(pc.dim(msg)) : null,
       });
 

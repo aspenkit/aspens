@@ -27,15 +27,23 @@ function autoTimeout(scan, userTimeout) {
   return timeoutMs;
 }
 
-function makeClaudeOptions(timeoutMs, verbose, model, spinner, maxTokens = null) {
+function makeClaudeOptions(timeoutMs, verbose, model, spinner) {
   return {
     timeout: timeoutMs,
     allowedTools: READ_ONLY_TOOLS,
     verbose,
     model: model || null,
-    maxTokens,
     onActivity: verbose && spinner ? (msg) => spinner.message(pc.dim(msg)) : null,
   };
+}
+
+// Sanitize markdown for safe inlining inside triple-backtick fences
+const MAX_INLINE_CHARS = 2000;
+function sanitizeInline(content, maxLen = MAX_INLINE_CHARS) {
+  let text = content.length > maxLen ? content.slice(0, maxLen) + '\n\n[... truncated]' : content;
+  // Escape triple backticks so they don't break wrapper fences
+  text = text.replace(/```/g, '` ` `');
+  return text;
 }
 
 // Track token usage across all calls
@@ -150,7 +158,7 @@ export async function docInitCommand(path, options) {
           try {
             const context = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${domainDiscoveryContext}`;
             const prompt = loadPrompt('discover-domains') + context;
-            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null, 4000));
+            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
             trackUsage(usage, prompt.length);
             const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
             return match ? match[1].trim() : null;
@@ -161,7 +169,7 @@ export async function docInitCommand(path, options) {
           try {
             const context = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${archDiscoveryContext}`;
             const prompt = loadPrompt('discover-architecture') + context;
-            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null, 4000));
+            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
             trackUsage(usage, prompt.length);
             const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
             return match ? match[1].trim() : null;
@@ -332,7 +340,7 @@ export async function docInitCommand(path, options) {
   let allFiles = [];
 
   if (mode === 'all-at-once') {
-    allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings);
+    allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, !!options.mode);
   } else {
     const domainsOnly = isDomainsOnly; // retrying specific domains — skip base + CLAUDE.md
     allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, domainsOnly);
@@ -371,12 +379,14 @@ export async function docInitCommand(path, options) {
   }
 
   // Step 7: Show what will be written
+  const shouldForce = options.force || existingDocsStrategy === 'improve' || existingDocsStrategy === 'rewrite';
   console.log();
   p.log.info('Files to write:');
   for (const file of allFiles) {
     const hasIssues = validation.issues?.some(i => i.file === file.path) ?? false;
     const willOverwrite = existsSync(join(repoPath, file.path));
-    const icon = hasIssues ? pc.yellow('~') : willOverwrite ? pc.yellow('~') : pc.green('+');
+    const willWrite = shouldForce || !willOverwrite || hasIssues;
+    const icon = hasIssues ? pc.yellow('~') : willWrite && willOverwrite ? pc.yellow('~') : willWrite ? pc.green('+') : pc.dim('-');
     console.log(pc.dim('  ') + icon + ' ' + file.path);
   }
   console.log();
@@ -407,7 +417,6 @@ export async function docInitCommand(path, options) {
   // Step 8: Write files
   const writeSpinner = p.spinner();
   writeSpinner.start('Writing files...');
-  const shouldForce = options.force || existingDocsStrategy === 'improve' || existingDocsStrategy === 'rewrite';
   const results = writeSkillFiles(repoPath, allFiles, { force: shouldForce });
   writeSpinner.stop('Done');
 
@@ -721,8 +730,12 @@ function buildGraphContextForDiscovery(graph, mode) {
     }
     if (graph.hotspots && graph.hotspots.length > 0) {
       sections.push('### Hotspots (high churn)\n');
-      for (const h of graph.hotspots) {
+      const maxHotspots = 15;
+      for (const h of graph.hotspots.slice(0, maxHotspots)) {
         sections.push(`- \`${h.path}\` — ${h.churn} changes, ${h.lines} lines`);
+      }
+      if (graph.hotspots.length > maxHotspots) {
+        sections.push(`- ...and ${graph.hotspots.length - maxHotspots} more hotspots`);
       }
       sections.push('');
     }
@@ -786,7 +799,7 @@ function buildStrategyInstruction(strategy) {
   return '';
 }
 
-async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, strategy, verbose, model, findings) {
+async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, strategy, verbose, model, findings, nonInteractive = false) {
   const today = new Date().toISOString().split('T')[0];
   const systemPrompt = loadPrompt('doc-init');
   const scanSummary = buildScanSummary(scan);
@@ -801,12 +814,11 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
     const claudeMdPath = join(repoPath, 'CLAUDE.md');
     if (existsSync(claudeMdPath)) {
       const existing = readFileSync(claudeMdPath, 'utf8');
-      const truncated = existing.length > 5000 ? existing.slice(0, 5000) + '\n\n[... truncated]' : existing;
-      parts.push(`### Existing CLAUDE.md\n\`\`\`\n${truncated}\n\`\`\``);
+      parts.push(`### Existing CLAUDE.md\n\`\`\`\n${sanitizeInline(existing)}\n\`\`\``);
     }
     const basePath = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
     if (existsSync(basePath)) {
-      parts.push(`### Existing base skill\n\`\`\`\n${readFileSync(basePath, 'utf8')}\n\`\`\``);
+      parts.push(`### Existing base skill\n\`\`\`\n${sanitizeInline(readFileSync(basePath, 'utf8'))}\n\`\`\``);
     }
     if (parts.length > 0) {
       existingSection = `\n\n## Existing Docs (improve these — preserve hand-written rules, update what's outdated, add what's missing)\n${parts.join('\n\n')}`;
@@ -819,7 +831,7 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
   claudeSpinner.start('Exploring repo and generating skills...');
 
   try {
-    const { text, usage } = await runClaude(fullPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeSpinner, 16000));
+    const { text, usage } = await runClaude(fullPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeSpinner));
     trackUsage(usage, fullPrompt.length);
     let files = parseFileOutput(text);
     // Enforce skip-existing: filter out CLAUDE.md if it already exists
@@ -831,6 +843,14 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
   } catch (err) {
     claudeSpinner.stop(pc.red('Failed'));
     p.log.error(err.message);
+
+    const isTimeout = /timed out/i.test(err.message);
+
+    // In non-interactive mode or on timeout, auto-fallback to chunked
+    if (nonInteractive || isTimeout) {
+      p.log.info('Falling back to chunked mode (one domain at a time)...');
+      return generateChunked(repoPath, scan, repoGraph, selectedDomains, false, timeoutMs, strategy, verbose, model, findings);
+    }
 
     const retry = await p.confirm({
       message: 'Try chunked mode instead? (one domain at a time)',
@@ -869,7 +889,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
   if (strategy === 'improve') {
     const existingBasePath = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
     if (existsSync(existingBasePath)) {
-      existingBaseSection = `\n\n## Existing Base Skill (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${readFileSync(existingBasePath, 'utf8')}\n\`\`\``;
+      existingBaseSection = `\n\n## Existing Base Skill (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${sanitizeInline(readFileSync(existingBasePath, 'utf8'))}\n\`\`\``;
     }
   }
 
@@ -877,7 +897,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
     `\n\n---\n\nGenerate ONLY the base skill for this repository at ${repoPath} (no domain skills, no CLAUDE.md). Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}${existingBaseSection}`;
 
   try {
-    let { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner, 8000));
+    let { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
     trackUsage(usage, basePrompt.length);
     let files = parseFileOutput(text);
 
@@ -886,7 +906,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
     for (let attempt = 0; attempt < MAX_RETRIES && files.length === 0; attempt++) {
       baseSpinner.message(`Base skill missing file tags — retry ${attempt + 1}/${MAX_RETRIES}...`);
       const retryPrompt = `Your previous response did not include the required <file path="...">content</file> XML tags. I need you to output the base skill wrapped in exactly this format:\n\n<file path=".claude/skills/base/skill.md">\n---\nname: base\ndescription: ...\n---\n[skill content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
-      const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null, 8000));
+      const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
       trackUsage(retry.usage, retryPrompt.length);
       files = parseFileOutput(retry.text);
       text = retry.text;
@@ -941,7 +961,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
           }
           const existingDomainPath = join(repoPath, '.claude', 'skills', domain.name, 'skill.md');
           if (existsSync(existingDomainPath)) {
-            existingDomainSection = `\n\n## Existing Skill (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${readFileSync(existingDomainPath, 'utf8')}\n\`\`\``;
+            existingDomainSection = `\n\n## Existing Skill (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${sanitizeInline(readFileSync(existingDomainPath, 'utf8'))}\n\`\`\``;
           }
         }
 
@@ -952,7 +972,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
         }) + strategyNote + `\n\n---\n\nRepository path: ${repoPath}\nToday's date is ${today}.\n\n${baseRef}\n\n${domainInfo}\n\n${domainGraph}${domainFindings}${existingDomainSection}`;
 
         try {
-          const { text, usage } = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, null, 8000));
+          const { text, usage } = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
           trackUsage(usage, domainPrompt.length);
           const files = parseFileOutput(text);
           return { domain: domain.name, files, success: true };
@@ -1007,8 +1027,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
     if (strategy === 'improve' && claudeMdExists) {
       try {
         const existing = readFileSync(join(repoPath, 'CLAUDE.md'), 'utf8');
-        const truncated = existing.length > 5000 ? existing.slice(0, 5000) + '\n\n[... truncated]' : existing;
-        existingClaudeMdSection = `\n\n## Existing CLAUDE.md (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${truncated}\n\`\`\``;
+        existingClaudeMdSection = `\n\n## Existing CLAUDE.md (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${sanitizeInline(existing)}\n\`\`\``;
       } catch { /* non-fatal */ }
     }
 
@@ -1016,7 +1035,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${existingClaudeMdSection}`;
 
     try {
-      let { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner, 8000));
+      let { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner));
       trackUsage(usage, claudeMdPrompt.length);
       let files = parseFileOutput(text);
 
@@ -1025,7 +1044,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       for (let attempt = 0; attempt < MAX_RETRIES && files.length === 0; attempt++) {
         claudeMdSpinner.message(`CLAUDE.md missing file tags — retry ${attempt + 1}/${MAX_RETRIES}...`);
         const retryPrompt = `Your previous response did not include the required <file path="CLAUDE.md">content</file> XML tags. I need you to output CLAUDE.md wrapped in exactly this format:\n\n<file path="CLAUDE.md">\n# project-name\n[CLAUDE.md content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
-        const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null, 8000));
+        const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
         trackUsage(retry.usage, retryPrompt.length);
         files = parseFileOutput(retry.text);
         text = retry.text;

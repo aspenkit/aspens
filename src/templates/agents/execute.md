@@ -24,7 +24,7 @@ For each phase, spawn executor subagents for each task. Tasks within a phase run
 Each task in the plan has a model tag (haiku or sonnet). Use the tagged model when spawning.
 
 **Spawning an executor:**
-```
+```yaml
 Use the Agent tool:
   prompt: |
     You are executing a single task from a development plan.
@@ -80,6 +80,5 @@ Run the project's test suite (`npm test`, `cargo test`, etc. — check CLAUDE.md
 
 You are the bottleneck. Protect your context:
 - **Never hold executor output** beyond the structured summary.
-- **Never read files** the executors are working on — trust their summaries.
-- **Use Grep/Glob** to verify specific things when investigating failures.
+- **Limit file reads** — trust executor summaries by default. Targeted reads (via Grep/Glob or short Read calls) are allowed only for verification or failure diagnosis. Log why each read is needed. Never bulk-read files executors are actively working on.
 - Use the project's code-map or import graph if available, not raw file reads.

@@ -101,6 +101,7 @@ $ aspens scan .
 |--------|-------------|
 | `--json` | Output as JSON |
 | `--domains <list>` | Additional domains to include (comma-separated) |
+| `--no-graph` | Skip import graph analysis |
 | `--verbose` | Show diagnostic output |
 
 ### `aspens doc init [path]`
@@ -164,6 +165,7 @@ $ aspens doc init .
 | `--mode <mode>` | `all`, `chunked`, or `base-only` (skips interactive prompt) |
 | `--strategy <strategy>` | `improve`, `rewrite`, or `skip` for existing docs (skips interactive prompt) |
 | `--domains <list>` | Additional domains to include (comma-separated) |
+| `--no-graph` | Skip import graph analysis |
 | `--model <model>` | Claude model (e.g., sonnet, opus, haiku) |
 | `--verbose` | Show what Claude is reading in real time |
 
@@ -197,6 +199,7 @@ $ aspens doc sync .
 |--------|-------------|
 | `--commits <n>` | Number of commits to analyze (default: 1) |
 | `--refresh` | Review all skills against current codebase (no git diff needed) |
+| `--no-graph` | Skip import graph analysis |
 | `--install-hook` | Install git post-commit hook for auto-sync |
 | `--remove-hook` | Remove the post-commit hook |
 | `--dry-run` | Preview without writing files |

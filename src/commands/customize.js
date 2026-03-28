@@ -70,7 +70,6 @@ export async function customizeCommand(what, options) {
         allowedTools: READ_ONLY_TOOLS,
         verbose,
         model: options.model || null,
-        maxTokens: 8000,
         onActivity: verbose ? (msg) => agentSpinner.message(pc.dim(msg)) : null,
       });
 

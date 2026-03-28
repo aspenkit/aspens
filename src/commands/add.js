@@ -375,7 +375,6 @@ ${refContent}
       allowedTools: ['Read', 'Glob', 'Grep'],
       verbose,
       model: options.model || null,
-      maxTokens: 8000,
       onActivity: verbose ? (msg) => genSpinner.message(pc.dim(msg)) : null,
     });
   } catch (err) {
