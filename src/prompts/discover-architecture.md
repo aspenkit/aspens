@@ -32,4 +32,3 @@ Output in `<findings>` tags with EXACTLY this structure:
 ## Commands
 [dev, build, test, lint — exact commands]
 </findings>
-</output>

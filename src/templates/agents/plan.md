@@ -66,6 +66,8 @@ Create or update `dev/active/{task-name}/plan.md`. Keep it **under 100 lines**. 
 ```markdown
 # {Task Name}
 
+Scope: {verdict} — {brief rationale}
+
 ## Goal
 One sentence.
 

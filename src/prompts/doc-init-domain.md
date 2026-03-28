@@ -23,4 +23,3 @@ Return exactly one file wrapped in XML tags:
 5. **Critical rules matter most.** What breaks if done wrong?
 6. Do NOT include product-specific details you're guessing at. Only what you verified by reading code.
 7. If there isn't enough substance for a meaningful skill, return an empty response instead of generating filler.
-</output>

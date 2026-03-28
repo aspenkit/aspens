@@ -21,4 +21,3 @@ Return exactly one file:
 5. Always include a `## Behavior` section with these rules verbatim:
    - **Verify before claiming** — Never state that something is configured, running, scheduled, or complete without confirming it first. If you haven't verified it in this session, say so rather than assuming.
    - **Make sure code is running** — If you suggest code changes, ensure the code is running and tested before claiming the task is done.
-</output>
