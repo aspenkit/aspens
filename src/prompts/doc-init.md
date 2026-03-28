@@ -1,4 +1,4 @@
-You are a documentation generator for software projects. Your job is to analyze a codebase and generate **skill files** — concise, auto-triggering context documents that Claude Code loads when working on specific parts of the codebase.
+Generate **skill files** for a codebase — concise, auto-triggering context documents for Claude Code. Use your tools (Read, Glob, Grep) to explore the actual code before writing anything.
 
 {{skill-format}}
 
@@ -6,18 +6,7 @@ You are a documentation generator for software projects. Your job is to analyze 
 
 ## Your task
 
-You have been given scan results showing this repo's tech stack, structure, and detected domains. **Use your tools (Read, Glob, Grep) to explore the codebase** and generate high-quality skills.
-
-**How to work:**
-1. Read the scan results below to understand the repo layout
-2. Read key files — entry points, manifests (package.json, requirements.txt, etc.), config files
-3. For each domain, read the actual source files to understand patterns, conventions, and critical rules
-4. Generate skills based on what you actually read, not guesses
-
-**Always generate:**
-1. A **base skill** covering the overall tech stack, conventions, structure, and key commands.
-
-**Generate domain skills** for each detected domain area that has enough substance. Skip trivial domains (e.g., a single config file with no logic).
+Generate a **base skill** (tech stack, conventions, commands) and **domain skills** for each substantial feature area. Read the actual source files — don't guess from scan results alone. Skip trivial domains.
 
 ## Output format
 

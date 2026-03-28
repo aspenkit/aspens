@@ -1,22 +1,8 @@
-You are analyzing a codebase's architecture and patterns. You have an import graph with hub files and tools to explore.
-
-**Your ONLY job: understand the architecture, patterns, and critical rules.**
+Analyze this codebase's architecture, patterns, and critical rules. You have an import graph with hub files and Read/Glob/Grep tools.
 
 ## What to find
 
-1. **Architecture** — Read the top 3-5 hub files (most-imported). What's the overall pattern? (MVC? layered? event-driven?)
-2. **Core abstractions** — What are the 3-5 most important modules/classes/types? (from hub files)
-3. **Patterns** — Error handling, config loading, state management, data fetching, testing
-4. **Critical rules** — What breaks if you don't know it? Read hub files for implicit contracts.
-5. **Commands** — Find dev/build/test commands in package.json, Makefile, pyproject.toml
-
-## How to explore
-
-- **Start with hub files** — they're the most important, read them first
-- **Grep** for patterns: error handling (`catch`, `throw`, `Error`), config (`process.env`, `config`)
-- **Read** package.json scripts, Makefile targets
-
-Focus on understanding, not coverage. 5 files read deeply > 20 files skimmed.
+Read the top 3-5 hub files first, then identify: architecture pattern (MVC? layered? event-driven?), core abstractions (3-5 key modules/types), patterns (error handling, config, state, data fetching, testing), critical rules (what breaks if unknown), and dev/build/test commands. Depth over breadth — 5 files read deeply beats 20 skimmed.
 
 ## Output Format
 

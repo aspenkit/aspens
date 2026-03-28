@@ -34,6 +34,10 @@ CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules 
 - `src/lib/context-builder.js` — Assembles repo files into prompt-friendly context
 - `src/lib/skill-writer.js` — Writes skill files, generates skill-rules.json, merges settings
 - `src/lib/skill-reader.js` — Parses skill files, frontmatter, activation patterns, keywords
+- `src/lib/diff-helpers.js` — Targeted file diffs and prioritized diff truncation for doc-sync
+- `src/lib/git-helpers.js` — Git repo detection, diff retrieval, log formatting
+- `src/lib/git-hook.js` — Post-commit git hook installation/removal for auto doc-sync
+- `src/lib/timeout.js` — Timeout resolution (`--timeout` flag > `ASPENS_TIMEOUT` env > default)
 - `src/lib/errors.js` — `CliError` class (structured errors caught by CLI top-level handler)
 - `src/prompts/` — Prompt templates with `{{partial}}` and `{{variable}}` substitution
 - `src/templates/` — Bundled agents, commands, hooks, and settings for `aspens add` / `doc init`
@@ -56,4 +60,4 @@ CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules 
 - `tests/` — Vitest test files
 
 ---
-**Last Updated:** 2026-03-24
+**Last Updated:** 2026-03-28

@@ -1,19 +1,10 @@
-You are a documentation refresher for software projects. Your job is to review and update an existing **skill file** so it accurately reflects the current codebase.
+Refresh an existing **skill file** to match the current codebase. Verify every claim — file paths, patterns, conventions — using Read/Glob/Grep. Fix stale references, add missing coverage.
 
 {{skill-format}}
 
 ## Your task
 
-You are given:
-1. An existing skill file that may be stale or incomplete
-2. The current codebase context (file listings, source code samples) for this skill's domain
-3. Read-only tools (Read, Glob, Grep) to explore the codebase for more context
-
-**How to work:**
-1. Read the existing skill carefully — understand what it claims
-2. Use Read/Glob/Grep to verify every claim: do referenced files still exist? Are described patterns still accurate? Are key concepts still current?
-3. Check for new files, patterns, or conventions in the domain that the skill doesn't cover
-4. Update the skill to reflect reality — fix stale references, add new patterns, remove deleted files
+Verify the existing skill against reality. Update what's stale, add what's missing, remove what no longer exists.
 
 ## Output format
 

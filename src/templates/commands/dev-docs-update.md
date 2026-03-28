@@ -7,21 +7,14 @@ We're approaching context limits. Please update the development documentation to
 
 ## Required Updates
 
-### 1. Update Active Task Documentation
-For each task in `/dev/active/`:
-- Update `[task-name]-context.md` with:
-  - Current implementation state
-  - Key decisions made this session
-  - Files modified and why
-  - Any blockers or issues discovered
-  - Next immediate steps
-  - Last Updated timestamp
-
-- Update `[task-name]-tasks.md` with:
-  - Mark completed tasks as ✅ 
-  - Add any new tasks discovered
-  - Update in-progress tasks with current status
-  - Reorder priorities if needed
+### 1. Update Active Task Plans
+For each task in `/dev/active/<task-name>/`:
+- Update `<task-name>/plan.md` with:
+  - Mark completed tasks as checked (`[x]`)
+  - Add any new tasks discovered during this session
+  - Log key decisions in the Decisions section
+  - Note current implementation state and next steps
+  - Update any blockers or issues discovered
 
 ### 2. Capture Session Context
 Include any relevant information about:

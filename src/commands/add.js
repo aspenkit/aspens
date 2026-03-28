@@ -199,6 +199,27 @@ function addResource(repoPath, resourceType, name, available) {
 
   copyFileSync(sourceFile, targetFile);
   console.log(`  ${pc.green('+')} ${resourceType.targetDir}/${resource.fileName}`);
+
+  // Plan/execute agents need dev/ gitignored for plan storage
+  if (name === 'plan' || name === 'execute') {
+    ensureDevGitignore(repoPath);
+  }
+}
+
+function ensureDevGitignore(repoPath) {
+  try {
+    const gitignorePath = join(repoPath, '.gitignore');
+    if (existsSync(gitignorePath)) {
+      const content = readFileSync(gitignorePath, 'utf8');
+      if (/^dev\/$/m.test(content)) return; // already present
+      writeFileSync(gitignorePath, content.trimEnd() + '\ndev/\n', 'utf8');
+    } else {
+      writeFileSync(gitignorePath, 'dev/\n', 'utf8');
+    }
+    console.log(`  ${pc.green('+')} Added ${pc.cyan('dev/')} to .gitignore (used for plan storage)`);
+  } catch (err) {
+    throw new CliError(`Failed to update .gitignore: ${err.message}. Check file permissions.`);
+  }
 }
 
 // --- Custom skill ---

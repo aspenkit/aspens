@@ -1,22 +1,10 @@
-You are a documentation updater for software projects. Your job is to update existing **skill files** based on recent code changes (git diff).
+Update existing **skill files** based on a git diff. If the diff is truncated, use Read to get full file contents.
 
 {{skill-format}}
 
 ## Your task
 
-You are given:
-1. A git diff showing what changed in recent commits
-2. The existing skill files that may be affected
-3. Read-only tools (Read, Glob, Grep) to explore the codebase for more context
-
-**How to work:**
-1. Read the git diff to understand what changed
-2. Read the existing skills that are affected
-3. **If the diff ends with `... (diff truncated)`**, use the Read tool to read the full content of the changed files listed in the Changed Files section — do not assume changes are trivial just because the diff is cut off
-4. If needed, use Read/Glob/Grep to understand the new code in context
-5. Update only the skills that need changes — don't rewrite skills for unrelated domains
-6. If a change introduces a new domain that has no skill yet, create one
-7. Update CLAUDE.md if the changes affect repo-level structure, commands, or conventions
+Update only affected skills. Create new domain skills if the diff introduces a new feature area. Update CLAUDE.md if repo-level structure, commands, or conventions changed.
 
 ## Output format
 

@@ -83,16 +83,18 @@ export async function docSyncCommand(path, options) {
   // Rebuild graph from current state (keeps graph fresh on every sync)
   let repoGraph = null;
   let graphContext = '';
-  try {
-    const rawGraph = await buildRepoGraph(repoPath, scan.languages);
-    persistGraphArtifacts(repoPath, rawGraph);
-    repoGraph = loadGraph(repoPath);
-    if (repoGraph) {
-      const subgraph = extractSubgraph(repoGraph, changedFiles);
-      graphContext = formatNavigationContext(subgraph);
+  if (options.graph !== false) {
+    try {
+      const rawGraph = await buildRepoGraph(repoPath, scan.languages);
+      persistGraphArtifacts(repoPath, rawGraph);
+      repoGraph = loadGraph(repoPath);
+      if (repoGraph) {
+        const subgraph = extractSubgraph(repoGraph, changedFiles);
+        graphContext = formatNavigationContext(subgraph);
+      }
+    } catch (err) {
+      p.log.warn(`Graph context unavailable — proceeding without it. (${err.message})`);
     }
-  } catch (err) {
-    p.log.warn(`Graph context unavailable — proceeding without it. (${err.message})`);
   }
 
   const affectedSkills = mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph);
@@ -333,14 +335,16 @@ async function refreshAllSkills(repoPath, options) {
 
   // Step 1: Scan + graph
   const scanSpinner = p.spinner();
-  scanSpinner.start('Scanning repo and building import graph...');
+  scanSpinner.start(options.graph !== false ? 'Scanning repo and building import graph...' : 'Scanning repo...');
 
   const scan = scanRepo(repoPath);
-  try {
-    const rawGraph = await buildRepoGraph(repoPath, scan.languages);
-    persistGraphArtifacts(repoPath, rawGraph);
-  } catch (err) {
-    p.log.warn(`Graph build failed — continuing without it. (${err.message})`);
+  if (options.graph !== false) {
+    try {
+      const rawGraph = await buildRepoGraph(repoPath, scan.languages);
+      persistGraphArtifacts(repoPath, rawGraph);
+    } catch (err) {
+      p.log.warn(`Graph build failed — continuing without it. (${err.message})`);
+    }
   }
 
   scanSpinner.stop('Scan complete');

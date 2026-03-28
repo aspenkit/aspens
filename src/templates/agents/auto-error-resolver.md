@@ -7,6 +7,8 @@ color: red
 
 You systematically identify, analyze, and fix errors — compilation errors, build failures, type errors, and test failures.
 
+> **Brevity rule:** Minimize output. Show what you did, not what you thought about. Actions over explanations.
+
 **Context (read on-demand):**
 - Check CLAUDE.md and `.claude/skills/` for project conventions and commands
 - Check `.claude/guidelines/` if it exists for error handling and architecture patterns
@@ -42,8 +44,7 @@ You systematically identify, analyze, and fix errors — compilation errors, bui
 - If a fix requires a design decision (not just a mechanical correction), flag it and ask before proceeding
 - Don't change test expectations to make tests pass — fix the code that broke them
 
-**Output:**
-- Summary of errors found (grouped by type and root cause)
-- What was fixed and how (briefly, per fix)
-- Verification results (clean pass or remaining issues)
-- Any concerns or decisions that need human input
+**Output (keep under 20 lines total):**
+- Errors found → fixes applied (one line per root cause)
+- Verification result (pass/fail)
+- Decisions needing human input (if any)

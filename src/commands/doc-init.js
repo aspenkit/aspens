@@ -37,6 +37,15 @@ function makeClaudeOptions(timeoutMs, verbose, model, spinner) {
   };
 }
 
+// Sanitize markdown for safe inlining inside triple-backtick fences
+const MAX_INLINE_CHARS = 2000;
+function sanitizeInline(content, maxLen = MAX_INLINE_CHARS) {
+  let text = content.length > maxLen ? content.slice(0, maxLen) + '\n\n[... truncated]' : content;
+  // Escape triple backticks so they don't break wrapper fences
+  text = text.replace(/```/g, '` ` `');
+  return text;
+}
+
 // Track token usage across all calls
 const tokenTracker = { promptTokens: 0, toolResultTokens: 0, output: 0, toolUses: 0, calls: 0 };
 
@@ -90,13 +99,15 @@ export async function docInitCommand(path, options) {
 
   // Build import graph
   let repoGraph = null;
-  try {
-    repoGraph = await buildRepoGraph(repoPath, scan.languages);
-    // Persist graph, code-map skill, and index for runtime use
+  if (options.graph !== false) {
     try {
-      persistGraphArtifacts(repoPath, repoGraph);
-    } catch { /* graph persistence failed — non-fatal */ }
-  } catch { /* graph building failed — continue without it */ }
+      repoGraph = await buildRepoGraph(repoPath, scan.languages);
+      // Persist graph, code-map skill, and index for runtime use
+      try {
+        persistGraphArtifacts(repoPath, repoGraph);
+      } catch { /* graph persistence failed — non-fatal */ }
+    } catch { /* graph building failed — continue without it */ }
+  }
 
   scanSpinner.stop(`Scanned ${pc.bold(scan.name)} (${scan.repoType})`);
 
@@ -134,34 +145,30 @@ export async function docInitCommand(path, options) {
     discoverSpinner.start('Discovering domains + analyzing architecture...');
 
     try {
-      const graphContext = buildGraphContext(repoGraph);
-      let hotspotsSection = '';
-      if (repoGraph.hotspots && repoGraph.hotspots.length > 0) {
-        hotspotsSection = '\n\n### Hotspots (high churn)\n';
-        for (const h of repoGraph.hotspots) {
-          hotspotsSection += `- \`${h.path}\` — ${h.churn} changes, ${h.lines} lines\n`;
-        }
-      }
-
       const scanSummary = buildScanSummary(scan);
-      const sharedContext = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${graphContext}${hotspotsSection}`;
+
+      // Build targeted graph context for each agent (not the full graph)
+      const domainDiscoveryContext = buildGraphContextForDiscovery(repoGraph, 'domains');
+      const archDiscoveryContext = buildGraphContextForDiscovery(repoGraph, 'architecture');
 
       // Run both discovery agents in parallel
       const [domainsResult, archResult] = await Promise.all([
-        // Agent 1: Domain discovery (focused, fast)
+        // Agent 1: Domain discovery — needs hub files + domain clusters only
         (async () => {
           try {
-            const prompt = loadPrompt('discover-domains') + sharedContext;
+            const context = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${domainDiscoveryContext}`;
+            const prompt = loadPrompt('discover-domains') + context;
             const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
             trackUsage(usage, prompt.length);
             const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
             return match ? match[1].trim() : null;
           } catch { return null; }
         })(),
-        // Agent 2: Architecture analysis (deeper, reads hub files)
+        // Agent 2: Architecture analysis — needs hub files + rankings + hotspots
         (async () => {
           try {
-            const prompt = loadPrompt('discover-architecture') + sharedContext;
+            const context = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${archDiscoveryContext}`;
+            const prompt = loadPrompt('discover-architecture') + context;
             const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
             trackUsage(usage, prompt.length);
             const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
@@ -333,7 +340,7 @@ export async function docInitCommand(path, options) {
   let allFiles = [];
 
   if (mode === 'all-at-once') {
-    allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings);
+    allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, !!options.mode);
   } else {
     const domainsOnly = isDomainsOnly; // retrying specific domains — skip base + CLAUDE.md
     allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, domainsOnly);
@@ -372,11 +379,14 @@ export async function docInitCommand(path, options) {
   }
 
   // Step 7: Show what will be written
+  const shouldForce = options.force || existingDocsStrategy === 'improve' || existingDocsStrategy === 'rewrite';
   console.log();
   p.log.info('Files to write:');
   for (const file of allFiles) {
     const hasIssues = validation.issues?.some(i => i.file === file.path) ?? false;
-    const icon = hasIssues ? pc.yellow('~') : pc.green('+');
+    const willOverwrite = existsSync(join(repoPath, file.path));
+    const willWrite = shouldForce || !willOverwrite || hasIssues;
+    const icon = hasIssues ? pc.yellow('~') : willWrite && willOverwrite ? pc.yellow('~') : willWrite ? pc.green('+') : pc.dim('-');
     console.log(pc.dim('  ') + icon + ' ' + file.path);
   }
   console.log();
@@ -407,7 +417,7 @@ export async function docInitCommand(path, options) {
   // Step 8: Write files
   const writeSpinner = p.spinner();
   writeSpinner.start('Writing files...');
-  const results = writeSkillFiles(repoPath, allFiles, { force: options.force });
+  const results = writeSkillFiles(repoPath, allFiles, { force: shouldForce });
   writeSpinner.stop('Done');
 
   // Summary
@@ -677,6 +687,79 @@ function buildGraphContext(graph) {
   return sections.join('\n');
 }
 
+/**
+ * Build targeted graph context for discovery agents.
+ * Each agent only gets the graph sections it needs, not the full context.
+ * @param {'domains'|'architecture'} mode
+ */
+function buildGraphContextForDiscovery(graph, mode) {
+  if (!graph) return '';
+
+  const sections = ['## Import Graph Analysis\n'];
+
+  // Hub files — both agents need these
+  if (graph.hubs.length > 0) {
+    sections.push('### Hub Files (most depended on — read these first)\n');
+    for (const hub of graph.hubs.slice(0, 10)) {
+      const fileInfo = graph.files[hub.path];
+      sections.push(`- \`${hub.path}\` — ${hub.fanIn} dependents, ${fileInfo?.exportCount || 0} exports, ${fileInfo?.lines || 0} lines`);
+    }
+    sections.push('');
+  }
+
+  if (mode === 'domains') {
+    if (graph.clusters?.components?.length > 0) {
+      sections.push('### Domain Clusters (files that import each other)\n');
+      for (const comp of graph.clusters.components) {
+        if (comp.size <= 1) continue;
+        const fileList = comp.files.slice(0, 10).map(f => `\`${f}\``).join(', ');
+        const more = comp.files.length > 10 ? ` +${comp.files.length - 10} more` : '';
+        sections.push(`- **${comp.label}** (${comp.size} files): ${fileList}${more}`);
+      }
+      sections.push('');
+    }
+  }
+
+  if (mode === 'architecture') {
+    if (graph.ranked?.length > 0) {
+      sections.push('### File Priority Ranking (read in this order)\n');
+      for (const file of graph.ranked.slice(0, 15)) {
+        sections.push(`- \`${file.path}\` — priority ${file.priority.toFixed(1)} (${file.fanIn} dependents, ${file.exportCount} exports, ${file.lines} lines)`);
+      }
+      sections.push('');
+    }
+    if (graph.hotspots && graph.hotspots.length > 0) {
+      sections.push('### Hotspots (high churn)\n');
+      const maxHotspots = 15;
+      for (const h of graph.hotspots.slice(0, maxHotspots)) {
+        sections.push(`- \`${h.path}\` — ${h.churn} changes, ${h.lines} lines`);
+      }
+      if (graph.hotspots.length > maxHotspots) {
+        sections.push(`- ...and ${graph.hotspots.length - maxHotspots} more hotspots`);
+      }
+      sections.push('');
+    }
+  }
+
+  return sections.join('\n');
+}
+
+/**
+ * Produce a 1-line summary of the base skill instead of sending the full text.
+ */
+function summarizeBaseSkill(baseSkillContent, scan) {
+  if (!baseSkillContent) {
+    return '## Base skill reference\nBase skill not yet generated.';
+  }
+  const descMatch = baseSkillContent.match(/description:\s*(.+)/);
+  const desc = descMatch ? descMatch[1].trim() : '';
+  const tech = [
+    ...(scan.languages || []),
+    ...(scan.frameworks || []),
+  ].filter(Boolean).join(', ');
+  return `## Base skill reference\nBase skill covers: ${desc || 'tech stack, commands, conventions'}${tech ? ` [${tech}]` : ''}. See base skill for details — do not duplicate its content in domain skills.`;
+}
+
 function buildDomainGraphContext(graph, domain) {
   if (!graph) return '';
 
@@ -716,14 +799,33 @@ function buildStrategyInstruction(strategy) {
   return '';
 }
 
-async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, strategy, verbose, model, findings) {
+async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, strategy, verbose, model, findings, nonInteractive = false) {
   const today = new Date().toISOString().split('T')[0];
   const systemPrompt = loadPrompt('doc-init');
   const scanSummary = buildScanSummary(scan);
   const graphContext = buildGraphContext(repoGraph);
   const strategyNote = buildStrategyInstruction(strategy);
   const findingsSection = findings ? `\n\n## Architecture Analysis (from discovery pass)\n\n${findings}` : '';
-  const fullPrompt = `${systemPrompt}${strategyNote}\n\n---\n\nGenerate skills for this repository at ${repoPath}. Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}`;
+
+  // When improving, include existing content so Claude can build on it
+  let existingSection = '';
+  if (strategy === 'improve') {
+    const parts = [];
+    const claudeMdPath = join(repoPath, 'CLAUDE.md');
+    if (existsSync(claudeMdPath)) {
+      const existing = readFileSync(claudeMdPath, 'utf8');
+      parts.push(`### Existing CLAUDE.md\n\`\`\`\n${sanitizeInline(existing)}\n\`\`\``);
+    }
+    const basePath = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
+    if (existsSync(basePath)) {
+      parts.push(`### Existing base skill\n\`\`\`\n${sanitizeInline(readFileSync(basePath, 'utf8'))}\n\`\`\``);
+    }
+    if (parts.length > 0) {
+      existingSection = `\n\n## Existing Docs (improve these — preserve hand-written rules, update what's outdated, add what's missing)\n${parts.join('\n\n')}`;
+    }
+  }
+
+  const fullPrompt = `${systemPrompt}${strategyNote}\n\n---\n\nGenerate skills for this repository at ${repoPath}. Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}${existingSection}`;
 
   const claudeSpinner = p.spinner();
   claudeSpinner.start('Exploring repo and generating skills...');
@@ -741,6 +843,14 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
   } catch (err) {
     claudeSpinner.stop(pc.red('Failed'));
     p.log.error(err.message);
+
+    const isTimeout = /timed out/i.test(err.message);
+
+    // In non-interactive mode or on timeout, auto-fallback to chunked
+    if (nonInteractive || isTimeout) {
+      p.log.info('Falling back to chunked mode (one domain at a time)...');
+      return generateChunked(repoPath, scan, repoGraph, selectedDomains, false, timeoutMs, strategy, verbose, model, findings);
+    }
 
     const retry = await p.confirm({
       message: 'Try chunked mode instead? (one domain at a time)',
@@ -774,8 +884,17 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
   const baseSpinner = p.spinner();
   baseSpinner.start('Generating base skill...');
 
+  // When improving, include existing base skill content so Claude can build on it
+  let existingBaseSection = '';
+  if (strategy === 'improve') {
+    const existingBasePath = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
+    if (existsSync(existingBasePath)) {
+      existingBaseSection = `\n\n## Existing Base Skill (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${sanitizeInline(readFileSync(existingBasePath, 'utf8'))}\n\`\`\``;
+    }
+  }
+
   const basePrompt = loadPrompt('doc-init') + strategyNote +
-    `\n\n---\n\nGenerate ONLY the base skill for this repository at ${repoPath} (no domain skills, no CLAUDE.md). Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}`;
+    `\n\n---\n\nGenerate ONLY the base skill for this repository at ${repoPath} (no domain skills, no CLAUDE.md). Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}${existingBaseSection}`;
 
   try {
     let { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
@@ -834,9 +953,23 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
           }
         }
 
+        // When improving, include existing domain skill content
+        let existingDomainSection = '';
+        if (strategy === 'improve') {
+          if (domain.name.includes('..') || domain.name.startsWith('/')) {
+            return { domain: domain.name, files: [], success: false };
+          }
+          const existingDomainPath = join(repoPath, '.claude', 'skills', domain.name, 'skill.md');
+          if (existsSync(existingDomainPath)) {
+            existingDomainSection = `\n\n## Existing Skill (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${sanitizeInline(readFileSync(existingDomainPath, 'utf8'))}\n\`\`\``;
+          }
+        }
+
+        const baseRef = summarizeBaseSkill(baseSkillContent, scan);
+
         const domainPrompt = loadPrompt('doc-init-domain', {
           domainName: domain.name,
-        }) + strategyNote + `\n\n---\n\nRepository path: ${repoPath}\nToday's date is ${today}.\n\n## Base skill (for context)\n\`\`\`\n${baseSkillContent || 'Not available'}\n\`\`\`\n\n${domainInfo}\n\n${domainGraph}${domainFindings}`;
+        }) + strategyNote + `\n\n---\n\nRepository path: ${repoPath}\nToday's date is ${today}.\n\n${baseRef}\n\n${domainInfo}\n\n${domainGraph}${domainFindings}${existingDomainSection}`;
 
         try {
           const { text, usage } = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
@@ -889,8 +1022,17 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       return `- ${f.path} — ${desc}`;
     }).join('\n');
 
+    // When improving, include existing CLAUDE.md so Claude can build on it
+    let existingClaudeMdSection = '';
+    if (strategy === 'improve' && claudeMdExists) {
+      try {
+        const existing = readFileSync(join(repoPath, 'CLAUDE.md'), 'utf8');
+        existingClaudeMdSection = `\n\n## Existing CLAUDE.md (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${sanitizeInline(existing)}\n\`\`\``;
+      } catch { /* non-fatal */ }
+    }
+
     const claudeMdPrompt = loadPrompt('doc-init-claudemd') +
-      `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}`;
+      `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${existingClaudeMdSection}`;
 
     try {
       let { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner));

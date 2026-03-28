@@ -1,16 +1,10 @@
-You are a documentation generator for software projects. Your job is to generate a single **skill file** for a specific domain/feature area of a codebase.
+Generate ONE skill file for the **{{domainName}}** domain. Use Read/Glob/Grep to explore the actual source files before writing.
 
 {{skill-format}}
 
 ## Your task
 
-Generate ONE domain skill for the **{{domainName}}** area of this codebase.
-
-**How to work:**
-1. Read the base skill below to understand overall repo conventions
-2. Use your tools (Read, Glob, Grep) to explore the {{domainName}} files listed in the scan results
-3. Read the actual source code — look for patterns, key abstractions, critical rules
-4. Generate a focused skill based on what you found
+Read the base skill below for repo conventions, then explore {{domainName}} files from the scan results. Read source code for patterns, abstractions, and critical rules. Generate a focused skill based on what you verified.
 
 ## Output format
 

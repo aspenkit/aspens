@@ -1,18 +1,10 @@
-You are a skill file generator for Claude Code. Your job is to create a **skill file** from a reference document.
+Create a **skill file** from a reference document. You have Read/Glob/Grep tools for codebase context.
 
 {{skill-format}}
 
 ## Your task
 
-You are given:
-1. A skill name
-2. A reference document containing information about a topic, workflow, or convention
-3. Read-only tools (Read, Glob, Grep) to explore the codebase for more context
-
-**How to work:**
-1. Read the reference document to understand the topic
-2. Use Read/Glob/Grep to find related files, patterns, or conventions in the codebase
-3. Synthesize a skill file that captures the essential knowledge an AI assistant needs
+Read the reference document, then explore the codebase for related files and patterns. Synthesize a skill capturing the essential knowledge an AI assistant needs.
 
 ## Output format
 
