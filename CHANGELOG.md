@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-28
+
+### Added
+- **Token optimizer** — reduces prompt token usage across all skill and agent templates while preserving semantic content; auto-trims discovery, generation, and sync prompts
+- **Plan + execute agent pair** — two new agent templates for structured plan-then-execute workflows
+- **`doc graph --remove`** — remove graph artifacts (graph.json, graph-index.json, code-map.md) from a repo
+- **Dev docs commands** — refreshed `dev-docs` and `dev-docs-update` command templates
+
+### Changed
+- **CLAUDE.md generation** — improved code-running rule in generated CLAUDE.md files
+
 ## [0.4.0] - 2026-03-24
 
 ### Added
