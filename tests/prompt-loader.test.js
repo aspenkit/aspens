@@ -16,7 +16,7 @@ describe('loadPrompt', () => {
 
   it('resolves {{examples}} partial', () => {
     const prompt = loadPrompt('doc-init');
-    expect(prompt).toContain('Example: Base skill');
+    expect(prompt).toContain('Example Skill');
     expect(prompt).not.toContain('{{examples}}');
   });
 

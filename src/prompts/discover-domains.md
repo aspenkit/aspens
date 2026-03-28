@@ -1,20 +1,4 @@
-You are discovering the feature domains in a codebase. You have an import graph and tools to explore.
-
-**Your ONLY job: find the real feature domains.** Not directory names — actual product features.
-
-## How to discover domains
-
-1. **Look inside large directories** — `components/`, `features/`, `modules/`, `pages/`, `app/`, `services/`
-   - Use Glob to list subdirectories: `src/components/*/`
-   - Each subdirectory with 3+ files is likely a separate domain
-
-2. **Check the hub files** from the graph — they reveal what the app actually does
-
-3. **Look for feature-specific patterns:**
-   - Hooks: `useAuth`, `useBilling`, `useCourses` → auth, billing, courses
-   - Routes/pages: `app/billing/page.tsx`, `pages/courses/` → billing, courses
-   - Services: `services/payment.ts`, `api/users.ts` → payment, users
-   - Models: `models/Order.ts`, `types/Course.ts` → orders, courses
+Find the real **feature domains** in this codebase — actual product features, not just directory names. Use Glob to explore large directories, check hub files from the graph, and look for feature patterns (hooks, routes, services, models).
 
 ## Output Format
 

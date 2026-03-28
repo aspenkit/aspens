@@ -27,12 +27,13 @@ function autoTimeout(scan, userTimeout) {
   return timeoutMs;
 }
 
-function makeClaudeOptions(timeoutMs, verbose, model, spinner) {
+function makeClaudeOptions(timeoutMs, verbose, model, spinner, maxTokens = null) {
   return {
     timeout: timeoutMs,
     allowedTools: READ_ONLY_TOOLS,
     verbose,
     model: model || null,
+    maxTokens,
     onActivity: verbose && spinner ? (msg) => spinner.message(pc.dim(msg)) : null,
   };
 }
@@ -136,35 +137,31 @@ export async function docInitCommand(path, options) {
     discoverSpinner.start('Discovering domains + analyzing architecture...');
 
     try {
-      const graphContext = buildGraphContext(repoGraph);
-      let hotspotsSection = '';
-      if (repoGraph.hotspots && repoGraph.hotspots.length > 0) {
-        hotspotsSection = '\n\n### Hotspots (high churn)\n';
-        for (const h of repoGraph.hotspots) {
-          hotspotsSection += `- \`${h.path}\` — ${h.churn} changes, ${h.lines} lines\n`;
-        }
-      }
-
       const scanSummary = buildScanSummary(scan);
-      const sharedContext = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${graphContext}${hotspotsSection}`;
+
+      // Build targeted graph context for each agent (not the full graph)
+      const domainDiscoveryContext = buildGraphContextForDiscovery(repoGraph, 'domains');
+      const archDiscoveryContext = buildGraphContextForDiscovery(repoGraph, 'architecture');
 
       // Run both discovery agents in parallel
       const [domainsResult, archResult] = await Promise.all([
-        // Agent 1: Domain discovery (focused, fast)
+        // Agent 1: Domain discovery — needs hub files + domain clusters only
         (async () => {
           try {
-            const prompt = loadPrompt('discover-domains') + sharedContext;
-            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+            const context = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${domainDiscoveryContext}`;
+            const prompt = loadPrompt('discover-domains') + context;
+            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null, 4000));
             trackUsage(usage, prompt.length);
             const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
             return match ? match[1].trim() : null;
           } catch { return null; }
         })(),
-        // Agent 2: Architecture analysis (deeper, reads hub files)
+        // Agent 2: Architecture analysis — needs hub files + rankings + hotspots
         (async () => {
           try {
-            const prompt = loadPrompt('discover-architecture') + sharedContext;
-            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+            const context = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${archDiscoveryContext}`;
+            const prompt = loadPrompt('discover-architecture') + context;
+            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null, 4000));
             trackUsage(usage, prompt.length);
             const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
             return match ? match[1].trim() : null;
@@ -681,6 +678,75 @@ function buildGraphContext(graph) {
   return sections.join('\n');
 }
 
+/**
+ * Build targeted graph context for discovery agents.
+ * Each agent only gets the graph sections it needs, not the full context.
+ * @param {'domains'|'architecture'} mode
+ */
+function buildGraphContextForDiscovery(graph, mode) {
+  if (!graph) return '';
+
+  const sections = ['## Import Graph Analysis\n'];
+
+  // Hub files — both agents need these
+  if (graph.hubs.length > 0) {
+    sections.push('### Hub Files (most depended on — read these first)\n');
+    for (const hub of graph.hubs.slice(0, 10)) {
+      const fileInfo = graph.files[hub.path];
+      sections.push(`- \`${hub.path}\` — ${hub.fanIn} dependents, ${fileInfo?.exportCount || 0} exports, ${fileInfo?.lines || 0} lines`);
+    }
+    sections.push('');
+  }
+
+  if (mode === 'domains') {
+    if (graph.clusters?.components?.length > 0) {
+      sections.push('### Domain Clusters (files that import each other)\n');
+      for (const comp of graph.clusters.components) {
+        if (comp.size <= 1) continue;
+        const fileList = comp.files.slice(0, 10).map(f => `\`${f}\``).join(', ');
+        const more = comp.files.length > 10 ? ` +${comp.files.length - 10} more` : '';
+        sections.push(`- **${comp.label}** (${comp.size} files): ${fileList}${more}`);
+      }
+      sections.push('');
+    }
+  }
+
+  if (mode === 'architecture') {
+    if (graph.ranked?.length > 0) {
+      sections.push('### File Priority Ranking (read in this order)\n');
+      for (const file of graph.ranked.slice(0, 15)) {
+        sections.push(`- \`${file.path}\` — priority ${file.priority.toFixed(1)} (${file.fanIn} dependents, ${file.exportCount} exports, ${file.lines} lines)`);
+      }
+      sections.push('');
+    }
+    if (graph.hotspots && graph.hotspots.length > 0) {
+      sections.push('### Hotspots (high churn)\n');
+      for (const h of graph.hotspots) {
+        sections.push(`- \`${h.path}\` — ${h.churn} changes, ${h.lines} lines`);
+      }
+      sections.push('');
+    }
+  }
+
+  return sections.join('\n');
+}
+
+/**
+ * Produce a 1-line summary of the base skill instead of sending the full text.
+ */
+function summarizeBaseSkill(baseSkillContent, scan) {
+  if (!baseSkillContent) {
+    return '## Base skill reference\nBase skill not yet generated.';
+  }
+  const descMatch = baseSkillContent.match(/description:\s*(.+)/);
+  const desc = descMatch ? descMatch[1].trim() : '';
+  const tech = [
+    ...(scan.languages || []),
+    ...(scan.frameworks || []),
+  ].filter(Boolean).join(', ');
+  return `## Base skill reference\nBase skill covers: ${desc || 'tech stack, commands, conventions'}${tech ? ` [${tech}]` : ''}. See base skill for details — do not duplicate its content in domain skills.`;
+}
+
 function buildDomainGraphContext(graph, domain) {
   if (!graph) return '';
 
@@ -753,7 +819,7 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
   claudeSpinner.start('Exploring repo and generating skills...');
 
   try {
-    const { text, usage } = await runClaude(fullPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeSpinner));
+    const { text, usage } = await runClaude(fullPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeSpinner, 16000));
     trackUsage(usage, fullPrompt.length);
     let files = parseFileOutput(text);
     // Enforce skip-existing: filter out CLAUDE.md if it already exists
@@ -811,7 +877,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
     `\n\n---\n\nGenerate ONLY the base skill for this repository at ${repoPath} (no domain skills, no CLAUDE.md). Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}${existingBaseSection}`;
 
   try {
-    let { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
+    let { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner, 8000));
     trackUsage(usage, basePrompt.length);
     let files = parseFileOutput(text);
 
@@ -820,7 +886,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
     for (let attempt = 0; attempt < MAX_RETRIES && files.length === 0; attempt++) {
       baseSpinner.message(`Base skill missing file tags — retry ${attempt + 1}/${MAX_RETRIES}...`);
       const retryPrompt = `Your previous response did not include the required <file path="...">content</file> XML tags. I need you to output the base skill wrapped in exactly this format:\n\n<file path=".claude/skills/base/skill.md">\n---\nname: base\ndescription: ...\n---\n[skill content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
-      const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+      const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null, 8000));
       trackUsage(retry.usage, retryPrompt.length);
       files = parseFileOutput(retry.text);
       text = retry.text;
@@ -876,12 +942,14 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
           }
         }
 
+        const baseRef = summarizeBaseSkill(baseSkillContent, scan);
+
         const domainPrompt = loadPrompt('doc-init-domain', {
           domainName: domain.name,
-        }) + strategyNote + `\n\n---\n\nRepository path: ${repoPath}\nToday's date is ${today}.\n\n## Base skill (for context)\n\`\`\`\n${baseSkillContent || 'Not available'}\n\`\`\`\n\n${domainInfo}\n\n${domainGraph}${domainFindings}${existingDomainSection}`;
+        }) + strategyNote + `\n\n---\n\nRepository path: ${repoPath}\nToday's date is ${today}.\n\n${baseRef}\n\n${domainInfo}\n\n${domainGraph}${domainFindings}${existingDomainSection}`;
 
         try {
-          const { text, usage } = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+          const { text, usage } = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, null, 8000));
           trackUsage(usage, domainPrompt.length);
           const files = parseFileOutput(text);
           return { domain: domain.name, files, success: true };
@@ -945,7 +1013,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${existingClaudeMdSection}`;
 
     try {
-      let { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner));
+      let { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner, 8000));
       trackUsage(usage, claudeMdPrompt.length);
       let files = parseFileOutput(text);
 
@@ -954,7 +1022,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       for (let attempt = 0; attempt < MAX_RETRIES && files.length === 0; attempt++) {
         claudeMdSpinner.message(`CLAUDE.md missing file tags — retry ${attempt + 1}/${MAX_RETRIES}...`);
         const retryPrompt = `Your previous response did not include the required <file path="CLAUDE.md">content</file> XML tags. I need you to output CLAUDE.md wrapped in exactly this format:\n\n<file path="CLAUDE.md">\n# project-name\n[CLAUDE.md content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
-        const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+        const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null, 8000));
         trackUsage(retry.usage, retryPrompt.length);
         files = parseFileOutput(retry.text);
         text = retry.text;

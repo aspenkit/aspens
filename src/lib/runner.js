@@ -32,7 +32,7 @@ function checkClaude() {
  * Returns { text, usage } where usage has output_tokens, tool_uses, tool_result_chars.
  */
 export function runClaude(prompt, options = {}) {
-  const { timeout = 300000, allowedTools = null, disableTools = false, verbose = false, onActivity = null, model = null } = options;
+  const { timeout = 300000, allowedTools = null, disableTools = false, verbose = false, onActivity = null, model = null, maxTokens = null } = options;
 
   checkClaude();
 
@@ -44,10 +44,11 @@ export function runClaude(prompt, options = {}) {
   }
 
   const modelFlags = model ? ['--model', model] : [];
+  const maxTokensFlags = maxTokens ? ['--max-tokens', String(maxTokens)] : [];
 
   // Always use stream-json so we can extract token usage
   // Claude CLI requires --verbose when using stream-json with -p
-  const args = ['-p', '--verbose', ...toolFlags, ...modelFlags, '--output-format', 'stream-json'];
+  const args = ['-p', '--verbose', ...toolFlags, ...modelFlags, ...maxTokensFlags, '--output-format', 'stream-json'];
 
   return new Promise((resolve, reject) => {
     const child = spawn('claude', args, {
