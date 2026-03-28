@@ -220,7 +220,7 @@ aspens doc graph .
 Add individual components from the bundled library, or create custom skills.
 
 ```bash
-aspens add agent all              # Add all 9 AI agents
+aspens add agent all              # Add all 11 AI agents
 aspens add agent code-reviewer    # Add a specific agent
 aspens add agent --list           # Browse available agents
 aspens add hook skill-activation  # Add auto-triggering hooks
