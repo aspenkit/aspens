@@ -8,8 +8,8 @@ We're approaching context limits. Please update the development documentation to
 ## Required Updates
 
 ### 1. Update Active Task Plans
-For each task in `/dev/active/`:
-- Update `plan.md` with:
+For each task in `/dev/active/<task-name>/`:
+- Update `<task-name>/plan.md` with:
   - Mark completed tasks as checked (`[x]`)
   - Add any new tasks discovered during this session
   - Log key decisions in the Decisions section

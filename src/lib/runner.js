@@ -44,7 +44,7 @@ export function runClaude(prompt, options = {}) {
   }
 
   const modelFlags = model ? ['--model', model] : [];
-  const maxTokensFlags = maxTokens ? ['--max-tokens', String(maxTokens)] : [];
+  const maxTokensFlags = (Number.isInteger(maxTokens) && maxTokens > 0) ? ['--max-tokens', String(maxTokens)] : [];
 
   // Always use stream-json so we can extract token usage
   // Claude CLI requires --verbose when using stream-json with -p

@@ -231,6 +231,7 @@ aspens add skill --list           # Show existing skills
 |--------|-------------|
 | `--list` | Browse available components |
 | `--from <file>` | Generate a skill from a reference document (skills only) |
+| `--force` | Overwrite existing skills |
 
 ### `aspens customize agents`
 

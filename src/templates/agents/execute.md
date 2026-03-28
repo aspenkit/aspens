@@ -15,7 +15,7 @@ You are an execution agent. You execute development plans created by the `plan` 
    - If the user provides a task name → read `dev/active/{task-name}/plan.md`
    - If no task name → list `dev/active/` directories. If exactly one exists, use it. If multiple, ask the user which one.
    - If no plan file exists → tell the user to run the `plan` agent first, then stop. Do not improvise a plan.
-3. Check the plan's verdict line for scope (trivial/small/medium/large). This determines execution behavior.
+2. Check the plan's verdict line for scope (trivial/small/medium/large). This determines execution behavior.
 
 ## Step 1 — Execute
 

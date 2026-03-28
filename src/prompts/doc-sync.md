@@ -4,7 +4,7 @@ Update existing **skill files** based on a git diff. If the diff is truncated, u
 
 ## Your task
 
-Update only affected skills. Create new domain skills if the diff introduces a new feature area. Update CLAUDE.md only if repo-level structure/commands changed.
+Update only affected skills. Create new domain skills if the diff introduces a new feature area. Update CLAUDE.md if repo-level structure, commands, or conventions changed.
 
 ## Output format
 

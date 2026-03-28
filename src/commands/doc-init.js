@@ -936,6 +936,9 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
         // When improving, include existing domain skill content
         let existingDomainSection = '';
         if (strategy === 'improve') {
+          if (domain.name.includes('..') || domain.name.startsWith('/')) {
+            return { domain: domain.name, files: [], success: false };
+          }
           const existingDomainPath = join(repoPath, '.claude', 'skills', domain.name, 'skill.md');
           if (existsSync(existingDomainPath)) {
             existingDomainSection = `\n\n## Existing Skill (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${readFileSync(existingDomainPath, 'utf8')}\n\`\`\``;
