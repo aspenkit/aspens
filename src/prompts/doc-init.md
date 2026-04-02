@@ -1,4 +1,4 @@
-Generate **skill files** for a codebase — concise, auto-triggering context documents for Claude Code. Use your tools (Read, Glob, Grep) to explore the actual code before writing anything.
+Generate concise project context docs for a codebase. Use your tools (Read, Glob, Grep) to explore the actual code before writing anything.
 
 {{skill-format}}
 
@@ -36,7 +36,7 @@ description: ...
 
 ## Rules
 
-1. **Use YAML frontmatter** with `name` and `description` fields. This is how Claude Code discovers skills.
+1. **Use YAML frontmatter** with `name` and `description` fields.
 2. **30-60 lines per skill.** Concise and actionable.
 3. **Be specific.** Use actual file paths, actual commands, actual patterns you found by reading the code.
 4. **Non-obvious knowledge only.** Don't explain what the framework is. Explain how THIS project uses it.

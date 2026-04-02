@@ -1,28 +1,12 @@
 /**
  * Content transform system for multi-target output.
  *
- * Transforms canonical skill output (generated for Claude target) into
- * other target formats. The key insight: Claude Code uses centralized
- * skills in .claude/skills/, while Codex CLI uses directory-scoped
- * AGENTS.md files placed in actual source directories.
+ * Canonical generation produces Claude-shaped docs first.
+ * Other targets are projected from that canonical output.
  */
 
-import { join, dirname, basename, relative } from 'path';
-import { existsSync } from 'fs';
+import { join } from 'path';
 
-// ---------------------------------------------------------------------------
-// Main entry point
-// ---------------------------------------------------------------------------
-
-/**
- * Transform a set of generated files for a specific target.
- *
- * @param {Array<{path: string, content: string}>} files — from parseFileOutput (Claude paths)
- * @param {object} sourceTarget — target files were generated for
- * @param {object} destTarget — target to transform to
- * @param {object} context — { scanResult, graphSerialized? }
- * @returns {Array<{path: string, content: string}>}
- */
 export function transformForTarget(files, sourceTarget, destTarget, context) {
   if (sourceTarget.id === destTarget.id) return files;
 
@@ -37,163 +21,201 @@ export function transformForTarget(files, sourceTarget, destTarget, context) {
   return files;
 }
 
-// ---------------------------------------------------------------------------
-// Centralized transform (future: Cursor, etc.)
-// ---------------------------------------------------------------------------
-
 function transformToCentralized(files, sourceTarget, destTarget) {
-  return files.map(f => ({
-    path: remapCentralizedPath(f.path, sourceTarget, destTarget),
-    content: remapContentPaths(f.content, sourceTarget, destTarget),
+  return files.map(file => ({
+    path: remapCentralizedPath(file.path, sourceTarget, destTarget),
+    content: remapContentPaths(file.content, sourceTarget, destTarget),
   }));
 }
 
 function remapCentralizedPath(filePath, sourceTarget, destTarget) {
-  // CLAUDE.md → AGENTS.md (or vice versa)
   if (filePath === sourceTarget.instructionsFile) {
     return destTarget.instructionsFile;
   }
-  // .claude/skills/foo/skill.md → .dest/skills/foo/skill.md
+
   if (filePath.startsWith(sourceTarget.skillsDir + '/')) {
     const rest = filePath.slice(sourceTarget.skillsDir.length + 1);
-    return `${destTarget.skillsDir}/${rest}`;
+    return destTarget.skillsDir + '/' + rest;
   }
+
   return filePath;
 }
 
-// ---------------------------------------------------------------------------
-// Directory-scoped transform (Codex CLI)
-// ---------------------------------------------------------------------------
-
 function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
-  const { scanResult, graphSerialized } = context;
+  const scanResult = context?.scanResult;
+  const graphSerialized = context?.graphSerialized;
   const result = [];
 
-  // Separate files by type
   const baseSkillPrefix = sourceTarget.skillsDir + '/base/';
-  const baseSkill = files.find(f => f.path.startsWith(baseSkillPrefix));
-  const instructionsFile = files.find(f => f.path === sourceTarget.instructionsFile);
-  const domainSkills = files.filter(f =>
-    f !== baseSkill && f !== instructionsFile && f.path.startsWith(sourceTarget.skillsDir + '/')
+  const baseSkill = files.find(file => file.path.startsWith(baseSkillPrefix));
+  const instructionsFile = files.find(file => file.path === sourceTarget.instructionsFile);
+  const domainSkills = files.filter(file =>
+    file !== baseSkill &&
+    file !== instructionsFile &&
+    file.path.startsWith(sourceTarget.skillsDir + '/')
   );
 
-  // 1. Build root AGENTS.md from base skill + instructions + code-map
   const rootContent = buildRootInstructions(baseSkill, instructionsFile, graphSerialized, destTarget);
   if (rootContent) {
     result.push({ path: destTarget.instructionsFile, content: rootContent });
   }
 
-  // 2. Map domain skills → source directory AGENTS.md files
+  if (baseSkill) {
+    result.push({
+      path: join(destTarget.skillsDir, 'base', destTarget.skillFilename),
+      content: remapContentPaths(baseSkill.content, sourceTarget, destTarget),
+    });
+  }
+
   for (const skill of domainSkills) {
     const domainName = extractDomainName(skill.path, sourceTarget);
+    if (!domainName) continue;
+
+    result.push({
+      path: join(destTarget.skillsDir, domainName, destTarget.skillFilename),
+      content: remapContentPaths(skill.content, sourceTarget, destTarget),
+    });
+
     const targetDir = resolveDomainDirectory(domainName, scanResult);
+    if (!targetDir) continue;
 
-    if (!targetDir) continue; // skip if we can't determine placement
-
-    const content = transformDomainSkill(skill.content, sourceTarget, destTarget);
     result.push({
       path: join(targetDir, destTarget.directoryDocFile || 'AGENTS.md'),
-      content,
+      content: transformDomainSkill(skill.content, sourceTarget, destTarget),
     });
+  }
+
+  if (destTarget.skillsDir && graphSerialized) {
+    result.push(...generateCodexSkillReferences(destTarget, graphSerialized));
   }
 
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// Root instructions builder
-// ---------------------------------------------------------------------------
+function generateCodexSkillReferences(destTarget, graphSerialized) {
+  const files = [];
+  const skillsDir = destTarget.skillsDir;
+  const archSkillPath = join(skillsDir, 'architecture', 'SKILL.md');
+  const archRefPath = join(skillsDir, 'architecture', 'references', 'code-map.md');
+
+  files.push({
+    path: archSkillPath,
+    content: [
+      '---',
+      'name: architecture',
+      'description: >',
+      '  Use when modifying imports, creating new files, refactoring modules,',
+      '  or understanding how components relate. Not needed for simple single-file edits.',
+      '---',
+      '',
+      '# Architecture',
+      '',
+      'This skill provides codebase structure and import graph data.',
+      '',
+      'When you need to understand file relationships, hub files, or domain clusters,',
+      'check `references/code-map.md` for the full import graph analysis.',
+      '',
+      '## Key Rules',
+      '',
+      '- Check hub files (high fan-in) before modifying - changes propagate widely',
+      '- Respect domain cluster boundaries - keep related files together',
+      '- Check cross-domain dependencies before creating new imports',
+      '',
+    ].join('\n') + '\n',
+  });
+
+  const codeMap = generateCondensedCodeMap(graphSerialized);
+  if (codeMap) {
+    files.push({
+      path: archRefPath,
+      content: '# Code Map\n\n' + codeMap + '\n',
+    });
+  }
+
+  return files;
+}
 
 function buildRootInstructions(baseSkill, instructionsFile, graphSerialized, destTarget) {
   const sections = [];
 
-  // Start with instructions file content (CLAUDE.md equivalent)
   if (instructionsFile) {
     let content = instructionsFile.content;
     content = stripActivationSection(content);
-    content = content.replace(/CLAUDE\.md/g, destTarget.instructionsFile);
-    content = content.replace(/\.claude\/skills\//g, '');
+    content = remapContentPaths(content, { instructionsFile: 'CLAUDE.md', skillsDir: '.claude/skills', skillFilename: 'skill.md', configDir: '.claude' }, destTarget);
+    if (destTarget.id === 'codex') {
+      content = sanitizeCodexInstructions(content);
+    }
     sections.push(content.trim());
   } else if (baseSkill) {
-    // Fall back to base skill if no instructions file
     let content = baseSkill.content;
     content = stripActivationSection(content);
-    content = content.replace(/CLAUDE\.md/g, destTarget.instructionsFile);
-    content = content.replace(/\.claude\/skills\//g, '');
+    content = remapContentPaths(content, { instructionsFile: 'CLAUDE.md', skillsDir: '.claude/skills', skillFilename: 'skill.md', configDir: '.claude' }, destTarget);
+    if (destTarget.id === 'codex') {
+      content = sanitizeCodexInstructions(content);
+    }
     sections.push(content.trim());
   }
 
-  // Embed condensed code-map if target needs it and graph data is available
   if (destTarget.needsCodeMapEmbed && graphSerialized) {
     const codeMap = generateCondensedCodeMap(graphSerialized);
-    if (codeMap) {
-      sections.push(codeMap);
-    }
+    if (codeMap) sections.push(codeMap);
   }
 
   if (sections.length === 0) return null;
 
-  let result = sections.join('\n\n') + '\n';
-
-  // Warn if root instructions exceed target's max budget
+  const result = sections.join('\n\n') + '\n';
   const maxBytes = destTarget.maxInstructionsBytes;
   if (maxBytes && Buffer.byteLength(result, 'utf8') > maxBytes) {
     const sizeKB = Math.round(Buffer.byteLength(result, 'utf8') / 1024);
     const limitKB = Math.round(maxBytes / 1024);
     console.warn(
-      `Warning: Root ${destTarget.instructionsFile} is ${sizeKB} KiB, ` +
-      `exceeding ${destTarget.label}'s ${limitKB} KiB default budget. ` +
-      `Consider trimming or increasing project_doc_max_bytes in config.`
+      'Warning: Root ' + destTarget.instructionsFile + ' is ' + sizeKB + ' KiB, ' +
+      'exceeding ' + destTarget.label + '\'s ' + limitKB + ' KiB default budget. ' +
+      'Consider trimming or increasing project_doc_max_bytes in config.'
     );
   }
 
   return result;
 }
 
-/**
- * Generate a condensed code-map suitable for embedding in root AGENTS.md.
- * Targets ~2-4 KiB to stay within budget.
- */
 function generateCondensedCodeMap(serializedGraph) {
   const lines = [];
 
-  // Hub files (top 5 only for condensed version)
-  if (serializedGraph.hubs?.length > 0) {
+  if (serializedGraph?.hubs?.length > 0) {
     lines.push('## Key Files');
     lines.push('');
     lines.push('**Hub files (most depended-on):**');
-    for (const h of serializedGraph.hubs.slice(0, 5)) {
-      lines.push(`- \`${h.path}\` — ${h.fanIn} dependents`);
+    for (const hub of serializedGraph.hubs.slice(0, 5)) {
+      lines.push('- `' + hub.path + '` - ' + hub.fanIn + ' dependents');
     }
     lines.push('');
   }
 
-  // Domain clusters (condensed table)
-  if (serializedGraph.clusters?.length > 0) {
-    const multiFileClusters = serializedGraph.clusters.filter(c => c.size > 1);
+  if (serializedGraph?.clusters?.length > 0) {
+    const multiFileClusters = serializedGraph.clusters.filter(cluster => cluster.size > 1);
     if (multiFileClusters.length > 0) {
       lines.push('**Domain clusters:**');
       lines.push('');
       lines.push('| Domain | Files | Top entries |');
       lines.push('|--------|-------|-------------|');
-      for (const c of multiFileClusters.slice(0, 10)) {
-        const topFiles = c.files
-          .filter(f => serializedGraph.files[f])
+      for (const cluster of multiFileClusters.slice(0, 10)) {
+        const topFiles = cluster.files
+          .filter(file => serializedGraph.files[file])
           .sort((a, b) => (serializedGraph.files[b]?.priority || 0) - (serializedGraph.files[a]?.priority || 0))
           .slice(0, 3)
-          .map(f => `\`${shortPath(f)}\``)
+          .map(shortPath)
+          .map(file => '`' + file + '`')
           .join(', ');
-        lines.push(`| ${c.label} | ${c.size} | ${topFiles} |`);
+        lines.push('| ' + cluster.label + ' | ' + cluster.size + ' | ' + topFiles + ' |');
       }
       lines.push('');
     }
   }
 
-  // Hotspots (top 3 for condensed)
-  if (serializedGraph.hotspots?.length > 0) {
+  if (serializedGraph?.hotspots?.length > 0) {
     lines.push('**High-churn hotspots:**');
-    for (const h of serializedGraph.hotspots.slice(0, 3)) {
-      lines.push(`- \`${h.path}\` — ${h.churn} changes`);
+    for (const hotspot of serializedGraph.hotspots.slice(0, 3)) {
+      lines.push('- `' + hotspot.path + '` - ' + hotspot.churn + ' changes');
     }
     lines.push('');
   }
@@ -206,44 +228,45 @@ function shortPath(filePath) {
   return parts.length > 3 ? parts.slice(-3).join('/') : filePath;
 }
 
-// ---------------------------------------------------------------------------
-// Domain skill transform
-// ---------------------------------------------------------------------------
-
 function transformDomainSkill(content, sourceTarget, destTarget) {
-  let result = content;
-
-  // Strip ## Activation section (location IS activation for Codex)
-  result = stripActivationSection(result);
-
-  // Rewrite internal path references
+  let result = stripActivationSection(content);
   result = remapContentPaths(result, sourceTarget, destTarget);
-
+  if (destTarget.id === 'codex') {
+    result = sanitizeCodexSkill(result);
+  }
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// Shared utilities
-// ---------------------------------------------------------------------------
+export function projectCodexDomainDocs(files, target, scanResult) {
+  if (!target?.skillsDir || !target?.directoryDocFile) return [];
 
-/**
- * Strip the ## Activation section from skill content.
- */
+  const projected = [];
+  for (const file of files) {
+    const domainName = extractDomainName(file.path, target);
+    if (!domainName || domainName === 'base' || domainName === 'architecture') continue;
+
+    const targetDir = resolveDomainDirectory(domainName, scanResult);
+    if (!targetDir) continue;
+
+    projected.push({
+      path: join(targetDir, target.directoryDocFile),
+      content: transformDomainSkill(file.content, target, target),
+    });
+  }
+
+  return projected;
+}
+
 function stripActivationSection(content) {
-  // Match ## Activation and everything up to the next ## heading or ---
   return content.replace(
     /## Activation\s*\r?\n[\s\S]*?(?=\r?\n## |\r?\n---|\r?\n\*\*Last Updated|$)/,
     ''
   ).replace(/(\r?\n){3,}/g, '\n\n');
 }
 
-/**
- * Rewrite path references in content from source to dest target.
- */
 function remapContentPaths(content, sourceTarget, destTarget) {
   let result = content;
 
-  // Instructions file
   if (sourceTarget.instructionsFile !== destTarget.instructionsFile) {
     result = result.replace(
       new RegExp(escapeRegex(sourceTarget.instructionsFile), 'g'),
@@ -251,17 +274,21 @@ function remapContentPaths(content, sourceTarget, destTarget) {
     );
   }
 
-  // Skills dir paths — replace .claude/skills/domain/skill.md references
   if (sourceTarget.skillsDir && destTarget.placement === 'directory-scoped') {
-    // For directory-scoped targets, remove the skills dir prefix
     result = result.replace(
       new RegExp(escapeRegex(sourceTarget.skillsDir) + '/[\\w-]+/' + escapeRegex(sourceTarget.skillFilename), 'g'),
-      (match) => {
+      match => {
         const parts = match.split('/');
         const domain = parts[parts.length - 2];
-        return `${domain}/`;
+        return destTarget.skillsDir + '/' + domain + '/' + destTarget.skillFilename;
       }
     );
+    result = result.replace(/`([A-Za-z0-9_-]+)\/skill\.md`/g, (_match, domain) => {
+      return '`' + destTarget.skillsDir + '/' + domain + '/' + destTarget.skillFilename + '`';
+    });
+    result = result.replace(/\b([A-Za-z0-9_-]+)\/skill\.md\b/g, (_match, domain) => {
+      return destTarget.skillsDir + '/' + domain + '/' + destTarget.skillFilename;
+    });
   } else if (sourceTarget.skillsDir && destTarget.skillsDir) {
     result = result.replace(
       new RegExp(escapeRegex(sourceTarget.skillsDir), 'g'),
@@ -269,7 +296,6 @@ function remapContentPaths(content, sourceTarget, destTarget) {
     );
   }
 
-  // Config dir
   if (sourceTarget.configDir && destTarget.configDir) {
     result = result.replace(
       new RegExp(escapeRegex(sourceTarget.configDir + '/'), 'g'),
@@ -280,10 +306,60 @@ function remapContentPaths(content, sourceTarget, destTarget) {
   return result;
 }
 
-/**
- * Extract domain name from a skill file path.
- * e.g., '.claude/skills/billing/skill.md' → 'billing'
- */
+function sanitizeCodexInstructions(content) {
+  const filteredLines = content
+    .split('\n')
+    .filter(line =>
+      !/aspens customize agents/i.test(line) &&
+      !/claude code/i.test(line) &&
+      !/generated Claude skills/i.test(line) &&
+      !/\.claude\/hooks/i.test(line) &&
+      !/\.codex\/hooks/i.test(line) &&
+      !/skill-rules\.json/i.test(line) &&
+      !/hook compatibility/i.test(line) &&
+      !/CLAUDE\.md/i.test(line)
+    );
+
+  return filteredLines
+    .join('\n')
+    .replace(/CLAUDE\.md/g, 'AGENTS.md')
+    .replace(/plus `AGENTS\.md`/g, '')
+    .replace(/Claude Code skills plus /g, '')
+    .replace(/`base\/skill\.md`/g, '`.agents/skills/base/SKILL.md`')
+    .replace(/\bbase\/skill\.md\b/g, '.agents/skills/base/SKILL.md')
+    .replace(/`([a-z0-9_-]+)\/skill\.md`/gi, '`.agents/skills/$1/SKILL.md`')
+    .replace(/\b([a-z0-9_-]+)\/skill\.md\b/gi, '.agents/skills/$1/SKILL.md')
+    .replace(/`\.claude\/graph\.json`/g, '`.agents/skills/architecture/references/code-map.md`')
+    .replace(/Generate skills, hooks, and `AGENTS\.md`/g, 'Generate Codex project docs and skills')
+    .replace(/Generate skills and `AGENTS\.md`/g, 'Generate Codex project docs and skills')
+    .replace(/Update docs from recent diffs/g, 'Update Codex project docs from recent diffs')
+    .replace(/(\n){3,}/g, '\n\n')
+    .trim();
+}
+
+function sanitizeCodexSkill(content) {
+  const filteredLines = content
+    .split('\n')
+    .filter(line =>
+      !/\.claude\/hooks/i.test(line) &&
+      !/\.codex\/hooks/i.test(line) &&
+      !/generated Claude skills/i.test(line) &&
+      !/skill-rules\.json/i.test(line) &&
+      !/hook compatibility/i.test(line) &&
+      !/customize agents/i.test(line)
+    );
+
+  return filteredLines
+    .join('\n')
+    .replace(/CLAUDE\.md/g, 'AGENTS.md')
+    .replace(/`base\/skill\.md`/g, '`.agents/skills/base/SKILL.md`')
+    .replace(/\bbase\/skill\.md\b/g, '.agents/skills/base/SKILL.md')
+    .replace(/`([a-z0-9_-]+)\/skill\.md`/gi, '`.agents/skills/$1/SKILL.md`')
+    .replace(/\b([a-z0-9_-]+)\/skill\.md\b/gi, '.agents/skills/$1/SKILL.md')
+    .replace(/(\n){3,}/g, '\n\n')
+    .trim() + '\n';
+}
+
 function extractDomainName(skillPath, target) {
   const prefix = target.skillsDir + '/';
   if (!skillPath.startsWith(prefix)) return null;
@@ -291,15 +367,11 @@ function extractDomainName(skillPath, target) {
   return rest.split('/')[0];
 }
 
-/**
- * Resolve a domain name to its primary source directory.
- * Uses scanner's domain.directories[0] with fallback to activation patterns.
- */
 function resolveDomainDirectory(domainName, scanResult) {
   if (!scanResult?.domains) return null;
 
-  const domain = scanResult.domains.find(d =>
-    d.name === domainName || d.name.toLowerCase() === domainName.toLowerCase()
+  const domain = scanResult.domains.find(item =>
+    item.name === domainName || item.name.toLowerCase() === domainName.toLowerCase()
   );
 
   if (domain?.directories?.length) {
@@ -310,37 +382,39 @@ function resolveDomainDirectory(domainName, scanResult) {
 }
 
 function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let result = str;
+  for (const char of ['\\', '^', '$', '.', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|']) {
+    result = result.replaceAll(char, '\\' + char);
+  }
+  return result;
 }
 
-// ---------------------------------------------------------------------------
-// Directory-scoped output validation
-// ---------------------------------------------------------------------------
-
-/**
- * Validate that transformed files are safe to write.
- * For directory-scoped output, files go into source dirs (not .claude/).
- *
- * @param {Array<{path: string, content: string}>} files
- * @returns {{ valid: boolean, issues: string[] }}
- */
 export function validateTransformedFiles(files) {
   const issues = [];
 
-  for (const { path: filePath } of files) {
-    // Block absolute paths
+  for (const file of files) {
+    const filePath = file.path;
+
     if (filePath.startsWith('/') || /^[a-zA-Z]:/.test(filePath)) {
-      issues.push(`Absolute path not allowed: ${filePath}`);
+      issues.push('Absolute path not allowed: ' + filePath);
       continue;
     }
-    // Block traversal
+
     if (filePath.includes('..')) {
-      issues.push(`Path traversal not allowed: ${filePath}`);
+      issues.push('Path traversal not allowed: ' + filePath);
       continue;
     }
-    // For directory-scoped, must end with a known doc file
-    if (!filePath.endsWith('AGENTS.md') && !filePath.endsWith('SKILL.md') && !filePath.endsWith('CLAUDE.md')) {
-      issues.push(`Unexpected filename: ${filePath}`);
+
+    const isKnownDocFile =
+      filePath.endsWith('AGENTS.md') ||
+      filePath.endsWith('SKILL.md') ||
+      filePath.endsWith('CLAUDE.md');
+    const isUnderSkillsDir =
+      filePath.startsWith('.agents/skills/') ||
+      filePath.startsWith('.claude/skills/');
+
+    if (!isKnownDocFile && !isUnderSkillsDir) {
+      issues.push('Unexpected filename: ' + filePath);
     }
   }
 

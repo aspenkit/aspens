@@ -37,6 +37,8 @@ describe('resolveTarget', () => {
     expect(target.id).toBe('codex');
     expect(target.label).toBe('Codex CLI');
     expect(target.instructionsFile).toBe('AGENTS.md');
+    expect(target.supportsSettings).toBe(false);
+    expect(target.supportsMCP).toBe(false);
   });
 
   it('throws for unknown target', () => {

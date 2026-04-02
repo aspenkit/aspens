@@ -137,13 +137,22 @@ export function runCodex(prompt, options = {}) {
   ];
   if (model) args.push('--model', model);
   if (cwd) args.push('--cd', cwd);
-  args.push(prompt);
+  // Pass prompt via stdin (using '-' placeholder) to avoid shell arg length limits
+  args.push('-');
 
   return new Promise((resolve, reject) => {
     const child = spawn('codex', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: process.platform === 'win32',
     });
+
+    // Write prompt to stdin (same approach as runClaude)
+    const ok = child.stdin.write(prompt);
+    if (!ok) {
+      child.stdin.once('drain', () => child.stdin.end());
+    } else {
+      child.stdin.end();
+    }
 
     const chunks = [];
     const errChunks = [];
@@ -160,10 +169,12 @@ export function runCodex(prompt, options = {}) {
           if (!line.trim()) continue;
           try {
             const event = JSON.parse(line);
-            if (event.type === 'item.updated' && event.item?.details?.type === 'AgentMessage') {
+            const itemType = normalizeCodexItemType(event.item?.type || event.item?.details?.type);
+            if ((event.type === 'item.updated' || event.type === 'item.completed') && itemType === 'agent_message') {
               onActivity('Codex generating...');
-            } else if (event.type === 'item.completed' && event.item?.details?.type === 'CommandExecution') {
-              onActivity(`Codex ran: ${event.item?.details?.command?.slice(0, 60) || 'command'}`);
+            } else if (event.type === 'item.completed' && itemType === 'command_execution') {
+              const command = event.item?.command || event.item?.details?.command;
+              onActivity(`Codex ran: ${command?.slice(0, 60) || 'command'}`);
             }
           } catch { /* not JSON */ }
         }
@@ -191,10 +202,17 @@ export function runCodex(prompt, options = {}) {
         reject(new Error(`Codex timed out after ${timeout / 1000}s. Try a smaller repo or increase --timeout.`));
       } else if (code === 0) {
         const { text, usage } = extractResultFromCodexStream(stdout);
+        if (process.env.ASPENS_DEBUG) {
+          console.error(`[debug] Codex exited 0, stdout ${stdout.length} bytes, parsed text ${text.length} chars`);
+        }
         resolve({ text, usage });
       } else if (stderr.includes('rate limit') || stderr.includes('429')) {
         reject(new Error('Codex rate limit hit. Wait a moment and try again.'));
       } else {
+        if (process.env.ASPENS_DEBUG) {
+          console.error(`[debug] Codex exited ${code}, stderr: ${stderr.slice(0, 1000)}`);
+          console.error(`[debug] Codex stdout (first 500): ${stdout.slice(0, 500)}`);
+        }
         reject(new Error(`Codex exited with code ${code}${stderr ? ': ' + stderr.slice(0, 500) : ''}`));
       }
     });
@@ -222,25 +240,17 @@ function extractResultFromCodexStream(rawOutput) {
   for (const line of lines) {
     try {
       const event = JSON.parse(line);
+      const itemType = normalizeCodexItemType(event.item?.type || event.item?.details?.type);
 
       // Collect agent message text from completed items
-      if (event.type === 'item.completed' && event.item?.details?.type === 'AgentMessage') {
-        const content = event.item?.details?.content;
-        if (typeof content === 'string') {
-          textParts.push(content);
-        } else if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === 'text' || typeof block === 'string') {
-              textParts.push(block.text || block);
-            }
-          }
-        }
+      if (event.type === 'item.completed' && itemType === 'agent_message') {
+        const content = event.item?.text ?? event.item?.content ?? event.item?.details?.content;
+        collectCodexText(content, textParts);
       }
 
       // Count tool uses (command executions, file changes)
       if (event.type === 'item.completed') {
-        const type = event.item?.details?.type;
-        if (type === 'CommandExecution' || type === 'FileChange' || type === 'McpToolCall') {
+        if (itemType === 'command_execution' || itemType === 'file_change' || itemType === 'mcp_tool_call') {
           usage.tool_uses++;
         }
       }
@@ -253,6 +263,41 @@ function extractResultFromCodexStream(rawOutput) {
   }
 
   return { text: textParts.join('\n'), usage };
+}
+
+function normalizeCodexItemType(type) {
+  if (!type || typeof type !== 'string') return '';
+  return type
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .replace(/-/g, '_')
+    .toLowerCase();
+}
+
+function collectCodexText(content, parts) {
+  if (!content) return;
+
+  if (typeof content === 'string') {
+    parts.push(content);
+    return;
+  }
+
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      collectCodexText(block, parts);
+    }
+    return;
+  }
+
+  if (typeof content === 'object') {
+    if (typeof content.text === 'string') {
+      parts.push(content.text);
+      return;
+    }
+    if (typeof content.content === 'string') {
+      parts.push(content.content);
+      return;
+    }
+  }
 }
 
 /**

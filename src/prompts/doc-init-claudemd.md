@@ -1,20 +1,20 @@
-Generate CLAUDE.md — the entry point Claude Code reads on every session. Keep it concise since it's loaded on every prompt.
+Generate the root project instructions file at `{{instructionsFile}}`. Keep it concise since it is loaded frequently.
 
 ## Your task
 
-From the scan results and generated skills, create a CLAUDE.md covering: repo summary + tech stack, available skills with activation triggers, key commands (dev/test/lint), and critical conventions.
+From the scan results and generated skills, create the root project instructions file covering: repo summary + tech stack, available skills, key commands (dev/test/lint), and critical conventions.
 
 ## Output format
 
 Return exactly one file:
 
 <file path="{{instructionsFile}}">
-[CLAUDE.md content]
+[instructions file content]
 </file>
 
 ## Rules
 
-1. Keep it concise — CLAUDE.md is loaded on every prompt, so shorter is better.
+1. Keep it concise — this file is loaded often, so shorter is better.
 2. Reference skills by their path (e.g., `{{skillsDir}}/billing/{{skillFilename}}`).
 3. Include actual commands from the scan data, not placeholders.
 4. Do NOT duplicate what's already in the skills — just reference them.

@@ -5,10 +5,10 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
-import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
+import { runClaude, runCodex, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { extractRulesFromSkills } from '../lib/skill-writer.js';
 import { findSkillFiles } from '../lib/skill-reader.js';
-import { readConfig } from '../lib/target.js';
+import { TARGETS, getAllowedPaths, readConfig } from '../lib/target.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -144,6 +144,27 @@ ${available.map(a => `    ${pc.green(a.name)} — ${a.description}`).join('\n')}
   console.log();
 }
 
+function resolveSkillTarget(config) {
+  const targetIds = config?.targets || ['claude'];
+  if (targetIds.length === 1 && targetIds[0] === 'codex') {
+    return TARGETS.codex;
+  }
+  return TARGETS.claude;
+}
+
+function runLLM(prompt, options, backendId) {
+  if (backendId === 'codex') {
+    return runCodex(prompt, {
+      timeout: options.timeout,
+      verbose: options.verbose,
+      onActivity: options.onActivity,
+      model: options.model,
+      cwd: options.cwd,
+    });
+  }
+  return runClaude(prompt, options);
+}
+
 function showCustomizeTip() {
   console.log();
   console.log(pc.dim('  Tip: Run ') + pc.cyan('aspens customize agents') + pc.dim(' to inject your project\'s'));
@@ -237,11 +258,16 @@ function ensureDevGitignore(repoPath) {
 // --- Custom skill ---
 
 async function addSkillCommand(repoPath, name, options) {
-  const skillsDir = join(repoPath, '.claude', 'skills');
+  const config = readConfig(repoPath);
+  const target = resolveSkillTarget(config);
+  const backendId = config?.backend || target.id;
+  const skillsDir = join(repoPath, target.skillsDir);
+  const skillFilename = target.skillFilename;
+  const relSkillsDir = target.skillsDir;
 
   // --list mode: show existing skills
   if (options.list) {
-    const skills = existsSync(skillsDir) ? findSkillFiles(skillsDir) : [];
+    const skills = existsSync(skillsDir) ? findSkillFiles(skillsDir, { skillFilename }) : [];
     console.log(`
   ${pc.bold('Skills')} ${pc.dim(`(${skills.length} installed)`)}
   ${pc.dim('Custom skills for conventions, workflows, and processes.')}
@@ -287,8 +313,8 @@ async function addSkillCommand(repoPath, name, options) {
   }
 
   const skillDir = join(skillsDir, safeName);
-  const skillPath = join(skillDir, 'skill.md');
-  const relPath = `.claude/skills/${safeName}/skill.md`;
+  const skillPath = join(skillDir, skillFilename);
+  const relPath = `${relSkillsDir}/${safeName}/${skillFilename}`;
 
   if (existsSync(skillPath)) {
     console.log(pc.yellow(`\n  Skill already exists: ${relPath}`));
@@ -337,20 +363,30 @@ You are working on **${safeName}**.
 
   console.log(`\n  ${pc.green('+')} ${relPath}`);
   console.log(pc.dim(`\n  Edit the skill to add your conventions and file patterns.`));
-  console.log(pc.dim(`  Then run ${pc.cyan('aspens doc init --hooks-only')} to update activation rules.\n`));
+  if (target.id === 'claude') {
+    console.log(pc.dim(`  Then run ${pc.cyan('aspens doc init --hooks-only')} to update activation rules.\n`));
+  } else {
+    console.log();
+  }
 
-  updateSkillRules(skillsDir);
+  if (target.id === 'claude') {
+    updateSkillRules(skillsDir);
+  }
 }
 
 async function generateSkillFromDoc(repoPath, skillName, options) {
+  const config = readConfig(repoPath);
+  const target = resolveSkillTarget(config);
+  const backendId = config?.backend || target.id;
   const fromPath = resolve(options.from);
   if (!existsSync(fromPath)) {
     throw new CliError(`Reference file not found: ${options.from}`);
   }
 
-  const skillDir = join(repoPath, '.claude', 'skills', skillName);
-  const relPath = `.claude/skills/${skillName}/skill.md`;
+  const skillDir = join(repoPath, target.skillsDir, skillName);
+  const relPath = `${target.skillsDir}/${skillName}/${target.skillFilename}`;
   const verbose = !!options.verbose;
+  const allowedPaths = getAllowedPaths([target]);
 
   const { timeoutMs } = resolveTimeout(options.timeout, 120);
 
@@ -382,19 +418,20 @@ ${refContent}
 
   let result;
   try {
-    result = await runClaude(fullPrompt, {
+    result = await runLLM(fullPrompt, {
       timeout: timeoutMs,
       allowedTools: ['Read', 'Glob', 'Grep'],
       verbose,
       model: options.model || null,
       onActivity: verbose ? (msg) => genSpinner.message(pc.dim(msg)) : null,
-    });
+      cwd: repoPath,
+    }, backendId);
   } catch (err) {
     genSpinner.stop(pc.red('Failed'));
     throw new CliError(err.message, { cause: err });
   }
 
-  const files = parseFileOutput(result.text);
+  const files = parseFileOutput(result.text, allowedPaths);
   if (files.length === 0) {
     genSpinner.stop(pc.red('No skill generated'));
     throw new CliError('Claude did not produce a skill file. Try a different reference document or write the skill manually.');
@@ -411,11 +448,17 @@ ${refContent}
     console.log(`\n  ${pc.green('+')} ${file.path}`);
   }
 
-  const skillsDir = join(repoPath, '.claude', 'skills');
-  updateSkillRules(skillsDir);
+  if (target.id === 'claude') {
+    const skillsDir = join(repoPath, target.skillsDir);
+    updateSkillRules(skillsDir);
+  }
 
   console.log(pc.dim(`\n  Review the generated skill and adjust as needed.`));
-  console.log(pc.dim(`  Run ${pc.cyan('aspens doc init --hooks-only')} to update activation hooks.\n`));
+  if (target.id === 'claude') {
+    console.log(pc.dim(`  Run ${pc.cyan('aspens doc init --hooks-only')} to update activation hooks.\n`));
+  } else {
+    console.log();
+  }
 }
 
 function updateSkillRules(skillsDir) {

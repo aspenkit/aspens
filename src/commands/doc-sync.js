@@ -3,8 +3,8 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
-import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
-import { writeSkillFiles, extractRulesFromSkills } from '../lib/skill-writer.js';
+import { runClaude, runCodex, loadPrompt, parseFileOutput } from '../lib/runner.js';
+import { writeSkillFiles, writeTransformedFiles, extractRulesFromSkills } from '../lib/skill-writer.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
 import { persistGraphArtifacts, loadGraph, extractSubgraph, formatNavigationContext } from '../lib/graph-persistence.js';
 import { findSkillFiles, parseActivationPatterns, getActivationBlock, fileMatchesActivation } from '../lib/skill-reader.js';
@@ -13,11 +13,85 @@ import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
 import { installGitHook, removeGitHook } from '../lib/git-hook.js';
 import { isGitRepo, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
-import { TARGETS, readConfig } from '../lib/target.js';
+import { TARGETS, getAllowedPaths, readConfig } from '../lib/target.js';
 import { getSelectedFilesDiff, buildPrioritizedDiff, truncate } from '../lib/diff-helpers.js';
+import { projectCodexDomainDocs, transformForTarget } from '../lib/target-transform.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 const PARALLEL_LIMIT = 3;
+
+function runLLM(prompt, options, backendId) {
+  if (backendId === 'codex') {
+    return runCodex(prompt, {
+      timeout: options.timeout,
+      verbose: options.verbose,
+      onActivity: options.onActivity,
+      model: options.model,
+      cwd: options.cwd,
+    });
+  }
+  return runClaude(prompt, options);
+}
+
+function parseOutput(text, allowedPaths) {
+  return parseFileOutput(text, allowedPaths);
+}
+
+function buildDerivedCodexFiles(files, target, scan) {
+  if (target.id !== 'codex') return [];
+  return projectCodexDomainDocs(files, target, scan);
+}
+
+function dedupeFiles(files) {
+  const byPath = new Map();
+  for (const file of files) {
+    byPath.set(file.path, file);
+  }
+  return [...byPath.values()];
+}
+
+function configuredTargets(repoPath) {
+  const config = readConfig(repoPath);
+  const targetIds = Array.isArray(config?.targets) && config.targets.length > 0
+    ? config.targets
+    : ['claude'];
+  return targetIds
+    .map(id => TARGETS[id])
+    .filter(Boolean);
+}
+
+function chooseSyncSourceTarget(repoPath, targets) {
+  const claudeTarget = targets.find(t => t.id === 'claude');
+  if (claudeTarget && existsSync(join(repoPath, claudeTarget.skillsDir))) {
+    return claudeTarget;
+  }
+
+  for (const target of targets) {
+    if (target.skillsDir && existsSync(join(repoPath, target.skillsDir))) {
+      return target;
+    }
+  }
+
+  return targets[0] || TARGETS.claude;
+}
+
+function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan) {
+  const published = [];
+
+  for (const target of publishTargets) {
+    if (target.id === sourceTarget.id) {
+      published.push(...baseFiles, ...buildDerivedCodexFiles(baseFiles, target, scan));
+      continue;
+    }
+
+    const transformed = transformForTarget(baseFiles, sourceTarget, target, {
+      scanResult: scan,
+    });
+    published.push(...transformed);
+  }
+
+  return dedupeFiles(published);
+}
 
 export async function docSyncCommand(path, options) {
   const repoPath = resolve(path);
@@ -32,15 +106,17 @@ export async function docSyncCommand(path, options) {
     return removeGitHook(repoPath);
   }
 
-  // Determine active target from config or default to claude
+  // Determine configured publish targets and the best source target for sync.
   const config = readConfig(repoPath);
-  const targetId = config?.targets?.[0] || 'claude';
-  const target = TARGETS[targetId] || TARGETS.claude;
-  const skillsDir = target.skillsDir ? join(repoPath, target.skillsDir) : join(repoPath, '.claude', 'skills');
+  const publishTargets = configuredTargets(repoPath);
+  const sourceTarget = chooseSyncSourceTarget(repoPath, publishTargets);
+  const backendId = config?.backend || sourceTarget.id;
+  const allowedPaths = getAllowedPaths([sourceTarget]);
+  const skillsDir = sourceTarget.skillsDir ? join(repoPath, sourceTarget.skillsDir) : join(repoPath, '.claude', 'skills');
 
   // Refresh mode — skip diff, review all skills against current codebase
   if (options.refresh) {
-    return refreshAllSkills(repoPath, options, target);
+    return refreshAllSkills(repoPath, options, sourceTarget, publishTargets);
   }
 
   p.intro(pc.cyan('aspens doc sync'));
@@ -51,7 +127,7 @@ export async function docSyncCommand(path, options) {
   }
 
   if (!existsSync(skillsDir)) {
-    throw new CliError(`No ${target.skillsDir || '.claude/skills'}/ found. Run aspens doc init first.`);
+    throw new CliError(`No ${sourceTarget.skillsDir || '.claude/skills'}/ found. Run aspens doc init first.`);
   }
 
   // Step 2: Get git diff
@@ -85,7 +161,7 @@ export async function docSyncCommand(path, options) {
 
   // Step 3: Find affected skills
   const scan = scanRepo(repoPath);
-  const existingSkills = findExistingSkills(repoPath, target);
+  const existingSkills = findExistingSkills(repoPath, sourceTarget);
 
   // Rebuild graph from current state (keeps graph fresh on every sync)
   let repoGraph = null;
@@ -93,7 +169,7 @@ export async function docSyncCommand(path, options) {
   if (options.graph !== false) {
     try {
       const rawGraph = await buildRepoGraph(repoPath, scan.languages);
-      persistGraphArtifacts(repoPath, rawGraph, { target });
+      persistGraphArtifacts(repoPath, rawGraph, { target: sourceTarget });
       repoGraph = loadGraph(repoPath);
       if (repoGraph) {
         const subgraph = extractSubgraph(repoGraph, changedFiles);
@@ -109,7 +185,7 @@ export async function docSyncCommand(path, options) {
   if (affectedSkills.length > 0) {
     p.log.info(`Skills that may need updates: ${affectedSkills.map(s => pc.yellow(s.name)).join(', ')}`);
   } else {
-    p.log.info('No skills directly affected, but Claude will check for structural changes.');
+    p.log.info('No skills directly affected, but the selected backend will check for structural changes.');
   }
 
   // Timeout priority: --timeout flag > ASPENS_TIMEOUT env var > auto-scaled default
@@ -120,10 +196,10 @@ export async function docSyncCommand(path, options) {
   // Step 4: Build prompt
   const today = new Date().toISOString().split('T')[0];
   const targetVars = {
-    skillsDir: target.skillsDir || '.claude/skills',
-    skillFilename: target.skillFilename || 'skill.md',
-    instructionsFile: target.instructionsFile || 'CLAUDE.md',
-    configDir: target.configDir || '.claude',
+    skillsDir: sourceTarget.skillsDir || '.claude/skills',
+    skillFilename: sourceTarget.skillFilename || 'skill.md',
+    instructionsFile: sourceTarget.instructionsFile || 'CLAUDE.md',
+    configDir: sourceTarget.configDir || '.claude',
   };
   const systemPrompt = loadPrompt('doc-sync', targetVars);
 
@@ -185,7 +261,7 @@ export async function docSyncCommand(path, options) {
     return `### ${s.path}\n${desc}`;
   }).join('\n\n');
 
-  const instructionsFile = target.instructionsFile || 'CLAUDE.md';
+  const instructionsFile = sourceTarget.instructionsFile || 'CLAUDE.md';
   const instructionsContent = existsSync(join(repoPath, instructionsFile))
     ? readFileSync(join(repoPath, instructionsFile), 'utf8')
     : '';
@@ -216,30 +292,32 @@ ${truncate(instructionsContent, 5000)}
 
   const fullPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
 
-  // Step 5: Run Claude
+  // Step 5: Run backend
   const syncSpinner = p.spinner();
   syncSpinner.start('Analyzing changes and updating skills...');
 
   let result;
   try {
-    result = await runClaude(fullPrompt, {
+    result = await runLLM(fullPrompt, {
       timeout: timeoutMs,
       allowedTools: READ_ONLY_TOOLS,
       verbose,
       model: options.model || null,
       onActivity: verbose ? (msg) => syncSpinner.message(pc.dim(msg)) : null,
-    });
+      cwd: repoPath,
+    }, backendId);
   } catch (err) {
     syncSpinner.stop(pc.red('Failed'));
     throw new CliError(err.message, { cause: err });
   }
 
   // Step 6: Parse output
-  const files = parseFileOutput(result.text);
+  const baseFiles = parseOutput(result.text, allowedPaths);
+  const files = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan);
 
   if (files.length === 0) {
     syncSpinner.stop('No updates needed');
-    p.outro('Skills are up to date');
+    p.outro('Docs are up to date');
     return;
   }
 
@@ -264,7 +342,12 @@ ${truncate(instructionsContent, 5000)}
   }
 
   // Write
-  const results = writeSkillFiles(repoPath, files, { force: true });
+  const directWriteFiles = files.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
+  const dirScopedFiles = files.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
+  const results = [
+    ...writeSkillFiles(repoPath, directWriteFiles, { force: true }),
+    ...writeTransformedFiles(repoPath, dirScopedFiles, { force: true }),
+  ];
 
   console.log();
   for (const wr of results) {
@@ -273,10 +356,12 @@ ${truncate(instructionsContent, 5000)}
   }
 
   // Regenerate skill-rules.json so hooks see updated activation patterns (Claude-only)
-  if (target.supportsHooks) {
+  const hookTarget = publishTargets.find(t => t.supportsHooks);
+  if (hookTarget) {
     try {
-      const rules = extractRulesFromSkills(skillsDir);
-      writeFileSync(join(skillsDir, 'skill-rules.json'), JSON.stringify(rules, null, 2) + '\n');
+      const hookSkillsDir = join(repoPath, hookTarget.skillsDir);
+      const rules = extractRulesFromSkills(hookSkillsDir);
+      writeFileSync(join(hookSkillsDir, 'skill-rules.json'), JSON.stringify(rules, null, 2) + '\n');
     } catch { /* non-fatal */ }
   }
 
@@ -336,8 +421,11 @@ function mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph = null
 
 // --- Refresh mode ---
 
-async function refreshAllSkills(repoPath, options, target) {
+async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets = [sourceTarget]) {
   const verbose = !!options.verbose;
+  const config = readConfig(repoPath);
+  const backendId = config?.backend || sourceTarget?.id || 'claude';
+  const allowedPaths = getAllowedPaths([sourceTarget || TARGETS.claude]);
 
   p.intro(pc.cyan('aspens doc sync --refresh'));
 
@@ -345,7 +433,7 @@ async function refreshAllSkills(repoPath, options, target) {
   if (!isGitRepo(repoPath)) {
     throw new CliError('Not a git repository.');
   }
-  const sd = target?.skillsDir || '.claude/skills';
+  const sd = sourceTarget?.skillsDir || '.claude/skills';
   const refreshSkillsDir = join(repoPath, sd);
   if (!existsSync(refreshSkillsDir)) {
     throw new CliError(`No ${sd}/ found. Run aspens doc init first.`);
@@ -359,7 +447,7 @@ async function refreshAllSkills(repoPath, options, target) {
   if (options.graph !== false) {
     try {
       const rawGraph = await buildRepoGraph(repoPath, scan.languages);
-      persistGraphArtifacts(repoPath, rawGraph, { target });
+      persistGraphArtifacts(repoPath, rawGraph, { target: sourceTarget });
     } catch (err) {
       p.log.warn(`Graph build failed — continuing without it. (${err.message})`);
     }
@@ -368,9 +456,9 @@ async function refreshAllSkills(repoPath, options, target) {
   scanSpinner.stop('Scan complete');
 
   // Step 2: Load existing skills
-  const existingSkills = findExistingSkills(repoPath, target);
+  const existingSkills = findExistingSkills(repoPath, sourceTarget);
   if (existingSkills.length === 0) {
-    const sd = target?.skillsDir || '.claude/skills';
+    const sd = sourceTarget?.skillsDir || '.claude/skills';
     throw new CliError(`No skills found in ${sd}/. Run aspens doc init first.`);
   }
 
@@ -385,10 +473,10 @@ async function refreshAllSkills(repoPath, options, target) {
 
   const today = new Date().toISOString().split('T')[0];
   const refreshVars = {
-    skillsDir: target?.skillsDir || '.claude/skills',
-    skillFilename: target?.skillFilename || 'skill.md',
-    instructionsFile: target?.instructionsFile || 'CLAUDE.md',
-    configDir: target?.configDir || '.claude',
+    skillsDir: sourceTarget?.skillsDir || '.claude/skills',
+    skillFilename: sourceTarget?.skillFilename || 'skill.md',
+    instructionsFile: sourceTarget?.instructionsFile || 'CLAUDE.md',
+    configDir: sourceTarget?.configDir || '.claude',
   };
   const systemPrompt = loadPrompt('doc-sync-refresh', refreshVars);
   const allUpdatedFiles = [];
@@ -402,15 +490,16 @@ async function refreshAllSkills(repoPath, options, target) {
       const baseContext = buildBaseContext(repoPath, scan);
       const prompt = `${systemPrompt}\n\n---\n\nRepository path: ${repoPath}\nToday's date: ${today}\n\n## Existing Skill\n\`\`\`\n${baseSkill.content}\n\`\`\`\n\n## Current Codebase\n${baseContext}`;
 
-      const result = await runClaude(prompt, {
+      const result = await runLLM(prompt, {
         timeout: perSkillTimeout,
         allowedTools: READ_ONLY_TOOLS,
         verbose,
         model: options.model || null,
         onActivity: verbose ? (msg) => baseSpinner.message(pc.dim(msg)) : null,
-      });
+        cwd: repoPath,
+      }, backendId);
 
-      const files = parseFileOutput(result.text);
+      const files = parseOutput(result.text, allowedPaths);
       if (files.length > 0) {
         allUpdatedFiles.push(...files);
         baseSpinner.stop(pc.yellow('base') + ' — updated');
@@ -437,15 +526,16 @@ async function refreshAllSkills(repoPath, options, target) {
 
           const prompt = `${systemPrompt}\n\n---\n\nRepository path: ${repoPath}\nToday's date: ${today}\n\n## Existing Skill\n\`\`\`\n${skill.content}\n\`\`\`\n\n## Current Codebase (${skill.name} domain)\n${domainContext}`;
 
-          const result = await runClaude(prompt, {
+          const result = await runLLM(prompt, {
             timeout: perSkillTimeout,
             allowedTools: READ_ONLY_TOOLS,
             verbose,
             model: options.model || null,
             onActivity: verbose ? (msg) => skillSpinner.message(pc.dim(msg)) : null,
-          });
+            cwd: repoPath,
+          }, backendId);
 
-          const files = parseFileOutput(result.text);
+          const files = parseOutput(result.text, allowedPaths);
           if (files.length > 0) {
             skillSpinner.stop(pc.yellow(skill.name) + ' — updated');
             return files;
@@ -466,7 +556,7 @@ async function refreshAllSkills(repoPath, options, target) {
   }
 
   // Step 5: Refresh instructions file (CLAUDE.md or AGENTS.md) if it exists
-  const instrFile = target?.instructionsFile || 'CLAUDE.md';
+  const instrFile = sourceTarget?.instructionsFile || 'CLAUDE.md';
   const instrPath = join(repoPath, instrFile);
   if (existsSync(instrPath)) {
     const claudeSpinner = p.spinner();
@@ -481,15 +571,16 @@ async function refreshAllSkills(repoPath, options, target) {
 
       const claudePrompt = `${systemPrompt}\n\n---\n\nRepository path: ${repoPath}\nToday's date: ${today}\n\n## Existing Skill\n\`\`\`\n${claudeMd}\n\`\`\`\n\n## Installed Skills\n${skillSummaries}\n\n## Current Codebase\n${buildBaseContext(repoPath, scan)}`;
 
-      const claudeResult = await runClaude(claudePrompt, {
+      const claudeResult = await runLLM(claudePrompt, {
         timeout: perSkillTimeout,
         allowedTools: READ_ONLY_TOOLS,
         verbose,
         model: options.model || null,
         onActivity: verbose ? (msg) => claudeSpinner.message(pc.dim(msg)) : null,
-      });
+        cwd: repoPath,
+      }, backendId);
 
-      const claudeFiles = parseFileOutput(claudeResult.text);
+      const claudeFiles = parseOutput(claudeResult.text, allowedPaths);
       if (claudeFiles.length > 0) {
         allUpdatedFiles.push(...claudeFiles);
         claudeSpinner.stop(pc.yellow(instrFile) + ' — updated');
@@ -531,7 +622,13 @@ async function refreshAllSkills(repoPath, options, target) {
     return;
   }
 
-  const results = writeSkillFiles(repoPath, allUpdatedFiles, { force: true });
+  const filesToWrite = publishFilesForTargets(allUpdatedFiles, sourceTarget, publishTargets, scan);
+  const directWriteFiles = filesToWrite.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
+  const dirScopedFiles = filesToWrite.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
+  const results = [
+    ...writeSkillFiles(repoPath, directWriteFiles, { force: true }),
+    ...writeTransformedFiles(repoPath, dirScopedFiles, { force: true }),
+  ];
 
   console.log();
   for (const result of results) {
@@ -540,11 +637,15 @@ async function refreshAllSkills(repoPath, options, target) {
   }
 
   // Step 8: Regenerate skill-rules.json
-  try {
-    const rules = extractRulesFromSkills(skillsDir);
-    writeFileSync(join(skillsDir, 'skill-rules.json'), JSON.stringify(rules, null, 2) + '\n');
-    p.log.info('Updated skill-rules.json');
-  } catch { /* non-fatal */ }
+  const hookTarget = publishTargets.find(t => t.supportsHooks);
+  if (hookTarget) {
+    try {
+      const hookSkillsDir = join(repoPath, hookTarget.skillsDir);
+      const rules = extractRulesFromSkills(hookSkillsDir);
+      writeFileSync(join(hookSkillsDir, 'skill-rules.json'), JSON.stringify(rules, null, 2) + '\n');
+      p.log.info('Updated skill-rules.json');
+    } catch { /* non-fatal */ }
+  }
 
   console.log();
   p.outro(`${results.length} file(s) refreshed`);

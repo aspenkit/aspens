@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { transformForTarget, validateTransformedFiles } from '../src/lib/target-transform.js';
+import { transformForTarget, validateTransformedFiles, projectCodexDomainDocs } from '../src/lib/target-transform.js';
 import { TARGETS } from '../src/lib/target.js';
 
 const mockScanResult = {
@@ -48,10 +48,24 @@ describe('transformForTarget', () => {
       { scanResult: mockScanResult }
     );
 
-    const billingFile = result.find(f => f.path.includes('billing'));
+    const billingFile = result.find(f => f.path === 'src/services/billing/AGENTS.md');
     expect(billingFile).toBeDefined();
     expect(billingFile.content).not.toContain('## Activation');
     expect(billingFile.content).toContain('Billing conventions');
+  });
+
+  it('mirrors base and domain skills into .agents/skills for codex', () => {
+    const result = transformForTarget(
+      mockClaudeFiles,
+      TARGETS.claude,
+      TARGETS.codex,
+      { scanResult: mockScanResult }
+    );
+
+    expect(result.find(f => f.path === '.agents/skills/base/SKILL.md')).toBeDefined();
+    const billingSkill = result.find(f => f.path === '.agents/skills/billing/SKILL.md');
+    expect(billingSkill).toBeDefined();
+    expect(billingSkill.content).toContain('## Activation');
   });
 
   it('maps domain skills to source directories using scanResult.domains', () => {
@@ -67,7 +81,7 @@ describe('transformForTarget', () => {
     expect(billingFile.path).toBe('src/services/billing/AGENTS.md');
   });
 
-  it('skips domains without known directories', () => {
+  it('skips directory-scoped AGENTS.md for domains without known directories', () => {
     const filesWithUnknownDomain = [
       ...mockClaudeFiles,
       { path: '.claude/skills/payments/skill.md', content: '---\nname: payments\n---\n\n## Activation\n\nPayments stuff.\n\n---\n\nPayments conventions.' },
@@ -80,8 +94,13 @@ describe('transformForTarget', () => {
       { scanResult: mockScanResult }
     );
 
-    const paymentsFile = result.find(f => f.path.includes('payments'));
-    expect(paymentsFile).toBeUndefined();
+    // No directory-scoped AGENTS.md for payments (unknown source dir)
+    const paymentsDirDoc = result.find(f => f.path.endsWith('payments/AGENTS.md') && !f.path.startsWith('.agents'));
+    expect(paymentsDirDoc).toBeUndefined();
+
+    // But it should still mirror into .agents/skills/payments/SKILL.md
+    const paymentsSkill = result.find(f => f.path.includes('.agents/skills/payments'));
+    expect(paymentsSkill).toBeDefined();
   });
 
   it('rewrites CLAUDE.md references to AGENTS.md in codex output', () => {
@@ -94,6 +113,21 @@ describe('transformForTarget', () => {
 
     const rootAgents = result.find(f => f.path === 'AGENTS.md');
     expect(rootAgents.content).not.toContain('CLAUDE.md');
+  });
+});
+
+describe('projectCodexDomainDocs', () => {
+  it('projects codex skills into directory AGENTS docs', () => {
+    const files = [
+      { path: '.agents/skills/billing/SKILL.md', content: '---\nname: billing\n---\n\n## Activation\n- `src/services/billing/**`\n\n---\n\nBilling conventions.\n' },
+      { path: '.agents/skills/base/SKILL.md', content: 'base' },
+    ];
+
+    const result = projectCodexDomainDocs(files, TARGETS.codex, mockScanResult);
+    expect(result).toHaveLength(1);
+    expect(result[0].path).toBe('src/services/billing/AGENTS.md');
+    expect(result[0].content).toContain('Billing conventions');
+    expect(result[0].content).not.toContain('## Activation');
   });
 });
 
