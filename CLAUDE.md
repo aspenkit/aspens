@@ -1,6 +1,6 @@
 # aspens
 
-CLI tool that generates and maintains AI-ready documentation (skills + CLAUDE.md) for any codebase. Built with Node.js, ESM, Commander, and Vitest.
+CLI tool that generates and maintains AI-ready documentation (skills + CLAUDE.md) for any codebase. Supports multi-target output (Claude Code, Codex CLI). Built with Node.js, ESM, Commander, and Vitest.
 
 ## Quick reference
 
@@ -25,7 +25,7 @@ src/lib/
   graph-builder.js      # static import graph, domain clusters, hub detection
   graph-persistence.js  # graph serialization, subgraph extraction, code-map, graph-index
   context-builder.js    # assembles context payloads for Claude prompts
-  runner.js             # Claude CLI execution, stream-json parsing, file output extraction
+  runner.js             # Claude/Codex CLI execution, stream-json parsing, file output extraction
   skill-writer.js       # writes skill .md files, generates skill-rules.json, merges settings
   skill-reader.js       # parses skill frontmatter, activation patterns, keywords
   diff-helpers.js       # git diff parsing and change extraction
@@ -33,6 +33,9 @@ src/lib/
   git-hook.js           # post-commit hook install/uninstall for doc-sync
   timeout.js            # timeout calculation (auto-scales by repo size)
   errors.js             # CliError class for structured error handling
+  target.js             # target definitions (claude/codex), config persistence (.aspens.json)
+  target-transform.js   # content transforms for multi-target output
+  backend.js            # backend detection and resolution (claude CLI vs codex CLI)
 src/prompts/            # prompt templates + partials/ subdir for reusable fragments
 src/templates/
   agents/               # 11 agent templates (.md)
@@ -44,12 +47,13 @@ tests/                  # vitest tests + fixtures
 
 ## Skills (Claude Code integration)
 
-The project ships as both a CLI and a set of Claude Code skills registered in the system. The seven skill domains are:
+The project ships as both a CLI and a set of Claude Code skills registered in the system. The eight skill domains are:
 
 | Skill | Description |
 |---|---|
 | agent-customization | LLM-powered injection of project context into agents |
 | claude-runner | Prompt loading, stream-json parsing, file output extraction, skill rule generation |
+| codex-support | Multi-target output — target abstraction, backend routing, content transforms |
 | doc-sync | Maps git diffs to affected skills, optional post-commit hook |
 | import-graph | Dependency graphs, domain clusters, hub files, churn hotspots, graph persistence |
 | repo-scanning | Language/framework detection, structure mapping, domain discovery |
@@ -77,6 +81,7 @@ Or comment `@coderabbitai review` on any open PR.
 - **ESM only** — `"type": "module"` everywhere, no CommonJS
 - **Node >= 20** required
 - **CliError pattern** — command handlers throw `CliError` (not `process.exit()`); caught at top level in `bin/cli.js`
+- **Target/Backend** — Target = where output goes (claude, codex); Backend = which LLM generates content. Config in `.aspens.json`
 - No linter configured yet; `npm run lint` is a no-op
 - Dependencies: commander, es-module-lexer, picocolors, @clack/prompts
 - Tests live in `tests/` and use vitest — run with `npm test`

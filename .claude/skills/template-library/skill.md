@@ -25,6 +25,7 @@ You are working on the **template library** — bundled agents, slash commands, 
 
 ## Key Concepts
 - **Four resource types for `add`:** `agent` → `.claude/agents`, `command` → `.claude/commands`, `hook` → `.claude/hooks`. A fourth type `skill` is handled separately (not template-based).
+- **Codex-only restriction:** `add agent`, `add command`, and `add hook` throw `CliError` for Codex-only repos (checked via `readConfig()`). Skills work with both targets — `add skill` is always available.
 - **Skill subcommand:** `aspens add skill <name>` scaffolds a blank skill template. `--from <file>` generates a skill from a reference doc using Claude (LLM-powered). `--list` shows installed skills.
 - **Hook templates:** `skill-activation-prompt` reads `skill-rules.json` and injects relevant skills into prompts. `graph-context-prompt` loads graph data for code navigation. `post-tool-use-tracker` detects skill domains from file access patterns.
 - **`doc init` hook installation (step 9):** Generates `skill-rules.json` from skills, copies hook files, generates `post-tool-use-tracker.sh` with domain patterns (via `BEGIN/END` markers), merges `settings.json` with backup.
@@ -43,4 +44,4 @@ You are working on the **template library** — bundled agents, slash commands, 
 - **Customize flow:** `.claude/skills/agent-customization/skill.md`
 
 ---
-**Last Updated:** 2026-03-28
+**Last Updated:** 2026-04-02
