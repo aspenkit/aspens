@@ -87,17 +87,20 @@ function showWelcome() {
 }
 
 /**
- * Check if a target repo has skills but is missing hooks.
+ * Check if a target repo has Claude skills but is missing hooks.
+ * Only relevant for Claude Code target (Codex doesn't use hooks).
  * Warns users who ran doc init before hooks were available (pre-0.2.2).
  */
 function checkMissingHooks(repoPath) {
   const skillsDir = join(repoPath, '.claude', 'skills');
+  if (!existsSync(skillsDir)) return; // no Claude skills — nothing to check
+
   const hookFile = join(repoPath, '.claude', 'hooks', 'skill-activation-prompt.sh');
   const rulesFile = join(repoPath, '.claude', 'skills', 'skill-rules.json');
 
-  if (existsSync(skillsDir) && (!existsSync(hookFile) || !existsSync(rulesFile))) {
+  if (!existsSync(hookFile) || !existsSync(rulesFile)) {
     console.log(
-      pc.yellow('\n  ⚠  Skills found but activation hooks are missing.') +
+      pc.yellow('\n  ⚠  Claude skills found but activation hooks are missing.') +
       pc.dim('\n     Skills won\'t auto-activate without hooks.') +
       '\n     Run: ' + pc.cyan('aspens doc init --hooks-only') +
       pc.dim(' to install them.\n')
@@ -146,6 +149,8 @@ doc
   .option('--no-hooks', 'Skip hook/rules/settings installation')
   .option('--hooks-only', 'Skip skill generation, just install/update hooks')
   .option('--no-graph', 'Skip import graph analysis')
+  .option('--target <target>', 'Output target: claude, codex, all')
+  .option('--backend <backend>', 'Generation backend: claude, codex (default: matches target)')
   .action(docInitCommand);
 
 doc
@@ -168,7 +173,7 @@ doc
 
 doc
   .command('graph')
-  .description('Rebuild the import graph cache (.claude/graph.json)')
+  .description('Rebuild the import graph cache')
   .argument('[path]', 'Path to repo', '.')
   .option('--verbose', 'Show detailed graph info')
   .action(docGraphCommand);

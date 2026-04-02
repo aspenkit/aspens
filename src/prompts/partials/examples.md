@@ -34,7 +34,7 @@ You are working on **billing, Stripe integration, and usage limits**.
 - Cancel = `cancel_at_period_end=True` (access until period end)
 
 ## References
-- **Patterns:** `.claude/guidelines/billing/patterns.md`
+- **Patterns:** `{{configDir}}/guidelines/billing/patterns.md`
 
 ---
 **Last Updated:** 2026-03-18

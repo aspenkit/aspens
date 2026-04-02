@@ -5,12 +5,15 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
-import { runClaude, loadPrompt, parseFileOutput, validateSkillFiles } from '../lib/runner.js';
-import { writeSkillFiles, extractRulesFromSkills, generateDomainPatterns, mergeSettings } from '../lib/skill-writer.js';
+import { runClaude, runCodex, loadPrompt, parseFileOutput, validateSkillFiles } from '../lib/runner.js';
+import { writeSkillFiles, writeTransformedFiles, extractRulesFromSkills, generateDomainPatterns, mergeSettings } from '../lib/skill-writer.js';
 import { persistGraphArtifacts } from '../lib/graph-persistence.js';
 import { installGitHook } from '../lib/git-hook.js';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
+import { TARGETS, resolveTarget, writeConfig } from '../lib/target.js';
+import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
+import { transformForTarget, validateTransformedFiles } from '../lib/target-transform.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -46,6 +49,32 @@ function sanitizeInline(content, maxLen = MAX_INLINE_CHARS) {
   return text;
 }
 
+// Route LLM calls to the right backend
+function runLLM(prompt, options, backendId) {
+  if (backendId === 'codex') {
+    return runCodex(prompt, {
+      timeout: options.timeout,
+      verbose: options.verbose,
+      onActivity: options.onActivity,
+      model: options.model,
+    });
+  }
+  return runClaude(prompt, options);
+}
+
+// Template variables for prompt path substitution (set per-run based on target)
+function targetVars(target) {
+  return {
+    skillsDir: target.skillsDir || '.claude/skills',
+    skillFilename: target.skillFilename || 'skill.md',
+    instructionsFile: target.instructionsFile || 'CLAUDE.md',
+    configDir: target.configDir || '.claude',
+  };
+}
+
+// Active backend for this run (set at start of docInitCommand, used by runLLM)
+let _backendId = 'claude';
+
 // Track token usage across all calls
 const tokenTracker = { promptTokens: 0, toolResultTokens: 0, output: 0, toolUses: 0, calls: 0 };
 
@@ -67,10 +96,10 @@ export async function docInitCommand(path, options) {
   // --hooks-only: skip skill generation, just install/update hooks
   if (options.hooksOnly) {
     p.intro(pc.cyan('aspens doc init --hooks-only'));
-    const skillsDir = join(repoPath, '.claude', 'skills');
+    const hooksTarget = TARGETS.claude; // hooks are Claude-only
+    const skillsDir = join(repoPath, hooksTarget.skillsDir);
     if (!existsSync(skillsDir)) {
-      p.log.error('No skills found in .claude/skills/. Run `aspens doc init` first.');
-      process.exit(1);
+      throw new CliError(`No skills found in ${hooksTarget.skillsDir}/. Run \`aspens doc init\` first.`);
     }
     await installHooks(repoPath, options);
     p.outro(pc.green('Hooks updated'));
@@ -92,6 +121,57 @@ export async function docInitCommand(path, options) {
 
   p.intro(pc.cyan('aspens doc init'));
 
+  // --- Target selection ---
+  let targetIds;
+  if (options.target) {
+    targetIds = options.target === 'all' ? ['claude', 'codex'] : [options.target];
+  } else {
+    // Auto-detect or prompt
+    const available = detectAvailableBackends();
+    const hasBoth = available.claude && available.codex;
+    if (hasBoth) {
+      const selected = await p.multiselect({
+        message: 'Which coding agents do you use?',
+        options: [
+          { value: 'claude', label: 'Claude Code', hint: 'CLAUDE.md + .claude/skills/' },
+          { value: 'codex', label: 'Codex CLI', hint: 'AGENTS.md + directory-scoped docs' },
+        ],
+        initialValues: ['claude'],
+        required: true,
+      });
+      if (p.isCancel(selected)) { p.cancel('Aborted'); return; }
+      targetIds = selected;
+    } else {
+      // Single backend available — use matching target
+      targetIds = available.claude ? ['claude'] : available.codex ? ['codex'] : [];
+      if (targetIds.length === 0) {
+        throw new CliError(
+          'aspens requires either Claude CLI or Codex CLI.\n' +
+          '  Install Claude CLI: https://docs.anthropic.com/claude-code\n' +
+          '  Install Codex CLI: https://github.com/openai/codex'
+        );
+      }
+    }
+  }
+  const targets = targetIds.map(id => resolveTarget(id));
+  const primaryTarget = targets[0];
+
+  // --- Backend selection ---
+  const available = detectAvailableBackends();
+  const { backend, warning: backendWarning } = resolveBackend({
+    backendFlag: options.backend,
+    targetId: primaryTarget.id,
+    available,
+  });
+  if (backendWarning) {
+    p.log.warn(backendWarning);
+  }
+  _backendId = backend.id;
+
+  console.log(pc.dim(`  Target: ${targets.map(t => t.label).join(' + ')}`));
+  console.log(pc.dim(`  Backend: ${backend.label}`));
+  console.log();
+
   // Step 1: Scan
   const scanSpinner = p.spinner();
   scanSpinner.start('Scanning repository...');
@@ -99,12 +179,14 @@ export async function docInitCommand(path, options) {
 
   // Build import graph
   let repoGraph = null;
+  let graphSerialized = null;
   if (options.graph !== false) {
     try {
       repoGraph = await buildRepoGraph(repoPath, scan.languages);
       // Persist graph, code-map skill, and index for runtime use
+      // For Codex-only target, this returns serialized data without writing files
       try {
-        persistGraphArtifacts(repoPath, repoGraph);
+        graphSerialized = persistGraphArtifacts(repoPath, repoGraph, { target: primaryTarget });
       } catch { /* graph persistence failed — non-fatal */ }
     } catch { /* graph building failed — continue without it */ }
   }
@@ -158,7 +240,7 @@ export async function docInitCommand(path, options) {
           try {
             const context = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${domainDiscoveryContext}`;
             const prompt = loadPrompt('discover-domains') + context;
-            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+            const { text, usage } = await runLLM(prompt, makeClaudeOptions(timeoutMs, verbose, model, null), _backendId);
             trackUsage(usage, prompt.length);
             const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
             return match ? match[1].trim() : null;
@@ -169,7 +251,7 @@ export async function docInitCommand(path, options) {
           try {
             const context = `\n\n---\n\nRepository: ${repoPath}\n\n${scanSummary}\n\n${archDiscoveryContext}`;
             const prompt = loadPrompt('discover-architecture') + context;
-            const { text, usage } = await runClaude(prompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+            const { text, usage } = await runLLM(prompt, makeClaudeOptions(timeoutMs, verbose, model, null), _backendId);
             trackUsage(usage, prompt.length);
             const match = text.match(/<findings>([\s\S]*?)<\/findings>/);
             return match ? match[1].trim() : null;
@@ -241,7 +323,7 @@ export async function docInitCommand(path, options) {
     if (!['improve', 'rewrite', 'skip-existing', 'fresh'].includes(existingDocsStrategy)) {
       throw new CliError(`Unknown strategy: ${options.strategy}. Use: improve, rewrite, or skip`);
     }
-  } else if ((scan.hasClaudeConfig || scan.hasClaudeMd) && !options.force && !isDomainsOnly) {
+  } else if ((scan.hasClaudeConfig || scan.hasClaudeMd || scan.hasAgentsMd) && !options.force && !isDomainsOnly) {
     const strategy = await p.select({
       message: 'Existing CLAUDE.md and/or skills detected. How to proceed:',
       options: [
@@ -378,6 +460,54 @@ export async function docInitCommand(path, options) {
     console.log();
   }
 
+  // Step 6.5: Transform for additional targets
+  // Generation always produces Claude-target paths. For other targets, transform.
+  let allTargetFiles = [{ target: TARGETS.claude, files: allFiles }];
+
+  for (const target of targets) {
+    if (target.id === 'claude') continue; // already have claude files
+
+    const transformSpinner = p.spinner();
+    transformSpinner.start(`Transforming output for ${target.label}...`);
+
+    const transformed = transformForTarget(allFiles, TARGETS.claude, target, {
+      scanResult: scan,
+      graphSerialized,
+    });
+
+    const transformValidation = validateTransformedFiles(transformed);
+    if (!transformValidation.valid) {
+      p.log.warn(`Transform issues for ${target.label}:`);
+      for (const issue of transformValidation.issues) {
+        console.log(pc.dim('  ') + pc.yellow('!') + ' ' + issue);
+      }
+    }
+
+    // Filter out files with validation issues (reuse same validation logic)
+    const validTransformed = transformValidation.valid
+      ? transformed
+      : transformed.filter(f => validateTransformedFiles([f]).valid);
+
+    allTargetFiles.push({ target, files: validTransformed });
+    transformSpinner.stop(`Transformed ${validTransformed.length} files for ${target.label}`);
+  }
+
+  // Merge all target files into allFiles for writing
+  if (targets.length > 1 || targets[0].id !== 'claude') {
+    const mergedFiles = [];
+    for (const { files: tFiles } of allTargetFiles) {
+      mergedFiles.push(...tFiles);
+    }
+    // For claude-only target, allFiles is already correct
+    // For codex-only or all, replace allFiles with merged set
+    if (!targets.some(t => t.id === 'claude')) {
+      // Codex-only: use only transformed files (not the claude originals)
+      allFiles = allTargetFiles.filter(tf => tf.target.id !== 'claude').flatMap(tf => tf.files);
+    } else {
+      allFiles = mergedFiles;
+    }
+  }
+
   // Step 7: Show what will be written
   const shouldForce = options.force || existingDocsStrategy === 'improve' || existingDocsStrategy === 'rewrite';
   console.log();
@@ -415,9 +545,21 @@ export async function docInitCommand(path, options) {
   }
 
   // Step 8: Write files
+  // Split: Claude-target files use writeSkillFiles (standard paths),
+  // directory-scoped files (e.g., src/billing/AGENTS.md) use writeTransformedFiles (warn-and-skip)
   const writeSpinner = p.spinner();
   writeSpinner.start('Writing files...');
-  const results = writeSkillFiles(repoPath, allFiles, { force: shouldForce });
+  const claudeFiles = allFiles.filter(f =>
+    f.path.startsWith('.claude/') || f.path === 'CLAUDE.md'
+  );
+  const dirScopedFiles = allFiles.filter(f =>
+    !f.path.startsWith('.claude/') && f.path !== 'CLAUDE.md'
+  );
+
+  const results = [
+    ...writeSkillFiles(repoPath, claudeFiles, { force: shouldForce }),
+    ...writeTransformedFiles(repoPath, dirScopedFiles, { force: shouldForce }),
+  ];
   writeSpinner.stop('Done');
 
   // Summary
@@ -435,9 +577,14 @@ export async function docInitCommand(path, options) {
   }
 
   // Step 9: Generate skill-rules.json + install hooks (unless --no-hooks)
-  if (options.hooks !== false) {
+  // Only for targets that support hooks (Claude)
+  const hasHookTarget = targets.some(t => t.supportsHooks);
+  if (options.hooks !== false && hasHookTarget) {
     await installHooks(repoPath, options);
   }
+
+  // Step 10: Persist target config
+  writeConfig(repoPath, { targets: targetIds, backend: backend.id });
 
   showTokenSummary(startTime);
 
@@ -801,7 +948,8 @@ function buildStrategyInstruction(strategy) {
 
 async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, strategy, verbose, model, findings, nonInteractive = false) {
   const today = new Date().toISOString().split('T')[0];
-  const systemPrompt = loadPrompt('doc-init');
+  const claudeVars = targetVars(TARGETS.claude);
+  const systemPrompt = loadPrompt('doc-init', claudeVars);
   const scanSummary = buildScanSummary(scan);
   const graphContext = buildGraphContext(repoGraph);
   const strategyNote = buildStrategyInstruction(strategy);
@@ -831,7 +979,7 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
   claudeSpinner.start('Exploring repo and generating skills...');
 
   try {
-    const { text, usage } = await runClaude(fullPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeSpinner));
+    const { text, usage } = await runLLM(fullPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeSpinner), _backendId);
     trackUsage(usage, fullPrompt.length);
     let files = parseFileOutput(text);
     // Enforce skip-existing: filter out CLAUDE.md if it already exists
@@ -867,6 +1015,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
   const allFiles = [];
   const skippedDomains = [];
   const today = new Date().toISOString().split('T')[0];
+  const claudeVars = targetVars(TARGETS.claude);
   const scanSummary = buildScanSummary(scan);
   const graphContext = buildGraphContext(repoGraph);
   const findingsSection = findings ? `\n\n## Architecture Analysis (from discovery pass)\n\n${findings}` : '';
@@ -893,11 +1042,11 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
     }
   }
 
-  const basePrompt = loadPrompt('doc-init') + strategyNote +
+  const basePrompt = loadPrompt('doc-init', claudeVars) + strategyNote +
     `\n\n---\n\nGenerate ONLY the base skill for this repository at ${repoPath} (no domain skills, no CLAUDE.md). Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}${existingBaseSection}`;
 
   try {
-    let { text, usage } = await runClaude(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner));
+    let { text, usage } = await runLLM(basePrompt, makeClaudeOptions(timeoutMs, verbose, model, baseSpinner), _backendId);
     trackUsage(usage, basePrompt.length);
     let files = parseFileOutput(text);
 
@@ -906,7 +1055,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
     for (let attempt = 0; attempt < MAX_RETRIES && files.length === 0; attempt++) {
       baseSpinner.message(`Base skill missing file tags — retry ${attempt + 1}/${MAX_RETRIES}...`);
       const retryPrompt = `Your previous response did not include the required <file path="...">content</file> XML tags. I need you to output the base skill wrapped in exactly this format:\n\n<file path=".claude/skills/base/skill.md">\n---\nname: base\ndescription: ...\n---\n[skill content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
-      const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+      const retry = await runLLM(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null), _backendId);
       trackUsage(retry.usage, retryPrompt.length);
       files = parseFileOutput(retry.text);
       text = retry.text;
@@ -968,11 +1117,12 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
         const baseRef = summarizeBaseSkill(baseSkillContent, scan);
 
         const domainPrompt = loadPrompt('doc-init-domain', {
+          ...claudeVars,
           domainName: domain.name,
         }) + strategyNote + `\n\n---\n\nRepository path: ${repoPath}\nToday's date is ${today}.\n\n${baseRef}\n\n${domainInfo}\n\n${domainGraph}${domainFindings}${existingDomainSection}`;
 
         try {
-          const { text, usage } = await runClaude(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+          const { text, usage } = await runLLM(domainPrompt, makeClaudeOptions(timeoutMs, verbose, model, null), _backendId);
           trackUsage(usage, domainPrompt.length);
           const files = parseFileOutput(text);
           return { domain: domain.name, files, success: true };
@@ -1031,11 +1181,11 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       } catch { /* non-fatal */ }
     }
 
-    const claudeMdPrompt = loadPrompt('doc-init-claudemd') +
+    const claudeMdPrompt = loadPrompt('doc-init-claudemd', claudeVars) +
       `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${existingClaudeMdSection}`;
 
     try {
-      let { text, usage } = await runClaude(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner));
+      let { text, usage } = await runLLM(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner), _backendId);
       trackUsage(usage, claudeMdPrompt.length);
       let files = parseFileOutput(text);
 
@@ -1044,7 +1194,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       for (let attempt = 0; attempt < MAX_RETRIES && files.length === 0; attempt++) {
         claudeMdSpinner.message(`CLAUDE.md missing file tags — retry ${attempt + 1}/${MAX_RETRIES}...`);
         const retryPrompt = `Your previous response did not include the required <file path="CLAUDE.md">content</file> XML tags. I need you to output CLAUDE.md wrapped in exactly this format:\n\n<file path="CLAUDE.md">\n# project-name\n[CLAUDE.md content]\n</file>\n\nHere is your previous output — please re-wrap it correctly:\n\n${text}`;
-        const retry = await runClaude(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null));
+        const retry = await runLLM(retryPrompt, makeClaudeOptions(timeoutMs, verbose, model, null), _backendId);
         trackUsage(retry.usage, retryPrompt.length);
         files = parseFileOutput(retry.text);
         text = retry.text;

@@ -8,6 +8,7 @@ import { resolveTimeout } from '../lib/timeout.js';
 import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { extractRulesFromSkills } from '../lib/skill-writer.js';
 import { findSkillFiles } from '../lib/skill-reader.js';
+import { readConfig } from '../lib/target.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -35,6 +36,17 @@ const RESOURCE_TYPES = {
 
 export async function addCommand(type, name, options) {
   const repoPath = resolve('.');
+
+  // Check if target is Codex-only — agents, commands, hooks are Claude-only
+  const config = readConfig(repoPath);
+  const isCodexOnly = config?.targets?.length === 1 && config.targets[0] === 'codex';
+  if (isCodexOnly && ['agent', 'command', 'hook'].includes(type)) {
+    throw new CliError(
+      `"aspens add ${type}" is only available for Claude Code targets. ` +
+      `This repo is configured for Codex CLI only.\n` +
+      `Use "aspens add skill" instead — skills work with both targets.`
+    );
+  }
 
   // Skill type — handled separately (not template-based)
   if (type === 'skill') {

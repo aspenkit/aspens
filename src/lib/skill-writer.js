@@ -35,6 +35,44 @@ export function writeSkillFiles(repoPath, files, options = {}) {
 }
 
 /**
+ * Write directory-scoped transformed files (e.g., AGENTS.md in source dirs).
+ * Validates path safety before writing — rejects absolute paths, traversal, and unexpected filenames.
+ * Warns and skips files that would overwrite existing hand-written files.
+ *
+ * @param {string} repoPath
+ * @param {Array<{path: string, content: string}>} files
+ * @param {object} [options]
+ * @param {boolean} [options.force=false]
+ * @returns {Array<{path: string, status: string}>}
+ */
+export function writeTransformedFiles(repoPath, files, options = {}) {
+  const { force = false } = options;
+  const results = [];
+
+  for (const file of files) {
+    // Safety: block absolute paths and traversal
+    if (file.path.startsWith('/') || /^[a-zA-Z]:/.test(file.path) || file.path.includes('..')) {
+      results.push({ path: file.path, status: 'skipped', reason: 'unsafe path' });
+      continue;
+    }
+
+    const fullPath = join(repoPath, file.path);
+    const exists = existsSync(fullPath);
+
+    if (exists && !force) {
+      results.push({ path: file.path, status: 'skipped', reason: 'already exists (warn and skip)' });
+      continue;
+    }
+
+    mkdirSync(dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, file.content, 'utf8');
+    results.push({ path: file.path, status: exists ? 'overwritten' : 'created' });
+  }
+
+  return results;
+}
+
+/**
  * Generate skill-rules.json (v2.0) from existing skill files.
  * Uses skill-reader.js to parse skills.
  * Returns the rules object ready to write.

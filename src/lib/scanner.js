@@ -16,6 +16,8 @@ export function scanRepo(repoPath, { extraDomains } = {}) {
     entryPoints: detectEntryPoints(repoPath),
     hasClaudeConfig: existsSync(join(repoPath, '.claude')),
     hasClaudeMd: existsSync(join(repoPath, 'CLAUDE.md')),
+    hasCodexConfig: existsSync(join(repoPath, '.codex')),
+    hasAgentsMd: existsSync(join(repoPath, 'AGENTS.md')),
   };
 
   // Merge user-specified domains

@@ -111,12 +111,22 @@ export function buildContext(repoPath, scanResult, options = {}) {
     }
   }
 
-  // 7. Existing CLAUDE.md if present
-  const claudeMdPath = join(repoPath, 'CLAUDE.md');
-  if (existsSync(claudeMdPath)) {
-    const claudeMd = readFileSafe(claudeMdPath);
-    if (claudeMd) {
-      sections.push(`## Existing CLAUDE.md\n\`\`\`markdown\n${claudeMd}\n\`\`\``);
+  // 7. Existing instructions file (CLAUDE.md or AGENTS.md) if present
+  const instructionsFile = options.instructionsFile || 'CLAUDE.md';
+  const instructionsPath = join(repoPath, instructionsFile);
+  if (existsSync(instructionsPath)) {
+    const content = readFileSafe(instructionsPath);
+    if (content) {
+      sections.push(`## Existing ${instructionsFile}\n\`\`\`markdown\n${content}\n\`\`\``);
+    }
+  }
+  // Also check the other instructions file for improve strategy (both may exist)
+  const altInstructionsFile = instructionsFile === 'CLAUDE.md' ? 'AGENTS.md' : 'CLAUDE.md';
+  const altPath = join(repoPath, altInstructionsFile);
+  if (existsSync(altPath)) {
+    const altContent = readFileSafe(altPath);
+    if (altContent) {
+      sections.push(`## Existing ${altInstructionsFile}\n\`\`\`markdown\n${altContent}\n\`\`\``);
     }
   }
 

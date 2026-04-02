@@ -6,11 +6,22 @@ import { runClaude, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles } from '../lib/skill-writer.js';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
+import { readConfig } from '../lib/target.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 
 export async function customizeCommand(what, options) {
   const repoPath = resolve('.');
+
+  // Customize is Claude-only — Codex has no agent concept
+  const config = readConfig(repoPath);
+  const isCodexOnly = config?.targets?.length === 1 && config.targets[0] === 'codex';
+  if (isCodexOnly) {
+    throw new CliError(
+      '"aspens customize agents" is only available for Claude Code targets. ' +
+      'This repo is configured for Codex CLI only.'
+    );
+  }
   const { timeoutMs, envWarning } = resolveTimeout(options.timeout, 300);
   if (envWarning) p.log.warn('ASPENS_TIMEOUT is not a valid number — using default timeout.');
   const verbose = !!options.verbose;

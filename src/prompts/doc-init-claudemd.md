@@ -8,14 +8,14 @@ From the scan results and generated skills, create a CLAUDE.md covering: repo su
 
 Return exactly one file:
 
-<file path="CLAUDE.md">
+<file path="{{instructionsFile}}">
 [CLAUDE.md content]
 </file>
 
 ## Rules
 
 1. Keep it concise — CLAUDE.md is loaded on every prompt, so shorter is better.
-2. Reference skills by their path (e.g., `.claude/skills/billing/skill.md`).
+2. Reference skills by their path (e.g., `{{skillsDir}}/billing/{{skillFilename}}`).
 3. Include actual commands from the scan data, not placeholders.
 4. Do NOT duplicate what's already in the skills — just reference them.
 5. Always include a `## Behavior` section with these rules verbatim:

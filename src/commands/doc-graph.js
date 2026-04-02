@@ -5,9 +5,15 @@ import { scanRepo } from '../lib/scanner.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
 import { persistGraphArtifacts } from '../lib/graph-persistence.js';
 import { CliError } from '../lib/errors.js';
+import { TARGETS, readConfig } from '../lib/target.js';
 
 export async function docGraphCommand(path, options) {
   const repoPath = resolve(path);
+
+  // Check target — graph artifacts are Claude-only
+  const config = readConfig(repoPath);
+  const targetId = config?.targets?.[0] || 'claude';
+  const target = TARGETS[targetId] || TARGETS.claude;
 
   p.intro(pc.cyan('aspens doc graph'));
 
@@ -26,13 +32,17 @@ export async function docGraphCommand(path, options) {
   }
 
   try {
-    persistGraphArtifacts(repoPath, repoGraph);
+    persistGraphArtifacts(repoPath, repoGraph, { target });
   } catch (err) {
     spinner.stop(pc.red('Failed to save graph'));
     throw new CliError(`Failed to persist graph artifacts: ${err.message}`);
   }
 
-  spinner.stop(pc.green('Graph saved'));
+  if (!target.supportsGraph) {
+    spinner.stop(pc.dim('Graph built (artifacts not written — Codex target)'));
+  } else {
+    spinner.stop(pc.green('Graph saved'));
+  }
 
   // Print stats
   console.log();
@@ -51,5 +61,5 @@ export async function docGraphCommand(path, options) {
     console.log();
   }
 
-  p.outro(pc.dim('Saved to .claude/graph.json + .claude/code-map.md'));
+  p.outro(pc.dim(target.supportsGraph ? 'Saved graph artifacts' : 'Graph analysis complete'));
 }

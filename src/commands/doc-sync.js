@@ -13,6 +13,7 @@ import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
 import { installGitHook, removeGitHook } from '../lib/git-hook.js';
 import { isGitRepo, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
+import { TARGETS, readConfig } from '../lib/target.js';
 import { getSelectedFilesDiff, buildPrioritizedDiff, truncate } from '../lib/diff-helpers.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
@@ -31,9 +32,15 @@ export async function docSyncCommand(path, options) {
     return removeGitHook(repoPath);
   }
 
+  // Determine active target from config or default to claude
+  const config = readConfig(repoPath);
+  const targetId = config?.targets?.[0] || 'claude';
+  const target = TARGETS[targetId] || TARGETS.claude;
+  const skillsDir = target.skillsDir ? join(repoPath, target.skillsDir) : join(repoPath, '.claude', 'skills');
+
   // Refresh mode — skip diff, review all skills against current codebase
   if (options.refresh) {
-    return refreshAllSkills(repoPath, options);
+    return refreshAllSkills(repoPath, options, target);
   }
 
   p.intro(pc.cyan('aspens doc sync'));
@@ -43,8 +50,8 @@ export async function docSyncCommand(path, options) {
     throw new CliError('Not a git repository. doc sync requires git history.');
   }
 
-  if (!existsSync(join(repoPath, '.claude', 'skills'))) {
-    throw new CliError('No .claude/skills/ found. Run aspens doc init first.');
+  if (!existsSync(skillsDir)) {
+    throw new CliError(`No ${target.skillsDir || '.claude/skills'}/ found. Run aspens doc init first.`);
   }
 
   // Step 2: Get git diff
@@ -78,7 +85,7 @@ export async function docSyncCommand(path, options) {
 
   // Step 3: Find affected skills
   const scan = scanRepo(repoPath);
-  const existingSkills = findExistingSkills(repoPath);
+  const existingSkills = findExistingSkills(repoPath, target);
 
   // Rebuild graph from current state (keeps graph fresh on every sync)
   let repoGraph = null;
@@ -86,7 +93,7 @@ export async function docSyncCommand(path, options) {
   if (options.graph !== false) {
     try {
       const rawGraph = await buildRepoGraph(repoPath, scan.languages);
-      persistGraphArtifacts(repoPath, rawGraph);
+      persistGraphArtifacts(repoPath, rawGraph, { target });
       repoGraph = loadGraph(repoPath);
       if (repoGraph) {
         const subgraph = extractSubgraph(repoGraph, changedFiles);
@@ -112,7 +119,13 @@ export async function docSyncCommand(path, options) {
 
   // Step 4: Build prompt
   const today = new Date().toISOString().split('T')[0];
-  const systemPrompt = loadPrompt('doc-sync');
+  const targetVars = {
+    skillsDir: target.skillsDir || '.claude/skills',
+    skillFilename: target.skillFilename || 'skill.md',
+    instructionsFile: target.instructionsFile || 'CLAUDE.md',
+    configDir: target.configDir || '.claude',
+  };
+  const systemPrompt = loadPrompt('doc-sync', targetVars);
 
   // Skill-relevant files (for diff prioritization and interactive picker pre-selection)
   const relevantFiles = changedFiles.filter(f =>
@@ -172,8 +185,9 @@ export async function docSyncCommand(path, options) {
     return `### ${s.path}\n${desc}`;
   }).join('\n\n');
 
-  const claudeMdContent = existsSync(join(repoPath, 'CLAUDE.md'))
-    ? readFileSync(join(repoPath, 'CLAUDE.md'), 'utf8')
+  const instructionsFile = target.instructionsFile || 'CLAUDE.md';
+  const instructionsContent = existsSync(join(repoPath, instructionsFile))
+    ? readFileSync(join(repoPath, instructionsFile), 'utf8')
     : '';
 
   const userPrompt = `Repository path: ${repoPath}
@@ -195,9 +209,9 @@ ${graphContext ? `\n## Import Graph Context\n${graphContext}\n` : ''}
 ## Existing Skills
 ${skillContents}
 
-## Existing CLAUDE.md
+## Existing ${instructionsFile}
 \`\`\`
-${truncate(claudeMdContent, 5000)}
+${truncate(instructionsContent, 5000)}
 \`\`\``;
 
   const fullPrompt = `${systemPrompt}\n\n---\n\n${userPrompt}`;
@@ -258,12 +272,13 @@ ${truncate(claudeMdContent, 5000)}
     console.log(`  ${icon} ${wr.path}`);
   }
 
-  // Regenerate skill-rules.json so hooks see updated activation patterns
-  try {
-    const skillsDir = join(repoPath, '.claude', 'skills');
-    const rules = extractRulesFromSkills(skillsDir);
-    writeFileSync(join(skillsDir, 'skill-rules.json'), JSON.stringify(rules, null, 2) + '\n');
-  } catch { /* non-fatal */ }
+  // Regenerate skill-rules.json so hooks see updated activation patterns (Claude-only)
+  if (target.supportsHooks) {
+    try {
+      const rules = extractRulesFromSkills(skillsDir);
+      writeFileSync(join(skillsDir, 'skill-rules.json'), JSON.stringify(rules, null, 2) + '\n');
+    } catch { /* non-fatal */ }
+  }
 
   console.log();
   p.outro(`${results.length} file(s) updated`);
@@ -271,9 +286,11 @@ ${truncate(claudeMdContent, 5000)}
 
 // --- Skill mapping ---
 
-function findExistingSkills(repoPath) {
-  const skillsDir = join(repoPath, '.claude', 'skills');
-  return findSkillFiles(skillsDir).map(s => ({
+function findExistingSkills(repoPath, target) {
+  const sd = target?.skillsDir || '.claude/skills';
+  const sf = target?.skillFilename || 'skill.md';
+  const fullDir = join(repoPath, sd);
+  return findSkillFiles(fullDir, { skillFilename: sf }).map(s => ({
     name: s.name,
     path: relative(repoPath, s.path),
     content: s.content,
@@ -319,7 +336,7 @@ function mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph = null
 
 // --- Refresh mode ---
 
-async function refreshAllSkills(repoPath, options) {
+async function refreshAllSkills(repoPath, options, target) {
   const verbose = !!options.verbose;
 
   p.intro(pc.cyan('aspens doc sync --refresh'));
@@ -328,9 +345,10 @@ async function refreshAllSkills(repoPath, options) {
   if (!isGitRepo(repoPath)) {
     throw new CliError('Not a git repository.');
   }
-  const skillsDir = join(repoPath, '.claude', 'skills');
-  if (!existsSync(skillsDir)) {
-    throw new CliError('No .claude/skills/ found. Run aspens doc init first.');
+  const sd = target?.skillsDir || '.claude/skills';
+  const refreshSkillsDir = join(repoPath, sd);
+  if (!existsSync(refreshSkillsDir)) {
+    throw new CliError(`No ${sd}/ found. Run aspens doc init first.`);
   }
 
   // Step 1: Scan + graph
@@ -341,7 +359,7 @@ async function refreshAllSkills(repoPath, options) {
   if (options.graph !== false) {
     try {
       const rawGraph = await buildRepoGraph(repoPath, scan.languages);
-      persistGraphArtifacts(repoPath, rawGraph);
+      persistGraphArtifacts(repoPath, rawGraph, { target });
     } catch (err) {
       p.log.warn(`Graph build failed — continuing without it. (${err.message})`);
     }
@@ -350,9 +368,10 @@ async function refreshAllSkills(repoPath, options) {
   scanSpinner.stop('Scan complete');
 
   // Step 2: Load existing skills
-  const existingSkills = findExistingSkills(repoPath);
+  const existingSkills = findExistingSkills(repoPath, target);
   if (existingSkills.length === 0) {
-    throw new CliError('No skills found in .claude/skills/. Run aspens doc init first.');
+    const sd = target?.skillsDir || '.claude/skills';
+    throw new CliError(`No skills found in ${sd}/. Run aspens doc init first.`);
   }
 
   const baseSkill = existingSkills.find(s => s.name === 'base');
@@ -365,7 +384,13 @@ async function refreshAllSkills(repoPath, options) {
   const { timeoutMs: perSkillTimeout } = resolveTimeout(options.timeout, autoTimeout);
 
   const today = new Date().toISOString().split('T')[0];
-  const systemPrompt = loadPrompt('doc-sync-refresh');
+  const refreshVars = {
+    skillsDir: target?.skillsDir || '.claude/skills',
+    skillFilename: target?.skillFilename || 'skill.md',
+    instructionsFile: target?.instructionsFile || 'CLAUDE.md',
+    configDir: target?.configDir || '.claude',
+  };
+  const systemPrompt = loadPrompt('doc-sync-refresh', refreshVars);
   const allUpdatedFiles = [];
 
   // Step 3: Refresh base skill first
@@ -440,14 +465,15 @@ async function refreshAllSkills(repoPath, options) {
     }
   }
 
-  // Step 5: Refresh CLAUDE.md if it exists
-  const claudeMdPath = join(repoPath, 'CLAUDE.md');
-  if (existsSync(claudeMdPath)) {
+  // Step 5: Refresh instructions file (CLAUDE.md or AGENTS.md) if it exists
+  const instrFile = target?.instructionsFile || 'CLAUDE.md';
+  const instrPath = join(repoPath, instrFile);
+  if (existsSync(instrPath)) {
     const claudeSpinner = p.spinner();
-    claudeSpinner.start('Checking CLAUDE.md...');
+    claudeSpinner.start(`Checking ${instrFile}...`);
 
     try {
-      const claudeMd = readFileSync(claudeMdPath, 'utf8');
+      const claudeMd = readFileSync(instrPath, 'utf8');
       const skillSummaries = existingSkills.map(s => {
         const descMatch = s.content.match(/description:\s*(.+)/);
         return `- **${s.name}**: ${descMatch ? descMatch[1].trim() : ''}`;
@@ -466,12 +492,12 @@ async function refreshAllSkills(repoPath, options) {
       const claudeFiles = parseFileOutput(claudeResult.text);
       if (claudeFiles.length > 0) {
         allUpdatedFiles.push(...claudeFiles);
-        claudeSpinner.stop(pc.yellow('CLAUDE.md') + ' — updated');
+        claudeSpinner.stop(pc.yellow(instrFile) + ' — updated');
       } else {
-        claudeSpinner.stop(pc.dim('CLAUDE.md') + ' — up to date');
+        claudeSpinner.stop(pc.dim(instrFile) + ' — up to date');
       }
     } catch (err) {
-      claudeSpinner.stop(pc.red('CLAUDE.md — failed: ') + err.message);
+      claudeSpinner.stop(pc.red(`${instrFile} — failed: `) + err.message);
     }
   }
 

@@ -1,0 +1,164 @@
+/**
+ * Target abstraction layer — maps logical output locations to concrete paths per target.
+ *
+ * Backend = what generates the content (claude, codex)
+ * Target  = where the output goes (claude, codex, all)
+ */
+
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join, dirname } from 'path';
+
+// ---------------------------------------------------------------------------
+// Target definitions
+// ---------------------------------------------------------------------------
+
+export const TARGETS = {
+  claude: {
+    id: 'claude',
+    label: 'Claude Code',
+    placement: 'centralized',
+    format: 'markdown',
+    instructionsFile: 'CLAUDE.md',
+    configDir: '.claude',
+    skillsDir: '.claude/skills',
+    skillFilename: 'skill.md',
+    hooksDir: '.claude/hooks',
+    settingsFile: '.claude/settings.json',
+    graphPath: '.claude/graph.json',
+    codeMapPath: '.claude/code-map.md',
+    graphIndexPath: '.claude/graph-index.json',
+    agentsDir: '.claude/agents',
+    commandsDir: '.claude/commands',
+    supportsHooks: true,
+    supportsSettings: true,
+    supportsGraph: true,
+    supportsSkills: false,
+    supportsMCP: false,
+    needsActivationSection: true,
+    needsCodeMapEmbed: false,
+  },
+  codex: {
+    id: 'codex',
+    label: 'Codex CLI',
+    placement: 'directory-scoped',
+    format: 'markdown',
+    instructionsFile: 'AGENTS.md',
+    configDir: '.codex',
+    skillsDir: '.agents/skills',
+    userSkillsDir: '~/.agents/skills',
+    skillFilename: 'SKILL.md',
+    directoryDocFile: 'AGENTS.md',
+    hooksDir: null,
+    settingsFile: '.codex/config.toml',
+    graphPath: null,
+    codeMapPath: null,
+    graphIndexPath: null,
+    agentsDir: null,
+    commandsDir: null,
+    supportsHooks: false,
+    supportsSettings: true,
+    supportsGraph: false,
+    supportsSkills: true,
+    supportsMCP: true,
+    needsActivationSection: false,
+    needsCodeMapEmbed: true,
+    maxInstructionsBytes: 32768,
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve a single target by id.
+ * @param {string} id — 'claude' or 'codex'
+ * @returns {object} target definition
+ */
+export function resolveTarget(id) {
+  const target = TARGETS[id];
+  if (!target) {
+    throw new Error(`Unknown target: "${id}". Valid targets: ${Object.keys(TARGETS).join(', ')}`);
+  }
+  return target;
+}
+
+/**
+ * Resolve target option to an array of targets.
+ * @param {string} option — 'claude', 'codex', or 'all'
+ * @returns {object[]} array of target definitions
+ */
+export function resolveTargets(option) {
+  if (option === 'all') return Object.values(TARGETS);
+  return [resolveTarget(option)];
+}
+
+/**
+ * Build the allowed paths config for parseFileOutput's sanitizePath,
+ * as a union across all active targets.
+ * @param {object[]} targets — array of target definitions
+ * @returns {{ dirPrefixes: string[], exactFiles: string[] }}
+ */
+export function getAllowedPaths(targets) {
+  const dirPrefixes = new Set();
+  const exactFiles = new Set();
+
+  for (const t of targets) {
+    if (t.configDir) dirPrefixes.add(t.configDir + '/');
+    if (t.skillsDir) dirPrefixes.add(t.skillsDir.split('/')[0] + '/');
+    if (t.hooksDir) dirPrefixes.add(t.hooksDir.split('/')[0] + '/');
+    if (t.agentsDir) dirPrefixes.add(t.agentsDir.split('/')[0] + '/');
+    if (t.commandsDir) dirPrefixes.add(t.commandsDir.split('/')[0] + '/');
+    exactFiles.add(t.instructionsFile);
+  }
+
+  return {
+    dirPrefixes: [...dirPrefixes],
+    exactFiles: [...exactFiles],
+  };
+}
+
+/**
+ * Shorthand — returns path info for a target.
+ * @param {string} targetId
+ * @returns {object} target definition
+ */
+export function paths(targetId) {
+  return resolveTarget(targetId);
+}
+
+// ---------------------------------------------------------------------------
+// Config persistence — .aspens.json at repo root
+// ---------------------------------------------------------------------------
+
+const CONFIG_FILE = '.aspens.json';
+
+/**
+ * Read persisted aspens config from .aspens.json.
+ * @param {string} repoPath
+ * @returns {{ targets: string[], backend: string|null, version: string } | null}
+ */
+export function readConfig(repoPath) {
+  const configPath = join(repoPath, CONFIG_FILE);
+  if (!existsSync(configPath)) return null;
+  try {
+    return JSON.parse(readFileSync(configPath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write aspens config to .aspens.json.
+ * @param {string} repoPath
+ * @param {object} config — { targets: string[], backend?: string }
+ */
+export function writeConfig(repoPath, config) {
+  const configPath = join(repoPath, CONFIG_FILE);
+  const data = {
+    targets: config.targets,
+    backend: config.backend || null,
+    version: '1.0',
+  };
+  writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n');
+}

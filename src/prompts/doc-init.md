@@ -12,7 +12,7 @@ Generate a **base skill** (tech stack, conventions, commands) and **domain skill
 
 When you are done exploring, output all files wrapped in XML tags:
 
-<file path=".claude/skills/base/skill.md">
+<file path="{{skillsDir}}/base/{{skillFilename}}">
 ---
 name: base
 description: ...
@@ -20,7 +20,7 @@ description: ...
 [skill content here — may include code blocks, markdown, anything]
 </file>
 
-<file path=".claude/skills/auth/skill.md">
+<file path="{{skillsDir}}/auth/{{skillFilename}}">
 ---
 name: auth
 description: ...
@@ -28,8 +28,8 @@ description: ...
 [skill content here]
 </file>
 
-<file path="CLAUDE.md">
-[CLAUDE.md content referencing all skills]
+<file path="{{instructionsFile}}">
+[{{instructionsFile}} content referencing all skills]
 </file>
 
 **Important:** Use `<file path="...">` and `</file>` tags exactly as shown. Content between tags is written verbatim. Code blocks inside skills are fine — they won't break the parsing.

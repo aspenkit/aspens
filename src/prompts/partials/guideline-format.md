@@ -1,6 +1,6 @@
 ## Guideline File Format
 
-A guideline is a longer reference document in `.claude/guidelines/{name}.md`. Guidelines are NOT auto-triggered — they're linked from skills when deeper context is needed.
+A guideline is a longer reference document in `{{configDir}}/guidelines/{name}.md`. Guidelines are NOT auto-triggered — they're linked from skills when deeper context is needed.
 
 ### Format
 
