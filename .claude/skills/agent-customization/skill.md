@@ -35,8 +35,5 @@ You are working on **agent customization** — the feature that reads a project'
 - **Dry-run support** — `--dry-run` flag previews output without writing. Confirmation prompt shown before writes.
 - **Model override** — `--model` flag passed through to `runClaude()` for model selection.
 
-## References
-- **Patterns:** `.claude/guidelines/claude-runner/patterns.md`
-
 ---
 **Last Updated:** 2026-04-02

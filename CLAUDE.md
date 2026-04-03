@@ -1,6 +1,6 @@
 # aspens
 
-CLI for generating and maintaining AI-ready repo docs: Claude Code skills plus `CLAUDE.md`. Stack: Node.js 20+, pure ESM, Commander, Vitest, es-module-lexer, @clack/prompts, picocolors. Entry point: `src/index.js` and CLI at `bin/cli.js`.
+CLI for generating and maintaining AI-ready repo docs for Claude Code and Codex CLI. Stack: Node.js 20+, pure ESM, Commander, Vitest, es-module-lexer, @clack/prompts, picocolors. Entry point: `src/index.js` and CLI at `bin/cli.js`.
 
 ## Skills
 
@@ -12,7 +12,7 @@ CLI for generating and maintaining AI-ready repo docs: Claude Code skills plus `
 - `npm start` — run the CLI (`node bin/cli.js`)
 - `npm run lint` — no-op check (`echo 'No linter configured yet' && exit 0`)
 - `aspens scan [path]` — deterministic repo scan
-- `aspens doc init [path]` — generate skills, hooks, and `CLAUDE.md`
+- `aspens doc init [path]` — generate skills, hooks, and instructions file (`--target claude|codex|all`)
 - `aspens doc sync [path]` — update docs from recent diffs
 - `aspens doc graph [path]` — rebuild `.claude/graph.json`
 - `aspens add <type> [name]` — install bundled templates

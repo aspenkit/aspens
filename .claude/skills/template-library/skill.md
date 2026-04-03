@@ -26,12 +26,15 @@ You are working on the **template library** — bundled agents, slash commands, 
 ## Key Concepts
 - **Four resource types for `add`:** `agent` → `.claude/agents`, `command` → `.claude/commands`, `hook` → `.claude/hooks`. A fourth type `skill` is handled separately (not template-based).
 - **Codex-only restriction:** `add agent`, `add command`, and `add hook` throw `CliError` for Codex-only repos (checked via `readConfig()`). Skills work with both targets — `add skill` is always available.
-- **Skill subcommand:** `aspens add skill <name>` scaffolds a blank skill template. `--from <file>` generates a skill from a reference doc using Claude (LLM-powered). `--list` shows installed skills.
+- **Target-aware skill commands:** `addSkillCommand` and `generateSkillFromDoc` resolve the active target via `resolveSkillTarget(config)`. Skill paths use `target.skillsDir` and `target.skillFilename` (not hardcoded `.claude/skills/skill.md`).
+- **Backend-aware generation:** `generateSkillFromDoc` uses local `runLLM()` to dispatch to Claude or Codex based on config. `getAllowedPaths([target])` provides path safety for `parseFileOutput`.
+- **Skill subcommand:** `aspens add skill <name>` scaffolds a blank skill template. `--from <file>` generates a skill from a reference doc using the configured backend. `--list` shows installed skills.
 - **Hook templates:** `skill-activation-prompt` reads `skill-rules.json` and injects relevant skills into prompts. `graph-context-prompt` loads graph data for code navigation. `post-tool-use-tracker` detects skill domains from file access patterns.
-- **`doc init` hook installation (step 9):** Generates `skill-rules.json` from skills, copies hook files, generates `post-tool-use-tracker.sh` with domain patterns (via `BEGIN/END` markers), merges `settings.json` with backup.
+- **`doc init` hook installation (step 13):** Generates `skill-rules.json` from skills, copies hook files, generates `post-tool-use-tracker.sh` with domain patterns (via `BEGIN/END` markers), merges `settings.json` with backup.
 - **Template discovery:** `listAvailable()` reads template dir, filters `.md`/`.sh` files, regex-parses `name:` and `description:`.
 - **No-overwrite policy:** `addResource()` skips files that already exist via `existsSync` check. Same for `addSkillCommand`.
 - **Plan/execute gitignore:** Adding `plan` or `execute` agents auto-adds `dev/` to `.gitignore` for plan storage.
+- **Conditional post-add tips:** Skill rules update and `--hooks-only` tip only shown for Claude target. Codex target gets no hook-related messaging.
 
 ## Critical Rules
 - Template files **must** contain `name: <value>` and `description: <value>` lines parseable by regex.

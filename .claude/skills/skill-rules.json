@@ -187,13 +187,18 @@
       ],
       "promptTriggers": {
         "keywords": [
-          "import",
           "graph",
           "import graph",
+          "dependency",
+          "hub files",
+          "clustering",
+          "code-map",
+          "graph-index",
+          "subgraph",
+          "import",
           "static",
           "analysis",
           "builds",
-          "dependency",
           "graph-builder",
           "graph-persistence",
           "commands",
@@ -208,6 +213,8 @@
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import graph",
           "import graph.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*hub files",
+          "hub files.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import.*graph"
         ]
       }

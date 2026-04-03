@@ -20,25 +20,27 @@ Keywords: codex, target, backend, AGENTS.md, directory-scoped, transform, multi-
 You are working on **multi-target output support** — the system that lets aspens generate documentation for Claude Code, Codex CLI, or both simultaneously.
 
 ## Key Files
-- `src/lib/target.js` — Target definitions (`TARGETS`), path helpers, config persistence (`.aspens.json`)
-- `src/lib/target-transform.js` — Transforms Claude-format output to other target formats (directory-scoped AGENTS.md for Codex)
-- `src/lib/backend.js` — Backend detection and resolution (which CLI generates content)
+- `src/lib/target.js` — Target definitions (`TARGETS`), `getAllowedPaths()`, path helpers, config persistence (`.aspens.json`)
+- `src/lib/target-transform.js` — Transforms Claude-format output to other target formats; `projectCodexDomainDocs()`, `validateTransformedFiles()`, content sanitization
+- `src/lib/backend.js` — Backend detection (`detectAvailableBackends`) and resolution (`resolveBackend`) with fallback logic
 
 ## Key Concepts
-- **Target vs Backend:** Target = where output goes (claude → `.claude/skills/`, codex → directory-scoped `AGENTS.md`). Backend = which LLM CLI generates the content (`claude -p` or `codex exec`).
-- **Target definitions:** `TARGETS.claude` (centralized: `.claude/skills/{domain}/skill.md`) and `TARGETS.codex` (directory-scoped: `src/billing/AGENTS.md`). Each defines paths, capabilities (`supportsHooks`, `supportsGraph`, `supportsSettings`).
-- **Content transform:** Generation always produces Claude-target paths. `transformForTarget()` remaps paths and content for other targets. For Codex: base skill → root `AGENTS.md`, domain skills → source directory `AGENTS.md` files.
-- **Backend detection:** `detectAvailableBackends()` checks if `claude` and `codex` CLIs are installed. `resolveBackend()` picks the best match with fallback.
-- **Config persistence:** `.aspens.json` at repo root stores `{ targets, backend, version }`. Read by `doc-sync`, `doc-graph`, `add`, `customize` to know the active target.
-- **Codex-only restrictions:** `add agent/command/hook` and `customize agents` throw `CliError` for Codex-only repos (these are Claude Code concepts).
-- **Path safety for transforms:** `writeTransformedFiles()` in `skill-writer.js` handles directory-scoped writes (outside `.claude/`); `validateTransformedFiles()` checks for traversal and unexpected filenames.
+- **Target vs Backend:** Target = where output goes (claude → `.claude/skills/`, codex → `.agents/skills/` + directory-scoped `AGENTS.md`). Backend = which LLM CLI generates the content (`claude -p` or `codex exec`).
+- **Target definitions:** `TARGETS.claude` (centralized) and `TARGETS.codex` (directory-scoped). Each defines paths and capability flags: `supportsHooks`, `supportsSettings`, `supportsGraph`, `supportsSkills`, `needsActivationSection`, `needsCodeMapEmbed`, `supportsMCP`. Codex also has `maxInstructionsBytes` (32 KiB) and `userSkillsDir`.
+- **Canonical generation:** Generation always produces Claude-canonical format first. Prompts always receive `CANONICAL_VARS` (hardcoded Claude paths from `doc-init.js`). Transforms run **after** generation to produce other target formats.
+- **Content transform:** `transformForTarget()` remaps paths and content. For Codex: base skill → root `AGENTS.md`, domain skills → both `.agents/skills/{domain}/SKILL.md` and source directory `AGENTS.md`. `generateCodexSkillReferences()` creates `.agents/skills/architecture/` with code-map data.
+- **Content sanitization:** `sanitizeCodexInstructions()` and `sanitizeCodexSkill()` strip Claude-specific references (hooks, skill-rules.json, Claude Code mentions) from Codex output.
+- **`getAllowedPaths(targets)`** — Returns `{ dirPrefixes, exactFiles }` union across all active targets. Used by `parseFileOutput()` to validate LLM output paths.
+- **Backend detection:** `detectAvailableBackends()` checks if `claude` and `codex` CLIs are installed. `resolveBackend()` picks best match: explicit flag > target match > fallback.
+- **Config persistence:** `.aspens.json` at repo root stores `{ targets, backend, version }`. `readConfig()` returns null if missing — callers default to `'claude'` target.
+- **Multi-target publish:** `doc-sync` uses `publishFilesForTargets()` to generate output for all configured targets from a single LLM run — source target files kept as-is, other targets get transforms applied.
 
 ## Critical Rules
-- **Generation always targets Claude format first** — transforms run after generation, never during. The prompts use `{{skillsDir}}`, `{{skillFilename}}`, `{{instructionsFile}}` variables but always receive Claude-target values.
-- **`writeTransformedFiles` is separate from `writeSkillFiles`** — transformed files go to source directories (e.g., `src/billing/AGENTS.md`) and use warn-and-skip policy for existing files.
-- **Graph artifacts are Claude-only** — `persistGraphArtifacts()` returns serialized data without writing files when `target.supportsGraph === false`.
-- **Hooks are Claude-only** — `doc-sync` and `doc-init` skip hook installation when target doesn't support hooks.
-- **`readConfig()` returns null if no `.aspens.json`** — callers default to `'claude'` target.
+- **Generation always targets Claude canonical format first** — transforms run after, never during. Prompts always receive `CANONICAL_VARS`.
+- **Split write logic:** `writeSkillFiles()` handles direct-write files (`.claude/`, `.agents/`, `CLAUDE.md`, root `AGENTS.md`). `writeTransformedFiles()` handles directory-scoped `AGENTS.md` (e.g., `src/billing/AGENTS.md`) with warn-and-skip policy.
+- **Path safety:** `validateTransformedFiles()` in `target-transform.js` rejects absolute paths, traversal, and unexpected filenames. `writeTransformedFiles()` enforces the same checks.
+- **Codex-only restrictions:** `add agent/command/hook` and `customize agents` throw `CliError` for Codex-only repos. `add skill` works for both targets.
+- **Graph/hooks are Claude-only** — `persistGraphArtifacts()` returns data without writing files when `target.supportsGraph === false`. Hook installation skipped when `supportsHooks === false`.
 
 ## References
 - **Patterns:** See `src/lib/target.js` for all target property definitions

@@ -14,6 +14,8 @@ This skill triggers when editing import-graph-related files:
 - `tests/graph-builder.test.js`
 - `tests/graph-persistence.test.js`
 
+Keywords: graph, import graph, dependency, hub files, clustering, code-map, graph-index, subgraph
+
 ---
 
 You are working on the **import graph system** — static analysis that parses JS/TS and Python source files to produce dependency graphs, plus persistence/query layers for runtime use.
