@@ -162,3 +162,56 @@ export function writeConfig(repoPath, config) {
   };
   writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n');
 }
+
+/**
+ * Infer target config from generated repo artifacts when .aspens.json is missing.
+ * @param {string} repoPath
+ * @returns {{ targets: string[], backend: string|null, version: string } | null}
+ */
+export function inferConfig(repoPath) {
+  const hasClaudeArtifacts =
+    existsSync(join(repoPath, TARGETS.claude.configDir || '.claude')) ||
+    existsSync(join(repoPath, TARGETS.claude.skillsDir || '.claude/skills')) ||
+    existsSync(join(repoPath, TARGETS.claude.instructionsFile || 'CLAUDE.md'));
+
+  const hasCodexArtifacts =
+    existsSync(join(repoPath, TARGETS.codex.configDir || '.codex')) ||
+    existsSync(join(repoPath, TARGETS.codex.skillsDir || '.agents/skills')) ||
+    existsSync(join(repoPath, TARGETS.codex.instructionsFile || 'AGENTS.md'));
+
+  const targets = [];
+  if (hasClaudeArtifacts) targets.push('claude');
+  if (hasCodexArtifacts) targets.push('codex');
+
+  if (targets.length === 0) return null;
+
+  return {
+    targets,
+    backend: null,
+    version: '1.0',
+  };
+}
+
+/**
+ * Read .aspens.json, or recover it from repo artifacts if it was deleted.
+ * @param {string} repoPath
+ * @param {{ persist?: boolean }} [options]
+ * @returns {{ config: { targets: string[], backend: string|null, version: string } | null, recovered: boolean }}
+ */
+export function loadConfig(repoPath, options = {}) {
+  const config = readConfig(repoPath);
+  if (config) {
+    return { config, recovered: false };
+  }
+
+  const inferred = inferConfig(repoPath);
+  if (!inferred) {
+    return { config: null, recovered: false };
+  }
+
+  if (options.persist !== false) {
+    writeConfig(repoPath, inferred);
+  }
+
+  return { config: inferred, recovered: true };
+}

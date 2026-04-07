@@ -14,6 +14,7 @@ import { resolveTimeout } from '../lib/timeout.js';
 import { TARGETS, resolveTarget, getAllowedPaths, writeConfig } from '../lib/target.js';
 import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
 import { transformForTarget, validateTransformedFiles } from '../lib/target-transform.js';
+import { findSkillFiles } from '../lib/skill-reader.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -92,6 +93,7 @@ let _backendId = 'claude';
 let _primaryTarget = TARGETS.claude;
 let _allowedPaths = null;
 let _repoPath = null;
+let _reuseSourceTarget = null;
 
 // Track token usage across all calls
 const tokenTracker = { promptTokens: 0, toolResultTokens: 0, output: 0, toolUses: 0, calls: 0 };
@@ -258,6 +260,7 @@ export async function docInitCommand(path, options) {
   // Step 2: Parallel Discovery — runs immediately, no user input needed
   let discoveryFindings = null;
   let discoveredDomains = [];
+  let reusedDomains = [];
 
   const isBaseOnly = options.mode === 'base-only';
   const isDomainsOnly = options.mode === 'chunked' && extraDomains && extraDomains.length > 0;
@@ -265,6 +268,7 @@ export async function docInitCommand(path, options) {
   const hasClaudeDocs = scan.hasClaudeConfig || scan.hasClaudeMd;
   const hasCodexDocs = scan.hasAgentsMd;
   const hasExistingDocs = hasClaudeDocs || hasCodexDocs;
+  _reuseSourceTarget = chooseReuseSourceTarget(targets, hasClaudeDocs, hasCodexDocs);
   let skipDiscovery = false;
   if (hasExistingDocs && !isBaseOnly && !isDomainsOnly && options.strategy !== 'rewrite') {
     const existingSource = hasClaudeDocs && hasCodexDocs ? 'Claude + Codex'
@@ -369,7 +373,23 @@ export async function docInitCommand(path, options) {
   }
 
   // Use discovered domains if available, otherwise fall back to scanner domains
-  const effectiveDomains = discoveredDomains.length > 0 ? discoveredDomains : scan.domains;
+  if (skipDiscovery && _reuseSourceTarget) {
+    reusedDomains = loadReusableDomains(repoPath, _reuseSourceTarget);
+    if (reusedDomains.length > 0) {
+      console.log(pc.dim(`  Reusing ${reusedDomains.length} ${_reuseSourceTarget.label} skill domains:`));
+      for (const d of reusedDomains) {
+        const hint = d.description || d.files?.slice(0, 2).join(', ');
+        console.log(pc.dim('    ') + pc.green(d.name) + (hint ? pc.dim(` — ${hint.slice(0, 120)}`) : ''));
+      }
+      console.log();
+    }
+  }
+
+  const effectiveDomains = discoveredDomains.length > 0
+    ? discoveredDomains
+    : reusedDomains.length > 0
+      ? reusedDomains
+      : scan.domains;
 
   // Step 3: Strategy for existing docs
   let existingDocsStrategy = 'fresh';
@@ -499,8 +519,21 @@ export async function docInitCommand(path, options) {
 
   // Step 5: Generate skills
   let allFiles = [];
+  const reuseExistingCanonical = (
+    existingDocsStrategy === 'improve' &&
+    _reuseSourceTarget?.id === 'claude'
+  );
 
-  if (mode === 'all-at-once') {
+  if (reuseExistingCanonical) {
+    const reuseSpinner = p.spinner();
+    reuseSpinner.start(`Loading existing ${_reuseSourceTarget.label} docs for reuse...`);
+    allFiles = loadTargetFiles(repoPath, _reuseSourceTarget, selectedDomains, {
+      includeInstructions: true,
+      includeBase: true,
+      includeDomains: mode !== 'base-only',
+    });
+    reuseSpinner.stop(`Loaded ${pc.bold(allFiles.length)} existing ${_reuseSourceTarget.label} file(s)`);
+  } else if (mode === 'all-at-once') {
     allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, !!options.mode);
   } else {
     const domainsOnly = isDomainsOnly; // retrying specific domains — skip base + CLAUDE.md
@@ -1014,6 +1047,132 @@ function buildStrategyInstruction(strategy) {
   return '';
 }
 
+function chooseReuseSourceTarget(targets, hasClaudeDocs, hasCodexDocs) {
+  const wantsClaude = targets.some(t => t.id === 'claude');
+  const wantsCodex = targets.some(t => t.id === 'codex');
+
+  if (hasClaudeDocs && !hasCodexDocs) return TARGETS.claude;
+  if (hasCodexDocs && !hasClaudeDocs) return TARGETS.codex;
+  if (wantsCodex && !wantsClaude && hasClaudeDocs) return TARGETS.claude;
+  if (wantsClaude && !wantsCodex && hasCodexDocs) return TARGETS.codex;
+  if (hasClaudeDocs) return TARGETS.claude;
+  if (hasCodexDocs) return TARGETS.codex;
+  return null;
+}
+
+function loadReusableDomains(repoPath, sourceTarget) {
+  if (!sourceTarget?.skillsDir) return [];
+
+  if (sourceTarget.id === 'claude') {
+    const rulesPath = join(repoPath, sourceTarget.skillsDir, 'skill-rules.json');
+    if (existsSync(rulesPath)) {
+      try {
+        const rules = JSON.parse(readFileSync(rulesPath, 'utf8'));
+        const skills = rules?.skills || {};
+        const domains = [];
+
+        for (const [name, config] of Object.entries(skills)) {
+          if (name === 'base' || config?.type === 'base') continue;
+
+          const patterns = Array.isArray(config?.filePatterns) ? config.filePatterns : [];
+          const files = patterns.filter(Boolean);
+          const directories = [...new Set(
+            files
+              .filter(file => file.includes('/'))
+              .map(file => file.split('/').slice(0, -1).join('/'))
+              .filter(Boolean)
+          )];
+
+          domains.push({
+            name,
+            description: '',
+            directories,
+            files,
+          });
+        }
+
+        if (domains.length > 0) return domains;
+      } catch {
+        // Fall through to skill-file parsing.
+      }
+    }
+  }
+
+  const skillsDir = join(repoPath, sourceTarget.skillsDir);
+  const skillFiles = findSkillFiles(skillsDir, { skillFilename: sourceTarget.skillFilename });
+  return skillFiles
+    .filter(skill => !['base', 'architecture'].includes(skill.name))
+    .map(skill => ({
+      name: skill.frontmatter?.name || skill.name,
+      description: skill.frontmatter?.description || '',
+      directories: [...new Set(
+        (skill.activationPatterns || [])
+          .filter(file => file.includes('/'))
+          .map(file => file.split('/').slice(0, -1).join('/'))
+          .filter(Boolean)
+      )],
+      files: skill.activationPatterns || [],
+    }))
+    .filter(skill => skill.name);
+}
+
+function loadTargetFiles(repoPath, sourceTarget, domains, options = {}) {
+  const { includeInstructions = true, includeBase = true, includeDomains = true } = options;
+  const files = [];
+
+  if (includeInstructions && sourceTarget.instructionsFile) {
+    const instructionsPath = join(repoPath, sourceTarget.instructionsFile);
+    if (existsSync(instructionsPath)) {
+      files.push({
+        path: sourceTarget.instructionsFile,
+        content: readFileSync(instructionsPath, 'utf8'),
+      });
+    }
+  }
+
+  if (includeBase && sourceTarget.skillsDir) {
+    const basePath = join(repoPath, sourceTarget.skillsDir, 'base', sourceTarget.skillFilename);
+    if (existsSync(basePath)) {
+      files.push({
+        path: join(sourceTarget.skillsDir, 'base', sourceTarget.skillFilename),
+        content: readFileSync(basePath, 'utf8'),
+      });
+    }
+  }
+
+  if (includeDomains && sourceTarget.skillsDir) {
+    for (const domain of domains) {
+      if (!domain?.name || domain.name.includes('..') || domain.name.startsWith('/')) continue;
+      const skillPath = join(repoPath, sourceTarget.skillsDir, domain.name, sourceTarget.skillFilename);
+      if (!existsSync(skillPath)) continue;
+      files.push({
+        path: join(sourceTarget.skillsDir, domain.name, sourceTarget.skillFilename),
+        content: readFileSync(skillPath, 'utf8'),
+      });
+    }
+  }
+
+  return files;
+}
+
+function loadExistingDocsContext(repoPath, sourceTarget, domains, options = {}) {
+  const files = loadTargetFiles(repoPath, sourceTarget, domains, options);
+  const sections = [];
+
+  for (const file of files) {
+    const label = file.path === sourceTarget.instructionsFile
+      ? `Existing ${sourceTarget.instructionsFile}`
+      : file.path.includes(`/base/${sourceTarget.skillFilename}`)
+        ? 'Existing base skill'
+        : `Existing skill: ${file.path.split('/').slice(-2, -1)[0]}`;
+    sections.push(`### ${label}\n\`\`\`\n${sanitizeInline(file.content)}\n\`\`\``);
+  }
+
+  return sections.length > 0
+    ? `\n\n## Existing Docs (improve these — preserve hand-written rules, update what's outdated, add what's missing)\n${sections.join('\n\n')}`
+    : '';
+}
+
 async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, strategy, verbose, model, findings, nonInteractive = false) {
   const today = new Date().toISOString().split('T')[0];
   const systemPrompt = loadPrompt('doc-init', CANONICAL_VARS);
@@ -1025,19 +1184,11 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
   // When improving, include existing content so Claude can build on it
   let existingSection = '';
   if (strategy === 'improve') {
-    const parts = [];
-    const claudeMdPath = join(repoPath, 'CLAUDE.md');
-    if (existsSync(claudeMdPath)) {
-      const existing = readFileSync(claudeMdPath, 'utf8');
-      parts.push(`### Existing CLAUDE.md\n\`\`\`\n${sanitizeInline(existing)}\n\`\`\``);
-    }
-    const basePath = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
-    if (existsSync(basePath)) {
-      parts.push(`### Existing base skill\n\`\`\`\n${sanitizeInline(readFileSync(basePath, 'utf8'))}\n\`\`\``);
-    }
-    if (parts.length > 0) {
-      existingSection = `\n\n## Existing Docs (improve these — preserve hand-written rules, update what's outdated, add what's missing)\n${parts.join('\n\n')}`;
-    }
+    existingSection = loadExistingDocsContext(repoPath, _reuseSourceTarget || TARGETS.claude, selectedDomains, {
+      includeInstructions: true,
+      includeBase: true,
+      includeDomains: true,
+    });
   }
 
   const fullPrompt = `${systemPrompt}${strategyNote}\n\n---\n\nGenerate skills for this repository at ${repoPath}. Today's date is ${today}.\n\n${scanSummary}\n\n${graphContext}${findingsSection}${existingSection}`;
@@ -1092,7 +1243,8 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
   let baseSkillContent = null;
   if (domainsOnly) {
     // Load existing base skill for context (used in domain prompts)
-    const existingBase = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
+    const baseTarget = _reuseSourceTarget || TARGETS.claude;
+    const existingBase = join(repoPath, baseTarget.skillsDir, 'base', baseTarget.skillFilename);
     if (existsSync(existingBase)) {
       baseSkillContent = readFileSync(existingBase, 'utf8');
     }
@@ -1104,10 +1256,11 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
   // When improving, include existing base skill content so Claude can build on it
   let existingBaseSection = '';
   if (strategy === 'improve') {
-    const existingBasePath = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
-    if (existsSync(existingBasePath)) {
-      existingBaseSection = `\n\n## Existing Base Skill (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${sanitizeInline(readFileSync(existingBasePath, 'utf8'))}\n\`\`\``;
-    }
+    existingBaseSection = loadExistingDocsContext(repoPath, _reuseSourceTarget || TARGETS.claude, domains, {
+      includeInstructions: false,
+      includeBase: true,
+      includeDomains: false,
+    });
   }
 
   const basePrompt = loadPrompt('doc-init', CANONICAL_VARS) + strategyNote +
@@ -1179,10 +1332,11 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
           if (domain.name.includes('..') || domain.name.startsWith('/')) {
             return { domain: domain.name, files: [], success: false };
           }
-          const existingDomainPath = join(repoPath, '.claude', 'skills', domain.name, 'skill.md');
-          if (existsSync(existingDomainPath)) {
-            existingDomainSection = `\n\n## Existing Skill (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${sanitizeInline(readFileSync(existingDomainPath, 'utf8'))}\n\`\`\``;
-          }
+          existingDomainSection = loadExistingDocsContext(repoPath, _reuseSourceTarget || TARGETS.claude, [domain], {
+            includeInstructions: false,
+            includeBase: false,
+            includeDomains: true,
+          });
         }
 
         const baseRef = summarizeBaseSkill(baseSkillContent, scan);
@@ -1246,11 +1400,12 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
 
     // When improving, include existing CLAUDE.md so Claude can build on it
     let existingClaudeMdSection = '';
-    if (strategy === 'improve' && claudeMdExists) {
-      try {
-        const existing = readFileSync(join(repoPath, 'CLAUDE.md'), 'utf8');
-        existingClaudeMdSection = `\n\n## Existing CLAUDE.md (improve this — preserve hand-written rules, update what's outdated, add what's missing)\n\`\`\`\n${sanitizeInline(existing)}\n\`\`\``;
-      } catch { /* non-fatal */ }
+    if (strategy === 'improve' && (_reuseSourceTarget?.instructionsFile || claudeMdExists)) {
+      existingClaudeMdSection = loadExistingDocsContext(repoPath, _reuseSourceTarget || TARGETS.claude, domains, {
+        includeInstructions: true,
+        includeBase: false,
+        includeDomains: false,
+      });
     }
 
     const claudeMdPrompt = loadPrompt('doc-init-claudemd', CANONICAL_VARS) +

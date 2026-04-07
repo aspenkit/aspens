@@ -8,6 +8,8 @@ import {
   getAllowedPaths,
   readConfig,
   writeConfig,
+  inferConfig,
+  loadConfig,
 } from '../src/lib/target.js';
 
 const FIXTURES_DIR = join(import.meta.dirname, 'fixtures', 'target');
@@ -119,5 +121,30 @@ describe('config persistence', () => {
     const config = readConfig(dir);
 
     expect(config.backend).toBeNull();
+  });
+
+  it('infers both targets from existing repo artifacts', () => {
+    const dir = join(FIXTURES_DIR, 'config-infer-both');
+    mkdirSync(join(dir, '.claude', 'skills'), { recursive: true });
+    mkdirSync(join(dir, '.agents', 'skills'), { recursive: true });
+
+    const config = inferConfig(dir);
+
+    expect(config).not.toBeNull();
+    expect(config.targets).toEqual(['claude', 'codex']);
+    expect(config.backend).toBeNull();
+  });
+
+  it('recovers missing .aspens.json and persists inferred targets', () => {
+    const dir = join(FIXTURES_DIR, 'config-recover');
+    mkdirSync(join(dir, '.claude', 'skills'), { recursive: true });
+    mkdirSync(join(dir, '.agents', 'skills'), { recursive: true });
+
+    const result = loadConfig(dir);
+
+    expect(result.recovered).toBe(true);
+    expect(result.config).not.toBeNull();
+    expect(result.config.targets).toEqual(['claude', 'codex']);
+    expect(readConfig(dir)?.targets).toEqual(['claude', 'codex']);
   });
 });

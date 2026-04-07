@@ -13,7 +13,7 @@ import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
 import { installGitHook, removeGitHook } from '../lib/git-hook.js';
 import { isGitRepo, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
-import { TARGETS, getAllowedPaths, readConfig } from '../lib/target.js';
+import { TARGETS, getAllowedPaths, loadConfig } from '../lib/target.js';
 import { getSelectedFilesDiff, buildPrioritizedDiff, truncate } from '../lib/diff-helpers.js';
 import { projectCodexDomainDocs, transformForTarget } from '../lib/target-transform.js';
 
@@ -51,7 +51,7 @@ function dedupeFiles(files) {
 }
 
 function configuredTargets(repoPath) {
-  const config = readConfig(repoPath);
+  const { config } = loadConfig(repoPath);
   const targetIds = Array.isArray(config?.targets) && config.targets.length > 0
     ? config.targets
     : ['claude'];
@@ -107,12 +107,16 @@ export async function docSyncCommand(path, options) {
   }
 
   // Determine configured publish targets and the best source target for sync.
-  const config = readConfig(repoPath);
+  const { config, recovered } = loadConfig(repoPath);
   const publishTargets = configuredTargets(repoPath);
   const sourceTarget = chooseSyncSourceTarget(repoPath, publishTargets);
   const backendId = config?.backend || sourceTarget.id;
   const allowedPaths = getAllowedPaths([sourceTarget]);
   const skillsDir = sourceTarget.skillsDir ? join(repoPath, sourceTarget.skillsDir) : join(repoPath, '.claude', 'skills');
+
+  if (recovered && config?.targets?.length) {
+    p.log.warn(`Recovered missing .aspens.json from existing repo docs (${config.targets.join(', ')}).`);
+  }
 
   // Refresh mode — skip diff, review all skills against current codebase
   if (options.refresh) {
@@ -423,11 +427,15 @@ function mapChangesToSkills(changedFiles, existingSkills, scan, repoGraph = null
 
 async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets = [sourceTarget]) {
   const verbose = !!options.verbose;
-  const config = readConfig(repoPath);
+  const { config, recovered } = loadConfig(repoPath);
   const backendId = config?.backend || sourceTarget?.id || 'claude';
   const allowedPaths = getAllowedPaths([sourceTarget || TARGETS.claude]);
 
   p.intro(pc.cyan('aspens doc sync --refresh'));
+
+  if (recovered && config?.targets?.length) {
+    p.log.warn(`Recovered missing .aspens.json from existing repo docs (${config.targets.join(', ')}).`);
+  }
 
   // Prerequisites
   if (!isGitRepo(repoPath)) {

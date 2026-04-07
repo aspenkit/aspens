@@ -55,7 +55,7 @@ function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
     file.path.startsWith(sourceTarget.skillsDir + '/')
   );
 
-  const rootContent = buildRootInstructions(baseSkill, instructionsFile, graphSerialized, destTarget);
+  const rootContent = buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphSerialized, destTarget);
   if (rootContent) {
     result.push({ path: destTarget.instructionsFile, content: rootContent });
   }
@@ -135,7 +135,7 @@ function generateCodexSkillReferences(destTarget, graphSerialized) {
   return files;
 }
 
-function buildRootInstructions(baseSkill, instructionsFile, graphSerialized, destTarget) {
+function buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphSerialized, destTarget) {
   const sections = [];
 
   if (instructionsFile) {
@@ -144,6 +144,7 @@ function buildRootInstructions(baseSkill, instructionsFile, graphSerialized, des
     content = remapContentPaths(content, { instructionsFile: 'CLAUDE.md', skillsDir: '.claude/skills', skillFilename: 'skill.md', configDir: '.claude' }, destTarget);
     if (destTarget.id === 'codex') {
       content = sanitizeCodexInstructions(content);
+      content = syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget);
     }
     sections.push(content.trim());
   } else if (baseSkill) {
@@ -152,6 +153,7 @@ function buildRootInstructions(baseSkill, instructionsFile, graphSerialized, des
     content = remapContentPaths(content, { instructionsFile: 'CLAUDE.md', skillsDir: '.claude/skills', skillFilename: 'skill.md', configDir: '.claude' }, destTarget);
     if (destTarget.id === 'codex') {
       content = sanitizeCodexInstructions(content);
+      content = syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget);
     }
     sections.push(content.trim());
   }
@@ -176,6 +178,46 @@ function buildRootInstructions(baseSkill, instructionsFile, graphSerialized, des
   }
 
   return result;
+}
+
+function syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget) {
+  const skillRefs = buildCodexSkillRefs(baseSkill, domainSkills, destTarget);
+  if (skillRefs.length === 0) return content;
+
+  const section = ['## Skills', '', ...skillRefs].join('\n');
+  if (/## Skills\s*\n/i.test(content)) {
+    return content.replace(/## Skills\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/, section + '\n');
+  }
+
+  const headingMatch = content.match(/^# .+\n?/);
+  if (!headingMatch) return section + '\n\n' + content;
+
+  const insertAt = headingMatch[0].length;
+  return content.slice(0, insertAt) + '\n' + section + '\n\n' + content.slice(insertAt).trimStart();
+}
+
+function buildCodexSkillRefs(baseSkill, domainSkills, destTarget) {
+  const refs = [];
+
+  if (baseSkill) {
+    refs.push('- `' + join(destTarget.skillsDir, 'base', destTarget.skillFilename) + '` — Base repo skill; load whenever working in this repo.');
+  }
+
+  for (const skill of domainSkills) {
+    const domainName = extractDomainName(skill.path, { skillsDir: '.claude/skills' });
+    if (!domainName) continue;
+    const description = extractFrontmatterField(skill.content, 'description');
+    const suffix = description ? ' — ' + description : '';
+    refs.push('- `' + join(destTarget.skillsDir, domainName, destTarget.skillFilename) + '`' + suffix);
+  }
+
+  refs.push('- `' + join(destTarget.skillsDir, 'architecture', destTarget.skillFilename) + '` — Import graph and code-map reference for structural changes.');
+  return refs;
+}
+
+function extractFrontmatterField(content, field) {
+  const match = content.match(new RegExp('^' + escapeRegex(field) + ':\\s*(.+)$', 'm'));
+  return match ? match[1].trim() : '';
 }
 
 function generateCondensedCodeMap(serializedGraph) {
@@ -296,7 +338,7 @@ function remapContentPaths(content, sourceTarget, destTarget) {
     );
   }
 
-  if (sourceTarget.configDir && destTarget.configDir) {
+  if (sourceTarget.configDir && destTarget.configDir && destTarget.id !== 'codex') {
     result = result.replace(
       new RegExp(escapeRegex(sourceTarget.configDir + '/'), 'g'),
       destTarget.configDir + '/'
@@ -322,17 +364,23 @@ function sanitizeCodexInstructions(content) {
 
   return filteredLines
     .join('\n')
+    .replace(/Claude Code skills and CLAUDE\.md/g, 'project skills and instruction docs')
+    .replace(/Claude Code skills and AGENTS\.md/g, 'project skills and AGENTS.md')
+    .replace(/into their \.claude\/ directories/g, 'into target-specific directories')
+    .replace(/into their \.codex\/ directories/g, 'into target-specific directories')
     .replace(/CLAUDE\.md/g, 'AGENTS.md')
     .replace(/plus `AGENTS\.md`/g, '')
     .replace(/Claude Code skills plus /g, '')
     .replace(/`base\/skill\.md`/g, '`.agents/skills/base/SKILL.md`')
     .replace(/\bbase\/skill\.md\b/g, '.agents/skills/base/SKILL.md')
-    .replace(/`([a-z0-9_-]+)\/skill\.md`/gi, '`.agents/skills/$1/SKILL.md`')
-    .replace(/\b([a-z0-9_-]+)\/skill\.md\b/gi, '.agents/skills/$1/SKILL.md')
+    .replace(/(^|[^./A-Za-z0-9_-])`([a-z0-9_-]+)\/skill\.md`/gim, '$1`.agents/skills/$2/SKILL.md`')
+    .replace(/(^|[^./A-Za-z0-9_-])([a-z0-9_-]+)\/skill\.md\b/gim, '$1.agents/skills/$2/SKILL.md')
     .replace(/`\.claude\/graph\.json`/g, '`.agents/skills/architecture/references/code-map.md`')
     .replace(/Generate skills, hooks, and `AGENTS\.md`/g, 'Generate Codex project docs and skills')
     .replace(/Generate skills and `AGENTS\.md`/g, 'Generate Codex project docs and skills')
     .replace(/Update docs from recent diffs/g, 'Update Codex project docs from recent diffs')
+    .replace(/rebuild `\.claude\/graph\.json`/g, 'refresh import graph artifacts')
+    .replace(/rebuild `\.codex\/graph\.json`/g, 'refresh import graph artifacts')
     .replace(/(\n){3,}/g, '\n\n')
     .trim();
 }
@@ -351,11 +399,17 @@ function sanitizeCodexSkill(content) {
 
   return filteredLines
     .join('\n')
+    .replace(/Claude Code skills and CLAUDE\.md/g, 'project skills and instruction docs')
+    .replace(/Claude Code skills and AGENTS\.md/g, 'project skills and AGENTS.md')
+    .replace(/into their \.claude\/ directories/g, 'into target-specific directories')
+    .replace(/into their \.codex\/ directories/g, 'into target-specific directories')
     .replace(/CLAUDE\.md/g, 'AGENTS.md')
     .replace(/`base\/skill\.md`/g, '`.agents/skills/base/SKILL.md`')
     .replace(/\bbase\/skill\.md\b/g, '.agents/skills/base/SKILL.md')
-    .replace(/`([a-z0-9_-]+)\/skill\.md`/gi, '`.agents/skills/$1/SKILL.md`')
-    .replace(/\b([a-z0-9_-]+)\/skill\.md\b/gi, '.agents/skills/$1/SKILL.md')
+    .replace(/(^|[^./A-Za-z0-9_-])`([a-z0-9_-]+)\/skill\.md`/gim, '$1`.agents/skills/$2/SKILL.md`')
+    .replace(/(^|[^./A-Za-z0-9_-])([a-z0-9_-]+)\/skill\.md\b/gim, '$1.agents/skills/$2/SKILL.md')
+    .replace(/rebuild `\.claude\/graph\.json`/g, 'refresh import graph artifacts')
+    .replace(/rebuild `\.codex\/graph\.json`/g, 'refresh import graph artifacts')
     .replace(/(\n){3,}/g, '\n\n')
     .trim() + '\n';
 }
