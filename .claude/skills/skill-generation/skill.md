@@ -22,7 +22,7 @@ You are working on **aspens' skill generation pipeline** — the system that sca
 
 ## Key Files
 - `src/commands/doc-init.js` — Main pipeline: backend selection → target selection → scan → graph → discovery → strategy → mode → generate → validate → transform → write → hooks → config
-- `src/lib/runner.js` — `runClaude()`, `runCodex()`, `loadPrompt()`, `parseFileOutput()`, `validateSkillFiles()`
+- `src/lib/runner.js` — `runClaude()`, `runCodex()`, `runLLM()`, `loadPrompt()`, `parseFileOutput()`, `validateSkillFiles()`
 - `src/lib/skill-writer.js` — Writes files, generates `skill-rules.json`, domain bash patterns, merges `settings.json`
 - `src/lib/skill-reader.js` — Parses skill frontmatter, activation patterns, keywords (used by skill-writer)
 - `src/lib/git-hook.js` — `installGitHook()` / `removeGitHook()` for post-commit auto-sync
@@ -36,10 +36,11 @@ You are working on **aspens' skill generation pipeline** — the system that sca
 - **Pipeline steps:** (1) detect backends (2) **backend selection** (3) **target selection** (4) scan + graph (5) existing docs discovery check (6) parallel discovery agents (7) strategy (8) mode (9) generate (10) validate (11) transform for non-Claude targets (12) show files + dry-run (13) write (14) install hooks (Claude-only) (15) persist config to `.aspens.json`
 - **Backend before target:** Backend selection (step 2) happens before target selection (step 3). If both CLIs available, user picks backend first, then targets. Pre-selects matching target in the multiselect.
 - **Canonical generation:** All prompts receive `CANONICAL_VARS` (hardcoded Claude paths: `.claude/skills/`, `skill.md`, `CLAUDE.md`). Generation always produces Claude-canonical format regardless of target. Non-Claude targets are produced by post-generation transform.
-- **`parseLLMOutput` with Codex fallback:** Codex often returns plain markdown without `<file>` tags. `parseLLMOutput(text, allowedPaths, expectedPath)` wraps plain text as the expected output file when no tags are found and content exceeds 50 chars.
-- **Existing docs reuse:** When existing docs are found (Claude or Codex), a new confirmation prompt asks whether to skip discovery and reuse existing domains. Supports cross-target reuse (e.g., existing Claude docs → generate Codex output).
+- **`parseLLMOutput` with strict single-file fallback:** Codex often returns plain markdown without `<file>` tags. `parseLLMOutput(text, allowedPaths, expectedPath)` only wraps tagless text as the expected file for **true single-file prompts** (exactly one `exactFile` in allowedPaths, no `dirPrefixes`). Multi-file prompts require proper `<file>` tags.
+- **Existing docs reuse:** When existing Claude docs are found and strategy is `improve`, reuse is handled as improvement context without a separate loading spinner. Supports cross-target reuse (e.g., existing Claude docs → generate Codex output).
+- **Domain reuse helpers:** `loadReusableDomains()` tries `loadReusableDomainsFromRules()` (reads `skill-rules.json` from source target, falls back to `.claude/skills/` for non-Claude targets) first. Falls back to `findSkillFiles()` with `extractKeyFilePatterns()` to derive file patterns from `## Key Files` sections when activation patterns are missing.
 - **Target selection:** `--target claude|codex|all` or interactive multiselect if both CLIs available. Stored in `.aspens.json`.
-- **Backend routing:** `runLLM()` local helper dispatches to `runClaude()` or `runCodex()` based on `_backendId`. `--backend` flag overrides auto-detection.
+- **Backend routing:** `runLLM()` imported from `runner.js` dispatches to `runClaude()` or `runCodex()` based on `_backendId`. `--backend` flag overrides auto-detection.
 - **Content transform (step 11):** Canonical files preserved as originals. Non-Claude targets get `transformForTarget()` applied. If Claude not in target list, canonical files are filtered out of final output.
 - **Split writes:** Direct-write files (`.claude/`, `.agents/`, `CLAUDE.md`, root `AGENTS.md`) use `writeSkillFiles()`. Directory-scoped files (e.g., `src/billing/AGENTS.md`) use `writeTransformedFiles()` with warn-and-skip policy.
 - **Dynamic labels:** `baseArtifactLabel()` and `instructionsArtifactLabel()` return target-appropriate names ("base skill" vs "root AGENTS.md") for spinner messages.
@@ -61,4 +62,4 @@ You are working on **aspens' skill generation pipeline** — the system that sca
 - **Partials:** `src/prompts/partials/skill-format.md`, `src/prompts/partials/examples.md`
 
 ---
-**Last Updated:** 2026-04-02
+**Last Updated:** 2026-04-07

@@ -5,8 +5,8 @@
  * Target  = where the output goes (claude, codex, all)
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { join } from 'path';
 
 // ---------------------------------------------------------------------------
 // Target definitions
@@ -197,6 +197,8 @@ export function inferConfig(repoPath) {
 
 /**
  * Read .aspens.json, or recover it from repo artifacts if it was deleted.
+ * Side effect: if readConfig() returns null and inferConfig() succeeds, this
+ * will persist the inferred config via writeConfig() unless options.persist is false.
  * @param {string} repoPath
  * @param {{ persist?: boolean }} [options]
  * @returns {{ config: { targets: string[], backend: string|null, version: string } | null, recovered: boolean }}

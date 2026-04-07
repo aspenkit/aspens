@@ -5,7 +5,7 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
-import { runClaude, runCodex, loadPrompt, parseFileOutput } from '../lib/runner.js';
+import { runLLM, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { extractRulesFromSkills } from '../lib/skill-writer.js';
 import { findSkillFiles } from '../lib/skill-reader.js';
 import { TARGETS, getAllowedPaths, readConfig } from '../lib/target.js';
@@ -150,19 +150,6 @@ function resolveSkillTarget(config) {
     return TARGETS.codex;
   }
   return TARGETS.claude;
-}
-
-function runLLM(prompt, options, backendId) {
-  if (backendId === 'codex') {
-    return runCodex(prompt, {
-      timeout: options.timeout,
-      verbose: options.verbose,
-      onActivity: options.onActivity,
-      model: options.model,
-      cwd: options.cwd,
-    });
-  }
-  return runClaude(prompt, options);
 }
 
 function showCustomizeTip() {
