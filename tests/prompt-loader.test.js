@@ -5,7 +5,7 @@ describe('loadPrompt', () => {
   it('loads doc-init prompt', () => {
     const prompt = loadPrompt('doc-init');
     expect(prompt.length).toBeGreaterThan(100);
-    expect(prompt).toContain('skill files');
+    expect(prompt).toContain('base skill');
   });
 
   it('resolves {{skill-format}} partial', () => {

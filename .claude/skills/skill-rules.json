@@ -70,6 +70,7 @@
           "claude",
           "runner",
           "claude runner",
+          "claude/codex",
           "execution",
           "layer",
           "prompt",
@@ -85,6 +86,47 @@
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*claude runner",
           "claude runner.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*claude.*runner"
+        ]
+      }
+    },
+    "codex-support": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "src/lib/target.js",
+        "src/lib/target-transform.js",
+        "src/lib/backend.js",
+        "tests/target.test.js",
+        "tests/target-transform.test.js",
+        "tests/backend.test.js"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "codex",
+          "target",
+          "backend",
+          "AGENTS.md",
+          "directory-scoped",
+          "transform",
+          "multi-target",
+          "support",
+          "codex support",
+          "output",
+          "system",
+          "abstraction",
+          "target-transform",
+          "tests",
+          "target.test",
+          "target-transform.test",
+          "backend.test"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*codex support",
+          "codex support.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*codex.*support"
         ]
       }
     },
@@ -145,13 +187,18 @@
       ],
       "promptTriggers": {
         "keywords": [
-          "import",
           "graph",
           "import graph",
+          "dependency",
+          "hub files",
+          "clustering",
+          "code-map",
+          "graph-index",
+          "subgraph",
+          "import",
           "static",
           "analysis",
           "builds",
-          "dependency",
           "graph-builder",
           "graph-persistence",
           "commands",
@@ -166,6 +213,8 @@
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import graph",
           "import graph.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*hub files",
+          "hub files.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import.*graph"
         ]
       }

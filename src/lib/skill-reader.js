@@ -2,10 +2,14 @@ import { join, basename, dirname } from 'path';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 
 /**
- * Discover all skill files in a .claude/skills/ directory.
- * Returns [{ name, path, content, frontmatter: { name, description }, activationPatterns: string[] }]
+ * Discover all skill files in a skills directory.
+ * @param {string} skillsDir — path to skills directory
+ * @param {object} [options]
+ * @param {string} [options.skillFilename='skill.md'] — skill filename to match (e.g., 'skill.md' or 'SKILL.md')
+ * @returns {Array<{ name, path, content, frontmatter, activationPatterns }>}
  */
-export function findSkillFiles(skillsDir) {
+export function findSkillFiles(skillsDir, options = {}) {
+  const skillFilename = options.skillFilename || 'skill.md';
   const skills = [];
 
   if (!existsSync(skillsDir)) return skills;
@@ -17,7 +21,7 @@ export function findSkillFiles(skillsDir) {
         const full = join(dir, entry);
         if (statSync(full).isDirectory()) {
           walkDir(full);
-        } else if (entry === 'skill.md' || entry.endsWith('.md')) {
+        } else if (entry === skillFilename) {
           const content = readFileSync(full, 'utf8');
           const frontmatter = parseFrontmatter(content);
           const activationPatterns = parseActivationPatterns(content);

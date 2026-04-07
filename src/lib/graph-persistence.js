@@ -488,9 +488,20 @@ export function saveGraphIndex(repoPath, index) {
 
 /**
  * Convenience: persist graph, code-map, and index in one call.
+ * @param {string} repoPath
+ * @param {object} rawGraph
+ * @param {object} [options]
+ * @param {object} [options.target] — target definition. If target.supportsGraph is false, returns serialized data without writing files.
  */
-export function persistGraphArtifacts(repoPath, rawGraph) {
+export function persistGraphArtifacts(repoPath, rawGraph, options = {}) {
+  const target = options.target;
   const serialized = serializeGraph(rawGraph, repoPath);
+
+  // If target doesn't support graph artifacts, return serialized data without writing
+  if (target?.supportsGraph === false) {
+    return serialized;
+  }
+
   saveGraph(repoPath, serialized);
   writeCodeMap(repoPath, serialized);
   const index = generateGraphIndex(serialized);

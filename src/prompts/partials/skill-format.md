@@ -1,6 +1,6 @@
 ## Skill File Format
 
-Skill = markdown file at `.claude/skills/{domain}/skill.md` with YAML frontmatter (`name`, `description` required).
+Skill = markdown file at `{{skillsDir}}/{domain}/{{skillFilename}}` with YAML frontmatter (`name`, `description` required).
 
 ### Base skill (one per repo)
 
@@ -63,7 +63,7 @@ You are working on **[domain description]**.
 - [Rule that would break things if violated]
 
 ## References
-- **Patterns:** `.claude/guidelines/{domain}/patterns.md`
+- **Patterns:** `{{configDir}}/guidelines/{domain}/patterns.md`
 
 ---
 **Last Updated:** [DATE]

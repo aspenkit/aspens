@@ -2,14 +2,15 @@ import { execSync, spawn } from 'child_process';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname, normalize, resolve, relative, sep } from 'path';
 import { fileURLToPath } from 'url';
+import { tmpdir } from 'os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(__dirname, '..', 'prompts');
 const PARTIALS_DIR = join(PROMPTS_DIR, 'partials');
 
-// Paths that parseFileOutput is allowed to write to
-const ALLOWED_DIR_PREFIXES = ['.claude/'];
-const ALLOWED_EXACT_FILES = ['CLAUDE.md'];
+// Default paths that parseFileOutput is allowed to write to
+const DEFAULT_ALLOWED_DIR_PREFIXES = ['.claude/'];
+const DEFAULT_ALLOWED_EXACT_FILES = ['CLAUDE.md'];
 
 /**
  * Check if claude CLI is available.
@@ -121,6 +122,205 @@ export function runClaude(prompt, options = {}) {
 }
 
 /**
+ * Route a prompt to the selected backend while preserving the shared options shape.
+ * Returns the same { text, usage } contract as runClaude/runCodex.
+ */
+export function runLLM(prompt, options = {}, backendId = 'claude') {
+  if (backendId === 'codex') {
+    return runCodex(prompt, {
+      timeout: options.timeout,
+      verbose: options.verbose,
+      onActivity: options.onActivity,
+      model: options.model,
+      cwd: options.cwd,
+    });
+  }
+  return runClaude(prompt, options);
+}
+
+/**
+ * Execute a prompt via Codex CLI (codex exec).
+ * Uses --json for JSONL event streaming.
+ * Returns { text, usage } matching runClaude's interface.
+ */
+export function runCodex(prompt, options = {}) {
+  const { timeout = 300000, verbose = false, onActivity = null, model = null, cwd = null } = options;
+
+  const args = [
+    'exec',
+    '--json',
+    '--sandbox',
+    'read-only',
+    '--ask-for-approval',
+    'never',
+    '--ephemeral',
+  ];
+  if (model) args.push('--model', model);
+  if (cwd) args.push('--cd', cwd);
+  // Pass prompt via stdin (using '-' placeholder) to avoid shell arg length limits
+  args.push('-');
+
+  return new Promise((resolve, reject) => {
+    const child = spawn('codex', args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
+    });
+
+    const chunks = [];
+    const errChunks = [];
+    let lineBuffer = '';
+
+    child.stdout.on('data', (data) => {
+      chunks.push(data);
+
+      if (verbose && onActivity) {
+        lineBuffer += data.toString('utf8');
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop();
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const event = JSON.parse(line);
+            const itemType = normalizeCodexItemType(event.item?.type || event.item?.details?.type);
+            if ((event.type === 'item.updated' || event.type === 'item.completed') && itemType === 'agent_message') {
+              onActivity('Codex generating...');
+            } else if (event.type === 'item.completed' && itemType === 'command_execution') {
+              const command = event.item?.command || event.item?.details?.command;
+              onActivity(`Codex ran: ${command?.slice(0, 60) || 'command'}`);
+            }
+          } catch { /* not JSON */ }
+        }
+      }
+    });
+
+    child.stderr.on('data', (data) => errChunks.push(data));
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (process.platform === 'win32' && child.pid) {
+        try { execSync(`taskkill /pid ${child.pid} /t /f`, { stdio: 'ignore' }); } catch { /* ignore */ }
+      } else {
+        child.kill('SIGTERM');
+      }
+    }, timeout);
+
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+      const stdout = Buffer.concat(chunks).toString('utf8');
+      const stderr = Buffer.concat(errChunks).toString('utf8');
+
+      if (timedOut || signal === 'SIGTERM' || signal === 'SIGKILL') {
+        reject(new Error(`Codex timed out after ${timeout / 1000}s. Try a smaller repo or increase --timeout.`));
+      } else if (code === 0) {
+        const { text, usage } = extractResultFromCodexStream(stdout);
+        if (process.env.ASPENS_DEBUG) {
+          console.error(`[debug] Codex exited 0, stdout ${stdout.length} bytes, parsed text ${text.length} chars`);
+        }
+        resolve({ text, usage });
+      } else if (stderr.includes('rate limit') || stderr.includes('429')) {
+        reject(new Error('Codex rate limit hit. Wait a moment and try again.'));
+      } else {
+        if (process.env.ASPENS_DEBUG) {
+          console.error(`[debug] Codex exited ${code}, stderr: ${stderr.slice(0, 1000)}`);
+          console.error(`[debug] Codex stdout (first 500): ${stdout.slice(0, 500)}`);
+        }
+        reject(new Error(`Codex exited with code ${code}${stderr ? ': ' + stderr.slice(0, 500) : ''}`));
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(new Error(`Codex failed to start: ${err.message}. Is Codex CLI installed?`));
+    });
+
+    // Write prompt to stdin after handlers are attached so fast failures are captured.
+    const ok = child.stdin.write(prompt);
+    if (!ok) {
+      child.stdin.once('drain', () => child.stdin.end());
+    } else {
+      child.stdin.end();
+    }
+  });
+}
+
+/**
+ * Extract final text and usage from Codex JSONL stream output.
+ * Codex events: thread.started, item.started, item.updated, item.completed, turn.completed
+ */
+function extractResultFromCodexStream(rawOutput) {
+  const lines = rawOutput.split('\n').filter(l => l.trim());
+  const textParts = [];
+  let usage = { output_tokens: 0, tool_uses: 0, tool_result_chars: 0 };
+
+  if (process.env.ASPENS_DEBUG) {
+    try { writeFileSync(join(tmpdir(), 'aspens-debug-codex-stream.json'), rawOutput); } catch {}
+  }
+
+  for (const line of lines) {
+    try {
+      const event = JSON.parse(line);
+      const itemType = normalizeCodexItemType(event.item?.type || event.item?.details?.type);
+
+      // Collect agent message text from completed items
+      if (event.type === 'item.completed' && itemType === 'agent_message') {
+        const content = event.item?.text ?? event.item?.content ?? event.item?.details?.content;
+        collectCodexText(content, textParts);
+      }
+
+      // Count tool uses (command executions, file changes)
+      if (event.type === 'item.completed') {
+        if (itemType === 'command_execution' || itemType === 'file_change' || itemType === 'mcp_tool_call') {
+          usage.tool_uses++;
+        }
+      }
+
+      // Extract usage from turn.completed
+      if (event.type === 'turn.completed' && event.usage) {
+        usage.output_tokens = event.usage.output_tokens || event.usage.outputTokens || 0;
+      }
+    } catch { /* not JSON — skip */ }
+  }
+
+  return { text: textParts.join('\n'), usage };
+}
+
+function normalizeCodexItemType(type) {
+  if (!type || typeof type !== 'string') return '';
+  return type
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .replace(/-/g, '_')
+    .toLowerCase();
+}
+
+function collectCodexText(content, parts) {
+  if (!content) return;
+
+  if (typeof content === 'string') {
+    parts.push(content);
+    return;
+  }
+
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      collectCodexText(block, parts);
+    }
+    return;
+  }
+
+  if (typeof content === 'object') {
+    if (typeof content.text === 'string') {
+      parts.push(content.text);
+      return;
+    }
+    if (typeof content.content === 'string') {
+      parts.push(content.content);
+      return;
+    }
+  }
+}
+
+/**
  * Load a prompt template from src/prompts/ and substitute variables.
  */
 export function loadPrompt(name, vars = {}) {
@@ -161,7 +361,11 @@ export function loadPrompt(name, vars = {}) {
  * Fallback: <!-- file: path --> markers (legacy)
  * Validates paths to prevent traversal.
  */
-export function parseFileOutput(output) {
+/**
+ * @param {string} output — raw LLM output
+ * @param {{ dirPrefixes?: string[], exactFiles?: string[] }} [allowedPaths] — override allowed paths (default: .claude/ + CLAUDE.md)
+ */
+export function parseFileOutput(output, allowedPaths) {
   let files = [];
 
   // Primary: Split on <file path="..."> tags and match to next </file> outside code fences.
@@ -198,7 +402,7 @@ export function parseFileOutput(output) {
   let openMatch;
   while ((openMatch = openTagPattern.exec(output)) !== null) {
     if (isInsideFence(openMatch.index)) continue;
-    const filePath = sanitizePath(openMatch[1].trim());
+    const filePath = sanitizePath(openMatch[1].trim(), allowedPaths);
     if (!filePath) continue;
 
     const contentStart = openMatch.index + openMatch[0].length;
@@ -226,7 +430,7 @@ export function parseFileOutput(output) {
     const commentPattern = /<!--\s*file:\s*(.+?)\s*-->\s*\n([\s\S]*?)(?=<!--\s*file:|<file\s|$)/g;
     let match;
     while ((match = commentPattern.exec(output)) !== null) {
-      const filePath = sanitizePath(match[1].trim());
+      const filePath = sanitizePath(match[1].trim(), allowedPaths);
       const content = match[2].trim() + '\n';
       if (filePath && content.length > 10) {
         files.push({ path: filePath, content });
@@ -339,7 +543,7 @@ export function extractResultFromStream(rawOutput) {
   // Write raw events to debug file if ASPENS_DEBUG is set
   if (process.env.ASPENS_DEBUG) {
     try {
-      writeFileSync('/tmp/aspens-debug-stream.json', rawOutput);
+      writeFileSync(join(tmpdir(), 'aspens-debug-stream.json'), rawOutput);
     } catch {}
   }
 
@@ -393,7 +597,7 @@ export function extractResultFromStream(rawOutput) {
  * Validate and sanitize a file path from Claude output.
  * Prevents path traversal and restricts to allowed locations.
  */
-function sanitizePath(rawPath) {
+function sanitizePath(rawPath, allowedPaths) {
   const normalized = normalize(rawPath).replace(/\\/g, '/');
 
   // Block absolute paths (Unix / and Windows C:\ patterns)
@@ -402,11 +606,14 @@ function sanitizePath(rawPath) {
   // Block traversal
   if (normalized.includes('..')) return null;
 
+  const exactFiles = allowedPaths?.exactFiles ?? DEFAULT_ALLOWED_EXACT_FILES;
+  const dirPrefixes = allowedPaths?.dirPrefixes ?? DEFAULT_ALLOWED_DIR_PREFIXES;
+
   // Allow exact file matches (e.g., CLAUDE.md but not CLAUDE.md.bak)
-  if (ALLOWED_EXACT_FILES.includes(normalized)) return normalized;
+  if (exactFiles.includes(normalized)) return normalized;
 
   // Allow paths under allowed directory prefixes
-  if (ALLOWED_DIR_PREFIXES.some(prefix => normalized.startsWith(prefix))) return normalized;
+  if (dirPrefixes.some(prefix => normalized.startsWith(prefix))) return normalized;
 
   return null;
 }

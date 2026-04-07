@@ -37,9 +37,9 @@ __aspens_doc_sync() {
   ASPENS_LOCK="/tmp/aspens-sync-\${REPO_HASH}.lock"
   ASPENS_LOG="/tmp/aspens-sync-\${REPO_HASH}.log"
 
-  # Skip aspens-only commits (skills, CLAUDE.md, graph artifacts)
+  # Skip aspens-only commits (skills, CLAUDE.md, AGENTS.md, graph artifacts)
   CHANGED="\$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)"
-  NON_ASPENS="\$(echo "\$CHANGED" | grep -v '^\.claude/' | grep -v '^CLAUDE\.md\$' || true)"
+  NON_ASPENS="\$(echo "\$CHANGED" | grep -v '^\.claude/' | grep -v '^\.codex/' | grep -v '^\.agents/' | grep -v '^CLAUDE\.md\$' | grep -v '^AGENTS\.md\$' | grep -v '/AGENTS\.md\$' | grep -v '^\.aspens\.json\$' || true)"
   if [ -z "\$NON_ASPENS" ]; then
     return 0
   fi

@@ -10,7 +10,7 @@ Read the base skill below for repo conventions, then explore {{domainName}} file
 
 Return exactly one file wrapped in XML tags:
 
-<file path=".claude/skills/{{domainName}}/skill.md">
+<file path="{{skillsDir}}/{{domainName}}/{{skillFilename}}">
 [skill content with YAML frontmatter]
 </file>
 

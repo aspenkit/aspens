@@ -23,7 +23,8 @@ You are working on **aspens' repo scanning system** — a fully deterministic an
 - `tests/scanner.test.js` — Uses temporary fixture directories created in `tests/fixtures/scanner/`, cleaned up in `afterAll`
 
 ## Key Concepts
-- **scanRepo() return shape:** `{ path, name, languages[], frameworks[], structure, domains[], entryPoints[], hasClaudeConfig, hasClaudeMd, repoType, size, health }` — order matters: `repoType` and `health` depend on prior fields
+- **scanRepo() return shape:** `{ path, name, languages[], frameworks[], structure, domains[], entryPoints[], hasClaudeConfig, hasClaudeMd, hasCodexConfig, hasAgentsMd, repoType, size, health }` — order matters: `repoType` and `health` depend on prior fields
+- **Multi-target detection:** Scanner checks for both `.claude` dir + `CLAUDE.md` (Claude Code) and `.codex` dir + `AGENTS.md` (Codex CLI) to inform target selection during `doc init`
 - **Detection via marker files:** Languages detected by presence of files like `package.json`, `go.mod`, `Cargo.toml` — not by scanning source extensions
 - **Framework detection:** JS/TS from `package.json` deps, Python from `requirements.txt`/`pyproject.toml`/`Pipfile`, Go from `go.mod` contents, Ruby from `Gemfile`
 - **Domain detection:** Scans dirs under source root + repo root, skips `SKIP_DIR_NAMES` set (structural/build/IDE dirs), requires at least one source file via `collectModules()`
@@ -45,4 +46,4 @@ You are working on **aspens' repo scanning system** — a fully deterministic an
 - **No guidelines directory** — `.claude/guidelines/` does not exist yet for this domain
 
 ---
-**Last Updated:** 2026-03-28
+**Last Updated:** 2026-04-02

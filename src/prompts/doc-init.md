@@ -1,4 +1,4 @@
-Generate **skill files** for a codebase — concise, auto-triggering context documents for Claude Code. Use your tools (Read, Glob, Grep) to explore the actual code before writing anything.
+Generate concise project context docs for a codebase. Use your tools (Read, Glob, Grep) to explore the actual code before writing anything.
 
 {{skill-format}}
 
@@ -12,7 +12,7 @@ Generate a **base skill** (tech stack, conventions, commands) and **domain skill
 
 When you are done exploring, output all files wrapped in XML tags:
 
-<file path=".claude/skills/base/skill.md">
+<file path="{{skillsDir}}/base/{{skillFilename}}">
 ---
 name: base
 description: ...
@@ -20,7 +20,7 @@ description: ...
 [skill content here — may include code blocks, markdown, anything]
 </file>
 
-<file path=".claude/skills/auth/skill.md">
+<file path="{{skillsDir}}/auth/{{skillFilename}}">
 ---
 name: auth
 description: ...
@@ -28,15 +28,15 @@ description: ...
 [skill content here]
 </file>
 
-<file path="CLAUDE.md">
-[CLAUDE.md content referencing all skills]
+<file path="{{instructionsFile}}">
+[{{instructionsFile}} content referencing all skills]
 </file>
 
 **Important:** Use `<file path="...">` and `</file>` tags exactly as shown. Content between tags is written verbatim. Code blocks inside skills are fine — they won't break the parsing.
 
 ## Rules
 
-1. **Use YAML frontmatter** with `name` and `description` fields. This is how Claude Code discovers skills.
+1. **Use YAML frontmatter** with `name` and `description` fields.
 2. **30-60 lines per skill.** Concise and actionable.
 3. **Be specific.** Use actual file paths, actual commands, actual patterns you found by reading the code.
 4. **Non-obvious knowledge only.** Don't explain what the framework is. Explain how THIS project uses it.

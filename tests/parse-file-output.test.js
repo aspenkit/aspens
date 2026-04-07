@@ -117,6 +117,45 @@ npm run test
     });
   });
 
+  describe('custom allowedPaths', () => {
+    it('allows AGENTS.md when passed in allowedPaths', () => {
+      const output = '<file path="AGENTS.md">\n# Project\n</file>';
+      const files = parseFileOutput(output, { dirPrefixes: ['.agents/'], exactFiles: ['AGENTS.md'] });
+      expect(files).toHaveLength(1);
+      expect(files[0].path).toBe('AGENTS.md');
+    });
+
+    it('blocks CLAUDE.md when not in custom allowedPaths', () => {
+      const output = '<file path="CLAUDE.md">\n# Project\n</file>';
+      const files = parseFileOutput(output, { dirPrefixes: ['.agents/'], exactFiles: ['AGENTS.md'] });
+      expect(files).toHaveLength(0);
+    });
+
+    it('allows .agents/ prefix when in custom allowedPaths', () => {
+      const output = '<file path=".agents/skills/billing/SKILL.md">\ncontent\n</file>';
+      const files = parseFileOutput(output, { dirPrefixes: ['.agents/', '.codex/'], exactFiles: ['AGENTS.md'] });
+      expect(files).toHaveLength(1);
+    });
+
+    it('allows union of both targets', () => {
+      const output = [
+        '<file path=".claude/skills/base/skill.md">\nclaude\n</file>',
+        '<file path="AGENTS.md">\nagents\n</file>',
+      ].join('\n');
+      const files = parseFileOutput(output, {
+        dirPrefixes: ['.claude/', '.agents/', '.codex/'],
+        exactFiles: ['CLAUDE.md', 'AGENTS.md'],
+      });
+      expect(files).toHaveLength(2);
+    });
+
+    it('uses defaults when allowedPaths is null', () => {
+      const output = '<file path=".claude/skills/base/skill.md">\ncontent\n</file>';
+      const files = parseFileOutput(output, null);
+      expect(files).toHaveLength(1);
+    });
+  });
+
   describe('edge cases', () => {
     it('returns empty array for garbage input', () => {
       expect(parseFileOutput('just some random text')).toHaveLength(0);
