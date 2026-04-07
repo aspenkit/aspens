@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-07
+
+### Changed
+- **Codex support hardening** — shared backend routing now uses a single `runLLM` implementation across commands, and Codex execution runs under read-only sandboxing with `--ask-for-approval never` instead of `--full-auto`
+- **Config recovery** — `.aspens.json` parsing now validates schema before use, malformed configs fall back to inference, and recovered multi-target configs are rewritten safely
+- **Multi-target publishing** — `doc sync` now forwards serialized graph data into target transforms so Codex architecture skill output is emitted when graph artifacts exist
+- **Path allowlisting** — target path validation is stricter for transformed writes and parsed output, keeping `.claude/`, `.agents/skills/`, `.codex/`, `CLAUDE.md`, and `AGENTS.md` scoped correctly
+- **Skill discovery** — reusable-domain loading now falls back to skill rules and key-file extraction when Codex-transformed skills omit `## Activation`
+
+### Fixed
+- **Silent sync success on bad model output** — `doc sync` now treats non-empty unparseable replies as errors instead of reporting “Docs are up to date”
+- **Single-file fallback wrapping** — `doc init` only wraps tagless model output when the prompt truly targets a single file, preventing multi-file replies from collapsing into `CLAUDE.md`
+- **Customize validation order** — `aspens customize agents` now reports unknown targets before applying Codex-only gating
+- **Prompt templates** — `doc-sync` and `doc-sync-refresh` no longer hardcode `billing` in output paths
+- **Skill reader scope** — `findSkillFiles()` now matches the configured skill filename only, avoiding accidental reads of unrelated markdown files
+- **Hook log output** — graph hook stderr extraction now preserves quoted path segments in `[Graph] ...` messages
+
+### Security
+- **Vite advisory remediation** — upgraded `vitest` to `4.1.3`, which updates transitive `vite` to `8.0.7` and clears the current Dependabot alerts for `server.fs.deny` bypass, arbitrary file read via dev-server WebSocket, and optimized deps `.map` path traversal
+
+### Tests
+- **Config validation coverage** — added tests for invalid but parseable `.aspens.json` files and updated target-path expectations for the narrowed allowlist
+
 ## [0.5.0] - 2026-03-28
 
 ### Added

@@ -18,6 +18,10 @@ CLI for generating and maintaining AI-ready repo docs for Claude Code and Codex 
 - `aspens add <type> [name]` — install bundled templates
 - `aspens customize agents` — inject project context into installed agents
 
+## Release
+
+- Release workflow: `/Users/MV/aspenkit/dev/release.md`
+
 ## Conventions
 
 - ESM only: use `import`/`export`; never `require()`.

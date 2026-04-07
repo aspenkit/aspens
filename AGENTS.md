@@ -1,3 +1,7 @@
+## Release
+
+- Release workflow: `/Users/MV/aspenkit/dev/release.md`
+
 ## Key Files
 
 **Hub files (most depended-on):**
@@ -17,4 +21,3 @@
 - `src/commands/doc-init.js` - 27 changes
 - `src/commands/doc-sync.js` - 19 changes
 - `src/lib/runner.js` - 16 changes
-

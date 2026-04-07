@@ -49,7 +49,7 @@ CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules 
 - **Pure ESM** — `"type": "module"` throughout; use `import`/`export`, never `require()`
 - **es-module-lexer WASM** — must `await init` before calling `parse()` in graph-builder
 - **Claude CLI execution** — `runClaude()` spawns `claude -p` with stream-json; always use `--verbose` flag with stream-json
-- **Codex CLI execution** — `runCodex()` spawns `codex exec --json --full-auto --ephemeral`; returns `{ text, usage }` matching `runClaude` interface
+- **Codex CLI execution** — `runCodex()` spawns `codex exec --json --sandbox read-only --ask-for-approval never --ephemeral`; returns `{ text, usage }` matching `runClaude` interface
 - **Path sanitization** — `parseFileOutput()` restricts writes to `.claude/` and `CLAUDE.md` by default; accepts `allowedPaths` override for multi-target
 - **Prompt partials** — `{{name}}` in prompt files resolves to `src/prompts/partials/name.md` first, then falls back to template variables
 - **Target/Backend distinction** — Target = output format/location; Backend = which LLM CLI generates content. Config persisted in `.aspens.json`

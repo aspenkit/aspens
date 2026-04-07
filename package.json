@@ -1,6 +1,6 @@
 {
   "name": "aspens",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Generate and maintain AI-ready documentation for any codebase",
   "type": "module",
   "bin": {
@@ -23,7 +23,7 @@
     "test": "vitest run",
     "start": "node bin/cli.js",
     "lint": "echo 'No linter configured yet' && exit 0",
-    "postinstall": "echo '\n  📌 aspens v0.2.2: Skill activation hooks are now required.\n     If you have existing skills, run: aspens doc init --hooks-only\n\n  🌲 aspens is in active development — please keep it up to date.\n     Run into issues? Let us know: https://github.com/aspenkit/aspens/issues\n'"
+    "postinstall": "echo '\n  📌 aspens v0.6.0: Existing repos should refresh generated docs after upgrading.\n     Recommended: aspens doc sync --refresh\n\n  🌲 aspens is in active development — please keep it up to date.\n     Run into issues? Let us know: https://github.com/aspenkit/aspens/issues\n'"
   },
   "engines": {
     "node": ">=20"
