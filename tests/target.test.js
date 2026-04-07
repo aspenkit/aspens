@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdirSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, rmSync, existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import {
   TARGETS,
@@ -98,6 +98,19 @@ describe('config persistence', () => {
   it('returns null for missing config file', () => {
     const result = readConfig(join(FIXTURES_DIR, 'nonexistent'));
     expect(result).toBeNull();
+  });
+
+  it('returns null for malformed but parseable config', () => {
+    const dir = join(FIXTURES_DIR, 'config-invalid');
+    mkdirSync(dir, { recursive: true });
+
+    writeFileSync(join(dir, '.aspens.json'), JSON.stringify({
+      targets: 'codex',
+      backend: 123,
+      version: 1,
+    }), 'utf8');
+
+    expect(readConfig(dir)).toBeNull();
   });
 
   it('round-trips writeConfig + readConfig', () => {

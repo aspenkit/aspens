@@ -142,10 +142,28 @@ export function readConfig(repoPath) {
   const configPath = join(repoPath, CONFIG_FILE);
   if (!existsSync(configPath)) return null;
   try {
-    return JSON.parse(readFileSync(configPath, 'utf-8'));
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return isValidConfig(parsed) ? parsed : null;
   } catch {
     return null;
   }
+}
+
+function isValidConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
+
+  const { targets, backend, version } = config;
+
+  if (!Array.isArray(targets) || targets.length === 0) return false;
+  if (!targets.every(target => typeof target === 'string' && Object.prototype.hasOwnProperty.call(TARGETS, target))) {
+    return false;
+  }
+  if (backend !== null && backend !== undefined && (typeof backend !== 'string' || !Object.prototype.hasOwnProperty.call(TARGETS, backend))) {
+    return false;
+  }
+  if (version !== undefined && typeof version !== 'string') return false;
+
+  return true;
 }
 
 /**
