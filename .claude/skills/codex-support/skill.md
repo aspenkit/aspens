@@ -32,7 +32,7 @@ You are working on **multi-target output support** — the system that lets aspe
 - **Content sanitization:** `sanitizeCodexInstructions()` and `sanitizeCodexSkill()` strip Claude-specific references (hooks, skill-rules.json, Claude Code mentions) from Codex output.
 - **`getAllowedPaths(targets)`** — Returns `{ dirPrefixes, exactFiles }` union across all active targets. Dir prefixes use **full** target paths (e.g., `.agents/skills/`, not `.agents/`), providing tighter path validation.
 - **Backend detection:** `detectAvailableBackends()` checks if `claude` and `codex` CLIs are installed. `resolveBackend()` picks best match: explicit flag > target match > fallback.
-- **Config persistence:** `.aspens.json` at repo root stores `{ targets, backend, version }`. `readConfig()` returns null if missing — callers default to `'claude'` target.
+- **Config persistence:** `.aspens.json` at repo root stores `{ targets, backend, version }`. `readConfig()` returns `null` if missing **or if the config is structurally invalid** — callers default to `'claude'` target. Validation via internal `isValidConfig()` ensures `targets` is a non-empty array of known target keys, `backend` (if present) is a known target key, and `version` (if present) is a string.
 - **Multi-target publish:** `doc-sync` uses `publishFilesForTargets()` to generate output for all configured targets from a single LLM run — source target files kept as-is, other targets get transforms applied.
 - **Codex inference tightened:** `inferConfig()` only adds `'codex'` to inferred targets when `.codex/` config dir or `.agents/skills/` dir exists — a standalone `AGENTS.md` without either is not sufficient.
 - **Conditional architecture ref:** Codex `buildCodexSkillRefs()` only includes the architecture skill reference when a graph was actually serialized (`hasGraph` parameter).
@@ -43,6 +43,7 @@ You are working on **multi-target output support** — the system that lets aspe
 - **Path safety:** `validateTransformedFiles()` in `target-transform.js` rejects absolute paths, traversal, and unexpected filenames. `writeTransformedFiles()` enforces the same checks plus an allowlist (`CLAUDE.md`/`AGENTS.md` exact, `.claude/`/`.agents/`/`.codex/` prefixes).
 - **Codex-only restrictions:** `add agent/command/hook` and `customize agents` throw `CliError` for Codex-only repos. `add skill` works for both targets.
 - **Graph/hooks are Claude-only** — `persistGraphArtifacts()` returns data without writing files when `target.supportsGraph === false`. Hook installation skipped when `supportsHooks === false`.
+- **Config validation is defensive** — `readConfig()` treats malformed but parseable JSON (e.g., wrong types for `targets`/`backend`/`version`) as invalid and returns `null`, same as missing config.
 
 ## References
 - **Patterns:** See `src/lib/target.js` for all target property definitions
