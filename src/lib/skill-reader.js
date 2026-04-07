@@ -21,7 +21,7 @@ export function findSkillFiles(skillsDir, options = {}) {
         const full = join(dir, entry);
         if (statSync(full).isDirectory()) {
           walkDir(full);
-        } else if (entry === skillFilename || (entry.endsWith('.md') && entry !== 'README.md' && entry !== 'CHANGELOG.md')) {
+        } else if (entry === skillFilename) {
           const content = readFileSync(full, 'utf8');
           const frontmatter = parseFrontmatter(content);
           const activationPatterns = parseActivationPatterns(content);

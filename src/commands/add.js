@@ -260,7 +260,6 @@ function ensureDevGitignore(repoPath) {
 async function addSkillCommand(repoPath, name, options) {
   const config = readConfig(repoPath);
   const target = resolveSkillTarget(config);
-  const backendId = config?.backend || target.id;
   const skillsDir = join(repoPath, target.skillsDir);
   const skillFilename = target.skillFilename;
   const relSkillsDir = target.skillsDir;

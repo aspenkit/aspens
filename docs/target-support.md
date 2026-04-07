@@ -55,7 +55,7 @@ Current limitation:
 
 - Claude hooks are first-class in aspens today
 - Codex does not have a matching hook layer in aspens
-- Codex support is based on writing the right instruction files in the right places
+- Codex support is based on writing the right instruction files in the appropriate places
 
 ## CLAUDE.md vs AGENTS.md
 

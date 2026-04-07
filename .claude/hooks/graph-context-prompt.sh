@@ -64,7 +64,7 @@ if [ $EXIT_CODE -ne 0 ]; then
     log_debug "ERROR: Hook failed with exit code $EXIT_CODE"
 fi
 
-GRAPH_LINE=$(grep -o '\[Graph\] [^"]*' "$STDERR_FILE" | head -1)
+GRAPH_LINE=$(grep -o '\[Graph\] .*' "$STDERR_FILE" | head -1)
 if [ -n "$GRAPH_LINE" ]; then
     echo "$GRAPH_LINE" >&2
 fi

@@ -1,5 +1,6 @@
 {
   "targets": [
+    "claude",
     "codex"
   ],
   "backend": "claude",

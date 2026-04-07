@@ -120,13 +120,18 @@ export function buildContext(repoPath, scanResult, options = {}) {
       sections.push(`## Existing ${instructionsFile}\n\`\`\`markdown\n${content}\n\`\`\``);
     }
   }
-  // Also check the other instructions file for improve strategy (both may exist)
-  const altInstructionsFile = instructionsFile === 'CLAUDE.md' ? 'AGENTS.md' : 'CLAUDE.md';
-  const altPath = join(repoPath, altInstructionsFile);
-  if (existsSync(altPath)) {
-    const altContent = readFileSafe(altPath);
-    if (altContent) {
-      sections.push(`## Existing ${altInstructionsFile}\n\`\`\`markdown\n${altContent}\n\`\`\``);
+  // Also check alternative instructions files for improve strategy (both may exist)
+  const defaultAlternatives = instructionsFile === 'CLAUDE.md' ? ['AGENTS.md'] : ['CLAUDE.md'];
+  const instructionAlternatives = options.instructionsAlternatives
+    || (options.altInstructionsFile ? [options.altInstructionsFile] : defaultAlternatives);
+  for (const altInstructionsFile of instructionAlternatives) {
+    if (!altInstructionsFile || altInstructionsFile === instructionsFile) continue;
+    const altPath = join(repoPath, altInstructionsFile);
+    if (existsSync(altPath)) {
+      const altContent = readFileSafe(altPath);
+      if (altContent) {
+        sections.push(`## Existing ${altInstructionsFile}\n\`\`\`markdown\n${altContent}\n\`\`\``);
+      }
     }
   }
 

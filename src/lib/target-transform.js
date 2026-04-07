@@ -144,7 +144,7 @@ function buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphS
     content = remapContentPaths(content, { instructionsFile: 'CLAUDE.md', skillsDir: '.claude/skills', skillFilename: 'skill.md', configDir: '.claude' }, destTarget);
     if (destTarget.id === 'codex') {
       content = sanitizeCodexInstructions(content);
-      content = syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget);
+      content = syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget, !!graphSerialized);
     }
     sections.push(content.trim());
   } else if (baseSkill) {
@@ -153,7 +153,7 @@ function buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphS
     content = remapContentPaths(content, { instructionsFile: 'CLAUDE.md', skillsDir: '.claude/skills', skillFilename: 'skill.md', configDir: '.claude' }, destTarget);
     if (destTarget.id === 'codex') {
       content = sanitizeCodexInstructions(content);
-      content = syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget);
+      content = syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget, !!graphSerialized);
     }
     sections.push(content.trim());
   }
@@ -180,8 +180,8 @@ function buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphS
   return result;
 }
 
-function syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget) {
-  const skillRefs = buildCodexSkillRefs(baseSkill, domainSkills, destTarget);
+function syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget, hasGraph = false) {
+  const skillRefs = buildCodexSkillRefs(baseSkill, domainSkills, destTarget, hasGraph);
   if (skillRefs.length === 0) return content;
 
   const section = ['## Skills', '', ...skillRefs].join('\n');
@@ -196,7 +196,7 @@ function syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget) {
   return content.slice(0, insertAt) + '\n' + section + '\n\n' + content.slice(insertAt).trimStart();
 }
 
-function buildCodexSkillRefs(baseSkill, domainSkills, destTarget) {
+function buildCodexSkillRefs(baseSkill, domainSkills, destTarget, hasGraph = false) {
   const refs = [];
 
   if (baseSkill) {
@@ -211,7 +211,9 @@ function buildCodexSkillRefs(baseSkill, domainSkills, destTarget) {
     refs.push('- `' + join(destTarget.skillsDir, domainName, destTarget.skillFilename) + '`' + suffix);
   }
 
-  refs.push('- `' + join(destTarget.skillsDir, 'architecture', destTarget.skillFilename) + '` — Import graph and code-map reference for structural changes.');
+  if (hasGraph) {
+    refs.push('- `' + join(destTarget.skillsDir, 'architecture', destTarget.skillFilename) + '` — Import graph and code-map reference for structural changes.');
+  }
   return refs;
 }
 

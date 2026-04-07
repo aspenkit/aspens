@@ -5,7 +5,7 @@ import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
-import { runClaude, runCodex, loadPrompt, parseFileOutput, validateSkillFiles } from '../lib/runner.js';
+import { runLLM, loadPrompt, parseFileOutput, validateSkillFiles } from '../lib/runner.js';
 import { writeSkillFiles, writeTransformedFiles, extractRulesFromSkills, generateDomainPatterns, mergeSettings } from '../lib/skill-writer.js';
 import { persistGraphArtifacts } from '../lib/graph-persistence.js';
 import { installGitHook } from '../lib/git-hook.js';
@@ -38,6 +38,7 @@ function makeClaudeOptions(timeoutMs, verbose, model, spinner) {
     verbose,
     model: model || null,
     onActivity: verbose && spinner ? (msg) => spinner.message(pc.dim(msg)) : null,
+    cwd: _repoPath,
   };
 }
 
@@ -57,25 +58,19 @@ function sanitizeInline(content, maxLen = MAX_INLINE_CHARS) {
  */
 function parseLLMOutput(text, allowedPaths, expectedPath) {
   let files = parseFileOutput(text, allowedPaths);
-  // If no <file> tags found (common with Codex), wrap as the expected output file
-  if (files.length === 0 && text.trim().length > 50 && expectedPath) {
+  const exactFiles = allowedPaths?.exactFiles || [];
+  const dirPrefixes = allowedPaths?.dirPrefixes || [];
+  const isSingleFilePrompt =
+    !!expectedPath &&
+    exactFiles.length === 1 &&
+    exactFiles[0] === expectedPath &&
+    dirPrefixes.length === 0;
+
+  // If no <file> tags found (common with Codex), wrap only for true single-file prompts.
+  if (files.length === 0 && text.trim().length > 50 && expectedPath && isSingleFilePrompt) {
     files = [{ path: expectedPath, content: text.trim() + '\n' }];
   }
   return files;
-}
-
-// Route LLM calls to the right backend
-function runLLM(prompt, options, backendId) {
-  if (backendId === 'codex') {
-    return runCodex(prompt, {
-      timeout: options.timeout,
-      verbose: options.verbose,
-      onActivity: options.onActivity,
-      model: options.model,
-      cwd: options.cwd || _repoPath,
-    });
-  }
-  return runClaude(prompt, options);
 }
 
 // Canonical (Claude) vars for prompts — generation always uses Claude format.
@@ -523,17 +518,11 @@ export async function docInitCommand(path, options) {
     existingDocsStrategy === 'improve' &&
     _reuseSourceTarget?.id === 'claude'
   );
-
   if (reuseExistingCanonical) {
-    const reuseSpinner = p.spinner();
-    reuseSpinner.start(`Loading existing ${_reuseSourceTarget.label} docs for reuse...`);
-    allFiles = loadTargetFiles(repoPath, _reuseSourceTarget, selectedDomains, {
-      includeInstructions: true,
-      includeBase: true,
-      includeDomains: mode !== 'base-only',
-    });
-    reuseSpinner.stop(`Loaded ${pc.bold(allFiles.length)} existing ${_reuseSourceTarget.label} file(s)`);
-  } else if (mode === 'all-at-once') {
+    p.log.info(pc.dim(`Using existing ${_reuseSourceTarget.label} docs as improvement context.`));
+  }
+
+  if (mode === 'all-at-once') {
     allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, !!options.mode);
   } else {
     const domainsOnly = isDomainsOnly; // retrying specific domains — skip base + CLAUDE.md
@@ -1063,57 +1052,99 @@ function chooseReuseSourceTarget(targets, hasClaudeDocs, hasCodexDocs) {
 function loadReusableDomains(repoPath, sourceTarget) {
   if (!sourceTarget?.skillsDir) return [];
 
-  if (sourceTarget.id === 'claude') {
-    const rulesPath = join(repoPath, sourceTarget.skillsDir, 'skill-rules.json');
-    if (existsSync(rulesPath)) {
-      try {
-        const rules = JSON.parse(readFileSync(rulesPath, 'utf8'));
-        const skills = rules?.skills || {};
-        const domains = [];
-
-        for (const [name, config] of Object.entries(skills)) {
-          if (name === 'base' || config?.type === 'base') continue;
-
-          const patterns = Array.isArray(config?.filePatterns) ? config.filePatterns : [];
-          const files = patterns.filter(Boolean);
-          const directories = [...new Set(
-            files
-              .filter(file => file.includes('/'))
-              .map(file => file.split('/').slice(0, -1).join('/'))
-              .filter(Boolean)
-          )];
-
-          domains.push({
-            name,
-            description: '',
-            directories,
-            files,
-          });
-        }
-
-        if (domains.length > 0) return domains;
-      } catch {
-        // Fall through to skill-file parsing.
-      }
-    }
+  const rulesDomains = loadReusableDomainsFromRules(repoPath, sourceTarget);
+  if (rulesDomains.length > 0) {
+    return rulesDomains;
   }
 
   const skillsDir = join(repoPath, sourceTarget.skillsDir);
   const skillFiles = findSkillFiles(skillsDir, { skillFilename: sourceTarget.skillFilename });
   return skillFiles
     .filter(skill => !['base', 'architecture'].includes(skill.name))
-    .map(skill => ({
-      name: skill.frontmatter?.name || skill.name,
-      description: skill.frontmatter?.description || '',
-      directories: [...new Set(
-        (skill.activationPatterns || [])
-          .filter(file => file.includes('/'))
-          .map(file => file.split('/').slice(0, -1).join('/'))
-          .filter(Boolean)
-      )],
-      files: skill.activationPatterns || [],
-    }))
+    .map(skill => {
+      const fallbackFiles = extractKeyFilePatterns(skill.content);
+      const files = (skill.activationPatterns && skill.activationPatterns.length > 0)
+        ? skill.activationPatterns
+        : fallbackFiles;
+
+      return {
+        name: skill.frontmatter?.name || skill.name,
+        description: skill.frontmatter?.description || '',
+        directories: [...new Set(
+          files
+            .filter(file => file.includes('/'))
+            .map(file => file.split('/').slice(0, -1).join('/'))
+            .filter(Boolean)
+        )],
+        files,
+      };
+    })
     .filter(skill => skill.name);
+}
+
+function loadReusableDomainsFromRules(repoPath, sourceTarget) {
+  const candidatePaths = [];
+  if (sourceTarget?.skillsDir) {
+    candidatePaths.push(join(repoPath, sourceTarget.skillsDir, 'skill-rules.json'));
+  }
+  if (sourceTarget?.id !== 'claude') {
+    candidatePaths.push(join(repoPath, '.claude', 'skills', 'skill-rules.json'));
+  }
+
+  for (const rulesPath of candidatePaths) {
+    if (!existsSync(rulesPath)) continue;
+
+    try {
+      const rules = JSON.parse(readFileSync(rulesPath, 'utf8'));
+      const skills = rules?.skills || {};
+      const domains = [];
+
+      for (const [name, config] of Object.entries(skills)) {
+        if (name === 'base' || config?.type === 'base') continue;
+
+        const patterns = Array.isArray(config?.filePatterns) ? config.filePatterns.filter(Boolean) : [];
+        const directories = [...new Set(
+          patterns
+            .filter(file => file.includes('/'))
+            .map(file => file.split('/').slice(0, -1).join('/'))
+            .filter(Boolean)
+        )];
+
+        domains.push({
+          name,
+          description: '',
+          directories,
+          files: patterns,
+        });
+      }
+
+      if (domains.length > 0) {
+        return domains;
+      }
+    } catch {
+      // Fall through to skill-file parsing.
+    }
+  }
+
+  return [];
+}
+
+function extractKeyFilePatterns(content) {
+  if (!content || typeof content !== 'string') return [];
+  const keyFilesMatch = content.match(/## Key Files[\s\S]*?(?=\n## |\n---|$)/);
+  if (!keyFilesMatch) return [];
+
+  const patterns = [];
+  const lineRegex = /^[\s]*-\s*`([^`]+)`/gm;
+  let match;
+  while ((match = lineRegex.exec(keyFilesMatch[0])) !== null) {
+    const pattern = match[1].trim();
+    if (pattern && /[/.]/.test(pattern)) {
+      patterns.push(pattern);
+    }
+  }
+
+  return [...new Set(patterns)];
 }
 
 function loadTargetFiles(repoPath, sourceTarget, domains, options = {}) {

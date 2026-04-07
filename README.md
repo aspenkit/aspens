@@ -4,7 +4,7 @@
 
 # aspens
 
-### Stop re-explaining your repo. Start shipping.
+## Stop re-explaining your repo. Start shipping.
 
 [![npm version](https://img.shields.io/npm/v/aspens.svg)](https://www.npmjs.com/package/aspens)
 [![npm downloads](https://img.shields.io/npm/dm/aspens.svg)](https://www.npmjs.com/package/aspens)

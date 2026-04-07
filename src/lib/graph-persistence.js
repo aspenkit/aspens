@@ -498,7 +498,7 @@ export function persistGraphArtifacts(repoPath, rawGraph, options = {}) {
   const serialized = serializeGraph(rawGraph, repoPath);
 
   // If target doesn't support graph artifacts, return serialized data without writing
-  if (target && target.supportsGraph === false) {
+  if (target?.supportsGraph === false) {
     return serialized;
   }
 

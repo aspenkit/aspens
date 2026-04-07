@@ -23,7 +23,7 @@ afterAll(() => {
     if (existsSync(FIXTURES_DIR)) {
       rmSync(FIXTURES_DIR, { recursive: true, force: true });
     }
-  } catch { /* ignore cleanup race with other test files */ }
+  } catch { /* ignore cleanup race with parallel test runs removing fixtures */ }
 });
 
 describe('resolveTarget', () => {
@@ -77,9 +77,9 @@ describe('getAllowedPaths', () => {
     expect(exactFiles).toContain('CLAUDE.md');
   });
 
-  it('returns .agents/ and .codex/ prefixes and AGENTS.md for codex target', () => {
+  it('returns .agents/skills/ and .codex/ prefixes and AGENTS.md for codex target', () => {
     const { dirPrefixes, exactFiles } = getAllowedPaths([TARGETS.codex]);
-    expect(dirPrefixes).toContain('.agents/');
+    expect(dirPrefixes).toContain('.agents/skills/');
     expect(dirPrefixes).toContain('.codex/');
     expect(exactFiles).toContain('AGENTS.md');
   });
@@ -87,7 +87,7 @@ describe('getAllowedPaths', () => {
   it('returns union of both targets', () => {
     const { dirPrefixes, exactFiles } = getAllowedPaths([TARGETS.claude, TARGETS.codex]);
     expect(dirPrefixes).toContain('.claude/');
-    expect(dirPrefixes).toContain('.agents/');
+    expect(dirPrefixes).toContain('.agents/skills/');
     expect(dirPrefixes).toContain('.codex/');
     expect(exactFiles).toContain('CLAUDE.md');
     expect(exactFiles).toContain('AGENTS.md');

@@ -122,6 +122,23 @@ export function runClaude(prompt, options = {}) {
 }
 
 /**
+ * Route a prompt to the selected backend while preserving the shared options shape.
+ * Returns the same { text, usage } contract as runClaude/runCodex.
+ */
+export function runLLM(prompt, options = {}, backendId = 'claude') {
+  if (backendId === 'codex') {
+    return runCodex(prompt, {
+      timeout: options.timeout,
+      verbose: options.verbose,
+      onActivity: options.onActivity,
+      model: options.model,
+      cwd: options.cwd,
+    });
+  }
+  return runClaude(prompt, options);
+}
+
+/**
  * Execute a prompt via Codex CLI (codex exec).
  * Uses --json for JSONL event streaming.
  * Returns { text, usage } matching runClaude's interface.
@@ -132,7 +149,10 @@ export function runCodex(prompt, options = {}) {
   const args = [
     'exec',
     '--json',
-    '--full-auto',
+    '--sandbox',
+    'read-only',
+    '--ask-for-approval',
+    'never',
     '--ephemeral',
   ];
   if (model) args.push('--model', model);
@@ -145,14 +165,6 @@ export function runCodex(prompt, options = {}) {
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: process.platform === 'win32',
     });
-
-    // Write prompt to stdin (same approach as runClaude)
-    const ok = child.stdin.write(prompt);
-    if (!ok) {
-      child.stdin.once('drain', () => child.stdin.end());
-    } else {
-      child.stdin.end();
-    }
 
     const chunks = [];
     const errChunks = [];
@@ -221,6 +233,14 @@ export function runCodex(prompt, options = {}) {
       clearTimeout(timer);
       reject(new Error(`Codex failed to start: ${err.message}. Is Codex CLI installed?`));
     });
+
+    // Write prompt to stdin after handlers are attached so fast failures are captured.
+    const ok = child.stdin.write(prompt);
+    if (!ok) {
+      child.stdin.once('drain', () => child.stdin.end());
+    } else {
+      child.stdin.end();
+    }
   });
 }
 

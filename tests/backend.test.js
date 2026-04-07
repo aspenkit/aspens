@@ -90,6 +90,10 @@ describe('resolveBackend', () => {
     });
 
     it('throws with install URLs', () => {
+      expect(() =>
+        resolveBackend({ available: { claude: false, codex: false } })
+      ).toThrowError(new RegExp(`${BACKENDS.claude.installUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|${BACKENDS.codex.installUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+
       try {
         resolveBackend({ available: { claude: false, codex: false } });
       } catch (err) {

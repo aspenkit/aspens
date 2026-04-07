@@ -105,10 +105,10 @@ export function getAllowedPaths(targets) {
 
   for (const t of targets) {
     if (t.configDir) dirPrefixes.add(t.configDir + '/');
-    if (t.skillsDir) dirPrefixes.add(t.skillsDir.split('/')[0] + '/');
-    if (t.hooksDir) dirPrefixes.add(t.hooksDir.split('/')[0] + '/');
-    if (t.agentsDir) dirPrefixes.add(t.agentsDir.split('/')[0] + '/');
-    if (t.commandsDir) dirPrefixes.add(t.commandsDir.split('/')[0] + '/');
+    if (t.skillsDir) dirPrefixes.add(t.skillsDir + '/');
+    if (t.hooksDir) dirPrefixes.add(t.hooksDir + '/');
+    if (t.agentsDir) dirPrefixes.add(t.agentsDir + '/');
+    if (t.commandsDir) dirPrefixes.add(t.commandsDir + '/');
     exactFiles.add(t.instructionsFile);
   }
 
@@ -174,10 +174,13 @@ export function inferConfig(repoPath) {
     existsSync(join(repoPath, TARGETS.claude.skillsDir || '.claude/skills')) ||
     existsSync(join(repoPath, TARGETS.claude.instructionsFile || 'CLAUDE.md'));
 
+  const hasCodexConfig = existsSync(join(repoPath, TARGETS.codex.configDir || '.codex'));
+  const hasCodexSkills = existsSync(join(repoPath, TARGETS.codex.skillsDir || '.agents/skills'));
+  const hasCodexInstructions = existsSync(join(repoPath, TARGETS.codex.instructionsFile || 'AGENTS.md'));
   const hasCodexArtifacts =
-    existsSync(join(repoPath, TARGETS.codex.configDir || '.codex')) ||
-    existsSync(join(repoPath, TARGETS.codex.skillsDir || '.agents/skills')) ||
-    existsSync(join(repoPath, TARGETS.codex.instructionsFile || 'AGENTS.md'));
+    hasCodexConfig ||
+    hasCodexSkills ||
+    (hasCodexInstructions && (hasCodexConfig || hasCodexSkills));
 
   const targets = [];
   if (hasClaudeArtifacts) targets.push('claude');

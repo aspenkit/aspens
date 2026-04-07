@@ -10,7 +10,7 @@ Verify the existing skill against reality. Update what's stale, add what's missi
 
 Return ONLY the files that need updating, wrapped in XML tags:
 
-<file path="{{skillsDir}}/billing/{{skillFilename}}">
+<file path="{{skillsDir}}/{skill}/{{skillFilename}}">
 [full updated skill content — not a patch, the complete file]
 </file>
 

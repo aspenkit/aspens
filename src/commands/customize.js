@@ -13,6 +13,16 @@ const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 export async function customizeCommand(what, options) {
   const repoPath = resolve('.');
 
+  if (what !== 'agents') {
+    console.log(`
+  ${pc.red('Unknown target:')} ${what}
+
+  Usage:
+    ${pc.green('aspens customize agents')}    Inject project context into your agents
+`);
+    throw new CliError(`Unknown target: ${what}`, { logged: true });
+  }
+
   // Customize is Claude-only — Codex has no agent concept
   const config = readConfig(repoPath);
   const isCodexOnly = config?.targets?.length === 1 && config.targets[0] === 'codex';
@@ -25,16 +35,6 @@ export async function customizeCommand(what, options) {
   const { timeoutMs, envWarning } = resolveTimeout(options.timeout, 300);
   if (envWarning) p.log.warn('ASPENS_TIMEOUT is not a valid number — using default timeout.');
   const verbose = !!options.verbose;
-
-  if (what !== 'agents') {
-    console.log(`
-  ${pc.red('Unknown target:')} ${what}
-
-  Usage:
-    ${pc.green('aspens customize agents')}    Inject project context into your agents
-`);
-    throw new CliError(`Unknown target: ${what}`, { logged: true });
-  }
 
   p.intro(pc.cyan('aspens customize agents'));
 

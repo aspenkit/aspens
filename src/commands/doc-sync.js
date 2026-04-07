@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
 import { scanRepo } from '../lib/scanner.js';
-import { runClaude, runCodex, loadPrompt, parseFileOutput } from '../lib/runner.js';
+import { runLLM, loadPrompt, parseFileOutput } from '../lib/runner.js';
 import { writeSkillFiles, writeTransformedFiles, extractRulesFromSkills } from '../lib/skill-writer.js';
 import { buildRepoGraph } from '../lib/graph-builder.js';
 import { persistGraphArtifacts, loadGraph, extractSubgraph, formatNavigationContext } from '../lib/graph-persistence.js';
@@ -19,19 +19,6 @@ import { projectCodexDomainDocs, transformForTarget } from '../lib/target-transf
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 const PARALLEL_LIMIT = 3;
-
-function runLLM(prompt, options, backendId) {
-  if (backendId === 'codex') {
-    return runCodex(prompt, {
-      timeout: options.timeout,
-      verbose: options.verbose,
-      onActivity: options.onActivity,
-      model: options.model,
-      cwd: options.cwd,
-    });
-  }
-  return runClaude(prompt, options);
-}
 
 function parseOutput(text, allowedPaths) {
   return parseFileOutput(text, allowedPaths);
@@ -75,7 +62,7 @@ function chooseSyncSourceTarget(repoPath, targets) {
   return targets[0] || TARGETS.claude;
 }
 
-function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan) {
+function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized = null) {
   const published = [];
 
   for (const target of publishTargets) {
@@ -86,6 +73,7 @@ function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan) {
 
     const transformed = transformForTarget(baseFiles, sourceTarget, target, {
       scanResult: scan,
+      graphSerialized,
     });
     published.push(...transformed);
   }
@@ -112,7 +100,7 @@ export async function docSyncCommand(path, options) {
   const sourceTarget = chooseSyncSourceTarget(repoPath, publishTargets);
   const backendId = config?.backend || sourceTarget.id;
   const allowedPaths = getAllowedPaths([sourceTarget]);
-  const skillsDir = sourceTarget.skillsDir ? join(repoPath, sourceTarget.skillsDir) : join(repoPath, '.claude', 'skills');
+  const skillsDir = sourceTarget.skillsDir ? join(repoPath, sourceTarget.skillsDir) : join(repoPath, TARGETS.claude.skillsDir);
 
   if (recovered && config?.targets?.length) {
     p.log.warn(`Recovered missing .aspens.json from existing repo docs (${config.targets.join(', ')}).`);
@@ -169,11 +157,12 @@ export async function docSyncCommand(path, options) {
 
   // Rebuild graph from current state (keeps graph fresh on every sync)
   let repoGraph = null;
+  let graphSerialized = null;
   let graphContext = '';
   if (options.graph !== false) {
     try {
       const rawGraph = await buildRepoGraph(repoPath, scan.languages);
-      persistGraphArtifacts(repoPath, rawGraph, { target: sourceTarget });
+      graphSerialized = persistGraphArtifacts(repoPath, rawGraph, { target: sourceTarget });
       repoGraph = loadGraph(repoPath);
       if (repoGraph) {
         const subgraph = extractSubgraph(repoGraph, changedFiles);
@@ -317,7 +306,12 @@ ${truncate(instructionsContent, 5000)}
 
   // Step 6: Parse output
   const baseFiles = parseOutput(result.text, allowedPaths);
-  const files = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan);
+  const hasFileTags = /<file\s+path=/i.test(result.text);
+  if (baseFiles.length === 0 && result.text.trim().length > 0 && !hasFileTags) {
+    syncSpinner.stop(pc.red('Unparseable response'));
+    throw new CliError('LLM returned content without <file path="..."> tags. Aborting instead of treating it as "no updates needed".');
+  }
+  const files = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized);
 
   if (files.length === 0) {
     syncSpinner.stop('No updates needed');
@@ -430,6 +424,7 @@ async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets 
   const { config, recovered } = loadConfig(repoPath);
   const backendId = config?.backend || sourceTarget?.id || 'claude';
   const allowedPaths = getAllowedPaths([sourceTarget || TARGETS.claude]);
+  let graphSerialized = null;
 
   p.intro(pc.cyan('aspens doc sync --refresh'));
 
@@ -455,7 +450,7 @@ async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets 
   if (options.graph !== false) {
     try {
       const rawGraph = await buildRepoGraph(repoPath, scan.languages);
-      persistGraphArtifacts(repoPath, rawGraph, { target: sourceTarget });
+      graphSerialized = persistGraphArtifacts(repoPath, rawGraph, { target: sourceTarget });
     } catch (err) {
       p.log.warn(`Graph build failed — continuing without it. (${err.message})`);
     }
@@ -630,7 +625,7 @@ async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets 
     return;
   }
 
-  const filesToWrite = publishFilesForTargets(allUpdatedFiles, sourceTarget, publishTargets, scan);
+  const filesToWrite = publishFilesForTargets(allUpdatedFiles, sourceTarget, publishTargets, scan, graphSerialized);
   const directWriteFiles = filesToWrite.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
   const dirScopedFiles = filesToWrite.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
   const results = [

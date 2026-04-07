@@ -10,7 +10,7 @@ Update only affected skills. Create new domain skills if the diff introduces a n
 
 Return ONLY the files that need updating, wrapped in XML tags:
 
-<file path="{{skillsDir}}/billing/{{skillFilename}}">
+<file path="{{skillsDir}}/{skill}/{{skillFilename}}">
 [full updated skill content — not a patch, the complete file]
 </file>
 

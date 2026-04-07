@@ -48,10 +48,16 @@ export function writeSkillFiles(repoPath, files, options = {}) {
 export function writeTransformedFiles(repoPath, files, options = {}) {
   const { force = false } = options;
   const results = [];
+  const allowedExact = new Set(['CLAUDE.md', 'AGENTS.md']);
+  const allowedPrefixes = ['.claude/', '.agents/', '.codex/'];
 
   for (const file of files) {
     // Safety: block absolute paths and traversal
     if (file.path.startsWith('/') || /^[a-zA-Z]:/.test(file.path) || file.path.includes('..')) {
+      results.push({ path: file.path, status: 'skipped', reason: 'unsafe path' });
+      continue;
+    }
+    if (!allowedExact.has(file.path) && !allowedPrefixes.some(prefix => file.path.startsWith(prefix))) {
       results.push({ path: file.path, status: 'skipped', reason: 'unsafe path' });
       continue;
     }
