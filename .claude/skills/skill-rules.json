@@ -140,7 +140,8 @@
         "src/commands/doc-impact.js",
         "src/lib/impact.js",
         "src/prompts/impact-analyze.md",
-        "tests/impact.test.js"
+        "tests/impact.test.js",
+        "tests/doc-impact.test.js"
       ],
       "promptTriggers": {
         "keywords": [
@@ -163,7 +164,8 @@
           "prompts",
           "impact-analyze",
           "tests",
-          "impact.test"
+          "impact.test",
+          "doc-impact.test"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*health score",

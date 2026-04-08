@@ -20,8 +20,8 @@ Keywords: codex, target, backend, AGENTS.md, directory-scoped, transform, multi-
 You are working on **multi-target output support** — the system that lets aspens generate documentation for Claude Code, Codex CLI, or both simultaneously.
 
 ## Key Files
-- `src/lib/target.js` — Target definitions (`TARGETS`), `getAllowedPaths()`, path helpers, config persistence (`.aspens.json`)
-- `src/lib/target-transform.js` — Transforms Claude-format output to other target formats; `projectCodexDomainDocs()`, `validateTransformedFiles()`, content sanitization
+- `src/lib/target.js` — Target definitions (`TARGETS`), `getAllowedPaths()`, `mergeConfiguredTargets()`, path helpers, config persistence (`.aspens.json`)
+- `src/lib/target-transform.js` — Transforms Claude-format output to other target formats; `projectCodexDomainDocs()`, `validateTransformedFiles()`, `ensureRootKeyFilesSection()`, content sanitization
 - `src/lib/backend.js` — Backend detection (`detectAvailableBackends`) and resolution (`resolveBackend`) with fallback logic
 
 ## Key Concepts
@@ -30,6 +30,8 @@ You are working on **multi-target output support** — the system that lets aspe
 - **Canonical generation:** Generation always produces Claude-canonical format first. Prompts always receive `CANONICAL_VARS` (hardcoded Claude paths from `doc-init.js`). Transforms run **after** generation to produce other target formats.
 - **Content transform:** `transformForTarget()` remaps paths and content. For Codex: base skill → root `AGENTS.md`, domain skills → both `.agents/skills/{domain}/SKILL.md` and source directory `AGENTS.md`. `generateCodexSkillReferences()` creates `.agents/skills/architecture/` with code-map data.
 - **Content sanitization:** `sanitizeCodexInstructions()` and `sanitizeCodexSkill()` strip Claude-specific references (hooks, skill-rules.json, Claude Code mentions) from Codex output.
+- **`ensureRootKeyFilesSection(content, graphSerialized)`** — Post-processes root instructions file (AGENTS.md) to guarantee a `## Key Files` section with top hub files from the graph. Replaces an existing incomplete section or inserts before `## Behavior` / `**Last Updated**`. Used by `doc-init` chunked mode after AGENTS.md generation.
+- **`mergeConfiguredTargets(existing, next)`** — Merges target arrays to avoid dropping previously configured targets during narrower runs. Validates against `TARGETS` keys, deduplicates.
 - **`getAllowedPaths(targets)`** — Returns `{ dirPrefixes, exactFiles }` union across all active targets. Dir prefixes use **full** target paths (e.g., `.agents/skills/`, not `.agents/`), providing tighter path validation.
 - **Backend detection:** `detectAvailableBackends()` checks if `claude` and `codex` CLIs are installed. `resolveBackend()` picks best match: explicit flag > target match > fallback.
 - **Config persistence:** `.aspens.json` at repo root stores `{ targets, backend, version }`. `readConfig()` returns `null` if missing **or if the config is structurally invalid** — callers default to `'claude'` target. Validation via internal `isValidConfig()` ensures `targets` is a non-empty array of known target keys, `backend` (if present) is a known target key, and `version` (if present) is a string.
@@ -49,4 +51,4 @@ You are working on **multi-target output support** — the system that lets aspe
 - **Patterns:** See `src/lib/target.js` for all target property definitions
 
 ---
-**Last Updated:** 2026-04-07
+**Last Updated:** 2026-04-08
