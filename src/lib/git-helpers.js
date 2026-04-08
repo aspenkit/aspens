@@ -1,12 +1,20 @@
 import { execFileSync } from 'child_process';
 
-export function isGitRepo(repoPath) {
+export function getGitRoot(repoPath) {
   try {
-    execFileSync('git', ['rev-parse', '--git-dir'], { cwd: repoPath, stdio: 'pipe', timeout: 5000 });
-    return true;
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: repoPath,
+      encoding: 'utf8',
+      stdio: 'pipe',
+      timeout: 5000,
+    }).trim();
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function isGitRepo(repoPath) {
+  return !!getGitRoot(repoPath);
 }
 
 export function getGitDiff(repoPath, commits) {

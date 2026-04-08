@@ -296,7 +296,7 @@ async function main() {
     }
 
     // Determine project directory
-    const projectDir = process.env.CLAUDE_PROJECT_DIR;
+    const projectDir = process.env.ASPENS_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR;
     if (!projectDir) {
       process.exit(0);
     }

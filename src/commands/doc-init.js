@@ -1,4 +1,4 @@
-import { resolve, join, dirname } from 'path';
+import { resolve, join, dirname, relative } from 'path';
 import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync } from 'fs';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
@@ -11,10 +11,11 @@ import { persistGraphArtifacts } from '../lib/graph-persistence.js';
 import { installGitHook } from '../lib/git-hook.js';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
-import { TARGETS, resolveTarget, getAllowedPaths, writeConfig } from '../lib/target.js';
+import { TARGETS, resolveTarget, getAllowedPaths, writeConfig, loadConfig } from '../lib/target.js';
 import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
 import { transformForTarget, validateTransformedFiles } from '../lib/target-transform.js';
 import { findSkillFiles } from '../lib/skill-reader.js';
+import { getGitRoot } from '../lib/git-helpers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -120,6 +121,7 @@ export async function docInitCommand(path, options) {
   _repoPath = repoPath;
   const verbose = !!options.verbose;
   const model = options.model || null;
+  const recommended = !!options.recommended;
 
   // --hooks-only: skip skill generation, just install/update hooks
   if (options.hooksOnly) {
@@ -161,9 +163,19 @@ export async function docInitCommand(path, options) {
 
   // --- Step 1: Backend selection (which AI generates) ---
   let backendResult;
+  let recommendedTargetIds = null;
+  if (recommended && !options.target) {
+    const { config } = loadConfig(repoPath, { persist: false });
+    if (config?.targets?.length) {
+      recommendedTargetIds = config.targets;
+    }
+  }
+
   if (options.backend) {
     backendResult = resolveBackend({ backendFlag: options.backend, available });
-  } else if (available.claude && available.codex) {
+  } else if (recommended && recommendedTargetIds?.length === 1) {
+    backendResult = resolveBackend({ targetId: recommendedTargetIds[0], available });
+  } else if (available.claude && available.codex && !recommended) {
     const backendChoice = await p.select({
       message: 'Which AI should generate the docs?',
       options: [
@@ -185,6 +197,10 @@ export async function docInitCommand(path, options) {
   let targetIds;
   if (options.target) {
     targetIds = options.target === 'all' ? ['claude', 'codex'] : [options.target];
+  } else if (recommendedTargetIds?.length) {
+    targetIds = recommendedTargetIds;
+  } else if (recommended) {
+    targetIds = [backend.id];
   } else if (available.claude && available.codex) {
     const selected = await p.multiselect({
       message: 'Generate docs for which coding agents?',
@@ -208,6 +224,9 @@ export async function docInitCommand(path, options) {
 
   console.log(pc.dim(`  Target: ${targets.map(t => t.label).join(' + ')}`));
   console.log(pc.dim(`  Backend: ${backend.label}`));
+  if (recommended) {
+    console.log(pc.dim('  Mode: ') + 'recommended defaults');
+  }
   console.log();
 
   // Step 1: Scan
@@ -266,14 +285,18 @@ export async function docInitCommand(path, options) {
   _reuseSourceTarget = chooseReuseSourceTarget(targets, hasClaudeDocs, hasCodexDocs);
   let skipDiscovery = false;
   if (hasExistingDocs && !isBaseOnly && !isDomainsOnly && options.strategy !== 'rewrite') {
-    const existingSource = hasClaudeDocs && hasCodexDocs ? 'Claude + Codex'
-      : hasClaudeDocs ? 'Claude' : 'Codex';
-    const reuse = await p.confirm({
-      message: `Existing ${existingSource} docs found. Skip discovery and reuse existing domains?`,
-      initialValue: true,
-    });
-    if (p.isCancel(reuse)) { p.cancel('Aborted'); return; }
-    skipDiscovery = reuse;
+    if (recommended) {
+      skipDiscovery = true;
+    } else {
+      const existingSource = hasClaudeDocs && hasCodexDocs ? 'Claude + Codex'
+        : hasClaudeDocs ? 'Claude' : 'Codex';
+      const reuse = await p.confirm({
+        message: `Existing ${existingSource} docs found. Skip discovery and reuse existing domains?`,
+        initialValue: true,
+      });
+      if (p.isCancel(reuse)) { p.cancel('Aborted'); return; }
+      skipDiscovery = reuse;
+    }
   }
   if (repoGraph && repoGraph.stats.totalFiles > 0 && !isBaseOnly && !isDomainsOnly && !skipDiscovery) {
     console.log(pc.dim('  Running 2 discovery agents in parallel...'));
@@ -394,6 +417,8 @@ export async function docInitCommand(path, options) {
     if (!['improve', 'rewrite', 'skip-existing', 'fresh'].includes(existingDocsStrategy)) {
       throw new CliError(`Unknown strategy: ${options.strategy}. Use: improve, rewrite, or skip`);
     }
+  } else if (recommended && hasExistingDocs) {
+    existingDocsStrategy = 'improve';
   } else if ((scan.hasClaudeConfig || scan.hasClaudeMd || scan.hasAgentsMd) && !options.force && !isDomainsOnly) {
     // Detect what actually exists per-target
     const hasClaudeDocs = scan.hasClaudeConfig || scan.hasClaudeMd;
@@ -463,6 +488,10 @@ export async function docInitCommand(path, options) {
   } else if (effectiveDomains.length === 0) {
     p.log.info(`No domains detected — generating ${baseArtifactLabel()} only.`);
     mode = 'base-only';
+  } else if (recommended) {
+    const isLarge = scan.size && (scan.size.category === 'large' || scan.size.category === 'very-large');
+    mode = isLarge || effectiveDomains.length > 6 ? 'chunked' : 'all-at-once';
+    p.log.info(`Recommended mode: ${mode === 'chunked' ? 'one domain at a time' : 'all at once'}.`);
   } else {
     // Smart defaults based on repo size
     const isLarge = scan.size && (scan.size.category === 'large' || scan.size.category === 'very-large');
@@ -676,13 +705,20 @@ export async function docInitCommand(path, options) {
   // Step 10: Persist target config
   writeConfig(repoPath, { targets: targetIds, backend: backend.id });
 
+  console.log(pc.dim('  Verification: ') + [
+    `${targets.map(t => t.label).join(' + ')} configured`,
+    `${effectiveDomains.length} domain${effectiveDomains.length === 1 ? '' : 's'} analyzed`,
+    hasHookTarget && options.hooks !== false ? 'hooks updated where supported' : 'no hook changes',
+  ].join(' | '));
+
   showTokenSummary(startTime);
 
   // Offer auto-sync git hook (works for all targets — runs `aspens doc sync` on commit)
-  if (options.hook !== false && !options.dryRun && existsSync(join(repoPath, '.git'))) {
-    const hookPath = join(repoPath, '.git', 'hooks', 'post-commit');
+  const gitRoot = getGitRoot(repoPath);
+  if (options.hook !== false && !options.dryRun && gitRoot) {
+    const hookPath = join(gitRoot, '.git', 'hooks', 'post-commit');
     const hookInstalled = existsSync(hookPath) &&
-      readFileSync(hookPath, 'utf8').includes('aspens doc');
+      readFileSync(hookPath, 'utf8').includes(`aspens doc-sync hook (${toPosixRelative(gitRoot, repoPath) || '.'})`);
     if (!hookInstalled) {
       console.log();
       const wantHook = await p.confirm({
@@ -814,8 +850,9 @@ async function installHooks(repoPath, options) {
     // 9d: Merge settings.json
     let templateSettings;
     try {
-      templateSettings = JSON.parse(
-        readFileSync(join(TEMPLATES_DIR, 'settings', 'settings.json'), 'utf8')
+      templateSettings = createHookSettings(
+        repoPath,
+        JSON.parse(readFileSync(join(TEMPLATES_DIR, 'settings', 'settings.json'), 'utf8'))
       );
     } catch (err) {
       hookSpinner.stop(pc.yellow('Hook installation incomplete'));
@@ -867,6 +904,33 @@ async function installHooks(repoPath, options) {
     hookSpinner.stop(pc.red('Hook installation failed'));
     p.log.error(err.message);
   }
+}
+
+function createHookSettings(repoPath, templateSettings) {
+  const gitRoot = getGitRoot(repoPath) || repoPath;
+  const projectRelative = toPosixRelative(gitRoot, repoPath);
+  const hookPrefix = projectRelative ? `$CLAUDE_PROJECT_DIR/${projectRelative}` : '$CLAUDE_PROJECT_DIR';
+  const settings = JSON.parse(JSON.stringify(templateSettings));
+
+  for (const entries of Object.values(settings.hooks || {})) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (!Array.isArray(entry.hooks)) continue;
+      for (const hook of entry.hooks) {
+        if (typeof hook.command === 'string' && hook.command.startsWith('$CLAUDE_PROJECT_DIR/')) {
+          hook.command = hook.command.replace('$CLAUDE_PROJECT_DIR', hookPrefix);
+        }
+      }
+    }
+  }
+
+  return settings;
+}
+
+function toPosixRelative(from, to) {
+  const rel = relative(from, to);
+  if (!rel || rel === '.') return '';
+  return rel.split('\\').join('/');
 }
 
 // --- Generation modes ---

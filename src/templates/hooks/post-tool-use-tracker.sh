@@ -12,8 +12,22 @@ if ! command -v jq &> /dev/null; then
     exit 0
 fi
 
+get_script_dir() {
+    local source="${BASH_SOURCE[0]}"
+    while [ -h "$source" ]; do
+        local dir
+        dir="$(cd -P "$(dirname "$source")" && pwd)" || return 1
+        source="$(readlink "$source")"
+        [[ $source != /* ]] && source="$dir/$source"
+    done
+    cd -P "$(dirname "$source")" && pwd
+}
+
+SCRIPT_DIR="$(get_script_dir)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
 # Exit early if CLAUDE_PROJECT_DIR is not set
-if [[ -z "$CLAUDE_PROJECT_DIR" ]]; then
+if [[ -z "$CLAUDE_PROJECT_DIR" ]] && [[ -z "$PROJECT_DIR" ]]; then
     exit 0
 fi
 
@@ -38,13 +52,13 @@ if [[ "$file_path" =~ \.(md|markdown)$ ]]; then
 fi
 
 # Create cache directory in project
-cache_dir="$CLAUDE_PROJECT_DIR/.claude/tsc-cache/${session_id:-default}"
+cache_dir="$PROJECT_DIR/.claude/tsc-cache/${session_id:-default}"
 mkdir -p "$cache_dir"
 
 # Function to detect repo from file path
 detect_repo() {
     local file="$1"
-    local project_root="$CLAUDE_PROJECT_DIR"
+    local project_root="$PROJECT_DIR"
 
     # Remove project root from path
     local relative_path="${file#$project_root/}"
@@ -100,7 +114,7 @@ detect_repo() {
 # Function to get build command for repo
 get_build_command() {
     local repo="$1"
-    local project_root="$CLAUDE_PROJECT_DIR"
+    local project_root="$PROJECT_DIR"
 
     # Map special repo names to actual paths
     local repo_path
@@ -142,7 +156,7 @@ get_build_command() {
 # Function to get TSC command for repo
 get_tsc_command() {
     local repo="$1"
-    local project_root="$CLAUDE_PROJECT_DIR"
+    local project_root="$PROJECT_DIR"
 
     # Map special repo names to actual paths
     local repo_path
@@ -290,7 +304,7 @@ add_skill_to_session() {
 # Track skill domain for session-sticky behavior
 skill_domain=$(detect_skill_domain "$file_path")
 if [[ -n "$skill_domain" ]]; then
-    session_file=$(get_session_file "$CLAUDE_PROJECT_DIR")
+    session_file=$(get_session_file "$PROJECT_DIR")
     add_skill_to_session "$skill_domain" "$session_file" "$repo"
 fi
 

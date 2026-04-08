@@ -4,64 +4,77 @@
 
 # aspens
 
-## Stop re-explaining your repo. Start shipping.
+## Prevent stale agent context.
 
 [![npm version](https://img.shields.io/npm/v/aspens.svg)](https://www.npmjs.com/package/aspens)
 [![npm downloads](https://img.shields.io/npm/dm/aspens.svg)](https://www.npmjs.com/package/aspens)
 [![GitHub stars](https://img.shields.io/github/stars/aspenkit/aspens)](https://github.com/aspenkit/aspens)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Claude, Codex, and other coding agents write better code when they start with the right repo context.
-Aspens scans your repo, discovers what matters, and generates context that stays updated on every commit — so each session starts on track.
+Aspens keeps Claude Code and Codex aligned with your actual codebase.
+It scans the repo, generates project-specific instructions and skills, and keeps them fresh as the code evolves.
 
 </div>
 
 ---
 
-**Why aspens?**
+**One-line pitch**
+
+Repo context for coding agents that does not go stale.
+
+**Why it matters**
 
 | Without aspens | With aspens |
 |---|---|
-| Agents ignore your conventions | Claude and Codex start with repo-specific instructions |
-| Agents rebuild things that already exist | Skills and docs point them to the right abstractions |
-| You manually maintain AI context files | Aspens generates and updates them for you |
-| Agents spend half their tool calls searching for files | Import graph tells them which files actually matter |
-| Your codebase gets fragmented and inconsistent over time | Domain-specific skills with critical rules and anti-patterns |
-| Burns through tokens searching, reading, and rebuilding | Your AI tools already know what matters — dramatically fewer tool calls |
+| Agents miss conventions and architectural boundaries | Agents start from repo-specific instructions |
+| New sessions waste time rediscovering key files | Skills point to the right files, patterns, and rules |
+| Context files drift after code changes | Aspens syncs them from the codebase |
+| Teams keep correcting the same mistakes manually | Critical conventions and anti-patterns stay in generated context |
 
 ---
 
+**Start here**
+
 ```bash
-npx aspens doc init .
+npx aspens doc init --recommended .
+npx aspens doc impact .
 ```
+
+Generate context, then verify it is fresh and covering the repo.
 
 ![aspens demo](demo/demo-full.gif)
 
-**What are skills?** Concise markdown files (~35 lines) that give coding agents the context they need to write correct code: key files, patterns, conventions, and critical rules.
+**What aspens does**
+
+- `Scan` the repo to find domains, hub files, and structure
+- `Generate` instructions and skills for Claude Code, Codex, or both
+- `Sync` generated context as the codebase changes
+- `Prove` coverage and freshness with `aspens doc impact`
+
+**What are skills?** Concise markdown files that give coding agents the context they need to write correct code: key files, patterns, conventions, and critical rules.
 
 ## Quick Start
 
 ```bash
-npx aspens scan .                    # See what's in your repo
-npx aspens doc init .                # Generate repo docs for the active target
-npx aspens doc init --target codex   # Generate AGENTS.md + .agents/skills
-npx aspens doc sync --install-hook   # Auto-update generated docs on every commit
+npx aspens scan .                    # Map the repo
+npx aspens doc init --recommended .  # Generate the recommended context setup
+npx aspens doc impact .              # Verify freshness and coverage
+npx aspens doc sync --install-hook   # Keep generated context synced on every commit
 ```
 
 Requires [Node.js 20+](https://nodejs.org) and at least one supported backend CLI such as [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) or Codex CLI.
 
 ## Target Support
 
-Aspens supports different AI tools through different output targets:
+Aspens supports multiple agent environments through output targets:
 
 - `claude`: `CLAUDE.md` + `.claude/skills` + Claude hooks
 - `codex`: `AGENTS.md` + `.agents/skills` + directory `AGENTS.md`
 - `all`: generate both sets together
 
-Short version:
-
-- Claude support is hook-aware and document-aware
-- Codex support is document-driven, not hook-driven
+Use `claude` if you want hooks plus docs.
+Use `codex` if you want instruction files plus skills.
+Use `all` if your team works across both.
 
 Important distinction:
 
@@ -86,7 +99,7 @@ See [docs/target-support.md](docs/target-support.md) for the full target model a
 
 ### `aspens scan [path]`
 
-Detect tech stack, frameworks, structure, and domains. Builds an import graph to identify hub files, domain coupling, and hotspots. No LLM calls — pure file system + git inspection.
+Map the repo before generating anything. `scan` is deterministic: it detects tech stack, domains, hub files, coupling, and hotspots without calling an LLM.
 
 ```
 $ aspens scan .
@@ -139,9 +152,21 @@ $ aspens scan .
 
 ### `aspens doc init [path]`
 
-Generate repo docs for Claude, Codex, or both. Runs parallel discovery calls through the selected backend to understand your architecture, then generates skills/docs based on what it found.
+Generate agent context from the repo itself. `doc init` scans the codebase, discovers the architecture and feature domains, then writes instructions and skills for Claude, Codex, or both.
 
-The flow:
+For the lowest-friction setup, use:
+
+```bash
+aspens doc init --recommended .
+```
+
+`--recommended` is the fastest path:
+
+- reuses existing target config when present
+- defaults to improving existing docs instead of prompting
+- auto-picks the generation mode based on repo size
+
+What it does:
 1. **Scan + Import Graph** — builds dependency map, finds hub files
 2. **Parallel Discovery** — 2 backend-guided discovery passes explore simultaneously (domains + architecture)
 3. **User picks domains** — from the discovered feature domains
@@ -205,10 +230,35 @@ $ aspens doc init .
 | `--verbose` | Show backend reads/activity in real time |
 | `--target <target>` | Output target: `claude`, `codex`, or `all` |
 | `--backend <backend>` | Generation backend: `claude` or `codex` |
+| `--recommended` | Use the recommended target, strategy, and generation mode |
+
+### `aspens doc impact [path]`
+
+Show whether your generated context is still keeping up with the codebase. This is the proof surface: are the docs present, covering the right domains, surfacing the right hub files, and fresher than the repo changes?
+
+Checks:
+- instructions and skills present per target
+- domain coverage vs detected repo domains
+- top hub files surfaced in root guidance
+- whether generated context is older than the newest source changes
+
+```bash
+$ aspens doc impact .
+
+  my-app
+
+  Claude Code
+    Instructions: present (CLAUDE.md)
+    Skills: 9
+    Domain coverage: 8/9, missing onboarding
+    Hub files surfaced: 4/5
+    Hooks: installed
+    Last updated: Apr 7, 2026, 9:41 AM  stale vs source
+```
 
 ### `aspens doc sync [path]`
 
-Update generated docs based on recent git commits. Reads the diff, maps changes to affected docs, and updates only what changed.
+Keep generated context from drifting. `doc sync` reads recent git changes, maps them to affected skills and instructions, and updates only what changed.
 
 If your repo is configured for multiple targets, `doc sync` updates all configured outputs from one run. Claude activation hooks remain Claude-only, but the git post-commit sync hook can keep both Claude and Codex docs current.
 

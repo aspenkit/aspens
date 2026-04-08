@@ -9,6 +9,7 @@ import { scanCommand } from '../src/commands/scan.js';
 import { docInitCommand } from '../src/commands/doc-init.js';
 import { docSyncCommand } from '../src/commands/doc-sync.js';
 import { docGraphCommand } from '../src/commands/doc-graph.js';
+import { docImpactCommand } from '../src/commands/doc-impact.js';
 import { addCommand } from '../src/commands/add.js';
 import { customizeCommand } from '../src/commands/customize.js';
 import { CliError } from '../src/lib/errors.js';
@@ -39,22 +40,25 @@ function countTemplates(subdir) {
 
 function showWelcome() {
   console.log(`
-  ${pc.cyan(pc.bold('aspens'))} ${pc.dim(`v${VERSION}`)} — AI-ready documentation for your codebase
+  ${pc.cyan(pc.bold('aspens'))} ${pc.dim(`v${VERSION}`)} — keep agent context accurate as your repo changes
 
   ${pc.bold('Quick Start')}
     ${pc.green('aspens scan')}                       See your repo's tech stack and domains
-    ${pc.green('aspens doc init')}                   Generate target docs for Claude, Codex, or both
+    ${pc.green('aspens doc init --recommended')}     Generate the recommended context setup
+    ${pc.green('aspens doc impact')}                 Show freshness and coverage of generated context
     ${pc.green('aspens doc init --target codex')}    Generate AGENTS.md + .agents/skills
     ${pc.green('aspens doc sync --install-hook')}    Auto-update Claude docs on every commit
 
   ${pc.bold('Generate & Sync')}
     ${pc.green('aspens doc init')} ${pc.dim('[path]')}          Generate docs from your code
+    ${pc.green('aspens doc init --recommended')}     Use smart defaults and fewer prompts
     ${pc.green('aspens doc init --dry-run')}         Preview without writing
     ${pc.green('aspens doc init --mode chunked')}    One domain at a time (large repos)
     ${pc.green('aspens doc init --target all')}      Generate Claude + Codex docs together
     ${pc.green('aspens doc init --model haiku')}     Use a specific backend model
     ${pc.green('aspens doc init --verbose')}         See backend activity in real time
     ${pc.green('aspens doc sync')} ${pc.dim('[path]')}          Update generated docs from recent commits
+    ${pc.green('aspens doc impact')} ${pc.dim('[path]')}        Check freshness, coverage, and hooks
     ${pc.green('aspens doc sync --commits 5')}       Sync from last 5 commits
     ${pc.green('aspens doc sync --refresh')}         Refresh all skills from current code
 
@@ -77,10 +81,10 @@ function showWelcome() {
 
   ${pc.bold('Typical Workflow')}
     ${pc.dim('$')} aspens scan                              ${pc.dim('1. See what\'s in your repo')}
-    ${pc.dim('$')} aspens doc init --target all             ${pc.dim('2. Generate CLAUDE.md + AGENTS.md outputs')}
-    ${pc.dim('$')} aspens add agent all                     ${pc.dim('3. Add Claude-side AI agents')}
-    ${pc.dim('$')} aspens customize agents                  ${pc.dim('4. Tailor Claude agents to your project')}
-    ${pc.dim('$')} aspens doc sync --install-hook           ${pc.dim('5. Auto-update Claude docs on every commit')}
+    ${pc.dim('$')} aspens doc init --recommended            ${pc.dim('2. Generate the right default context')}
+    ${pc.dim('$')} aspens doc impact                        ${pc.dim('3. Verify freshness and domain coverage')}
+    ${pc.dim('$')} aspens add agent all                     ${pc.dim('4. Add Claude-side AI agents')}
+    ${pc.dim('$')} aspens doc sync --install-hook           ${pc.dim('5. Auto-update docs on every commit')}
 
   ${pc.bold('Target Notes')}
     ${pc.dim('Claude:')} ${pc.cyan('CLAUDE.md + .claude/skills + hooks')}
@@ -118,7 +122,7 @@ function checkMissingHooks(repoPath) {
 
 program
   .name('aspens')
-  .description('Generate and maintain AI-ready documentation for your codebase')
+  .description('Keep agent context accurate as your codebase changes')
   .version(VERSION)
   .action(() => {
     // No command given — show welcome
@@ -145,6 +149,7 @@ doc
   .command('init')
   .description('Scan repo and generate skills + guidelines')
   .argument('[path]', 'Path to repo', '.')
+  .option('--recommended', 'Use the recommended target, strategy, and generation mode')
   .option('--dry-run', 'Preview without writing files')
   .option('--force', 'Overwrite existing skills')
   .option('--timeout <seconds>', 'Backend timeout in seconds', parseTimeout, 300)
@@ -178,6 +183,13 @@ doc
     checkMissingHooks(resolve(path));
     return docSyncCommand(path, options);
   });
+
+doc
+  .command('impact')
+  .description('Show generated context freshness and coverage')
+  .argument('[path]', 'Path to repo', '.')
+  .option('--no-graph', 'Skip import graph analysis')
+  .action(docImpactCommand);
 
 doc
   .command('graph')
