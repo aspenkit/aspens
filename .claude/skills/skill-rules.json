@@ -130,6 +130,46 @@
         ]
       }
     },
+    "doc-impact": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "src/commands/doc-impact.js",
+        "src/lib/impact.js",
+        "tests/impact.test.js"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "impact",
+          "freshness",
+          "coverage",
+          "drift",
+          "health score",
+          "context health",
+          "doc",
+          "doc impact",
+          "context",
+          "health",
+          "analysis",
+          "domain",
+          "commands",
+          "doc-impact",
+          "tests",
+          "impact.test"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*health score",
+          "health score.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*context health",
+          "context health.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*doc impact",
+          "doc impact.*(create|update|fix|add|modify|change|debug|refactor|implement|build)"
+        ]
+      }
+    },
     "doc-sync": {
       "type": "domain",
       "enforcement": "suggest",
@@ -281,6 +321,7 @@
           "generate skills",
           "discovery agents",
           "chunked generation",
+          "recommended",
           "skill",
           "generation",
           "skill generation",

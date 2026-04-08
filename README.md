@@ -6,12 +6,15 @@
 
 ## Prevent stale agent context.
 
+### For Claude Code and Codex
+
 [![npm version](https://img.shields.io/npm/v/aspens.svg)](https://www.npmjs.com/package/aspens)
 [![npm downloads](https://img.shields.io/npm/dm/aspens.svg)](https://www.npmjs.com/package/aspens)
 [![GitHub stars](https://img.shields.io/github/stars/aspenkit/aspens)](https://github.com/aspenkit/aspens)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Aspens keeps Claude Code and Codex aligned with your actual codebase.
+Stop re-explaining your repo to Claude Code and Codex.
+Aspens keeps both aligned with your actual codebase.
 It scans the repo, generates project-specific instructions and skills, and keeps them fresh as the code evolves.
 
 </div>
