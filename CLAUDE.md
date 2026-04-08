@@ -13,7 +13,7 @@ CLI for keeping coding-agent context accurate as your codebase changes. Supports
 - `npm run lint` — no-op check (`echo 'No linter configured yet' && exit 0`)
 - `aspens scan [path]` — deterministic repo scan
 - `aspens doc init [path]` — generate skills, hooks, and instructions file (`--target claude|codex|all`, `--recommended` for smart defaults)
-- `aspens doc impact [path]` — show freshness, coverage, drift, and LLM interpretation of generated context (`--apply` for auto-repair)
+- `aspens doc impact [path]` — show freshness, coverage, drift, and LLM interpretation of generated context (interactive apply for repairs)
 - `aspens doc sync [path]` — update docs from recent diffs
 - `aspens doc graph [path]` — rebuild `.claude/graph.json`
 - `aspens add <type> [name]` — install bundled templates
