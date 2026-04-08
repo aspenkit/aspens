@@ -188,6 +188,11 @@ doc
   .command('impact')
   .description('Show generated context freshness and coverage')
   .argument('[path]', 'Path to repo', '.')
+  .option('--apply', 'Run supported recommended repairs automatically')
+  .option('--backend <backend>', 'Interpretation backend: claude, codex (default: whichever is available)')
+  .option('--model <model>', 'Model to use for impact interpretation')
+  .option('--timeout <seconds>', 'Backend timeout in seconds', parseTimeout, 300)
+  .option('--verbose', 'Show backend reads/activity in real time')
   .option('--no-graph', 'Skip import graph analysis')
   .action(docImpactCommand);
 

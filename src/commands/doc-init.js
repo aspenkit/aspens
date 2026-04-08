@@ -917,7 +917,7 @@ function createHookSettings(repoPath, templateSettings) {
     for (const entry of entries) {
       if (!Array.isArray(entry.hooks)) continue;
       for (const hook of entry.hooks) {
-        if (typeof hook.command === 'string' && hook.command.startsWith('$CLAUDE_PROJECT_DIR/')) {
+        if (typeof hook.command === 'string' && hook.command.includes('$CLAUDE_PROJECT_DIR')) {
           hook.command = hook.command.replace('$CLAUDE_PROJECT_DIR', hookPrefix);
         }
       }

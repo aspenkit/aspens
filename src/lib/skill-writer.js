@@ -301,6 +301,9 @@ export function mergeSettings(existing, template) {
         merged.hooks[eventType].push(templateEntry);
       }
     }
+
+    // Remove duplicate aspens-managed entries while preserving non-aspens hooks.
+    merged.hooks[eventType] = dedupeAspensHookEntries(merged.hooks[eventType]);
   }
 
   return merged;
@@ -308,7 +311,7 @@ export function mergeSettings(existing, template) {
 
 // --- Internal helpers ---
 
-const ASPENS_HOOK_MARKERS = ['skill-activation-prompt', 'post-tool-use-tracker'];
+const ASPENS_HOOK_MARKERS = ['skill-activation-prompt', 'graph-context-prompt', 'post-tool-use-tracker'];
 
 /**
  * Check if a command string is an aspens-managed hook.
@@ -334,6 +337,32 @@ function extractHookCommands(entry) {
   return entry.hooks
     .map(h => h.command || '')
     .filter(Boolean);
+}
+
+function dedupeAspensHookEntries(entries) {
+  if (!Array.isArray(entries)) return entries;
+
+  const seen = new Set();
+  const result = [];
+
+  for (const entry of entries) {
+    const commands = extractHookCommands(entry);
+    const aspensMarkers = ASPENS_HOOK_MARKERS.filter(marker =>
+      commands.some(command => command.includes(marker))
+    );
+
+    if (aspensMarkers.length === 0) {
+      result.push(entry);
+      continue;
+    }
+
+    const key = `${aspensMarkers.sort().join('|')}::${entry.matcher || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(entry);
+  }
+
+  return result;
 }
 
 /**

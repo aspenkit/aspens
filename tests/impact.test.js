@@ -1,18 +1,33 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { join } from 'path';
 import {
   computeDomainCoverage,
   computeHubCoverage,
   computeDrift,
+  evaluateHookHealth,
   computeHealthScore,
   computeTargetStatus,
   recommendActions,
   summarizeReport,
+  summarizeMissing,
+  summarizeValueComparison,
 } from '../src/lib/impact.js';
+
+const TEST_DIR = join(import.meta.dirname, 'tmp-impact');
+
+beforeEach(() => {
+  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+});
 
 describe('computeDomainCoverage', () => {
   it('counts covered and missing domains with reasons', () => {
     const coverage = computeDomainCoverage(
-      [{ name: 'auth' }, { name: 'billing' }, { name: 'profile' }],
+      [{ name: 'auth' }, { name: 'billing' }, { name: 'profile' }, { name: 'config' }],
       [
         { name: 'base', activationPatterns: [] },
         { name: 'auth', activationPatterns: [] },
@@ -23,6 +38,7 @@ describe('computeDomainCoverage', () => {
     expect(coverage.covered).toBe(2);
     expect(coverage.total).toBe(3);
     expect(coverage.missing).toEqual(['profile']);
+    expect(coverage.excluded).toEqual(['config']);
     expect(coverage.details.find(d => d.domain === 'auth')?.reason).toContain('skill');
     expect(coverage.details.find(d => d.domain === 'billing')?.reason).toContain('activation');
   });
@@ -71,7 +87,7 @@ describe('target status and actions', () => {
     const status = computeTargetStatus({
       instructionExists: true,
       skillCount: 3,
-      hooksInstalled: true,
+      hookHealth: { installed: true, healthy: true },
       domainCoverage: { covered: 2, total: 3 },
       drift: { changedCount: 4 },
     }, { supportsHooks: true });
@@ -83,8 +99,9 @@ describe('target status and actions', () => {
     const actions = recommendActions({
       status,
       drift: { changedCount: 4 },
+      domainCoverage: { missing: ['profile'] },
     });
-    expect(actions).toEqual(['aspens doc sync', 'aspens doc init --recommended']);
+    expect(actions).toEqual(['aspens doc sync', 'aspens doc init --mode chunked --domains profile']);
   });
 });
 
@@ -116,13 +133,90 @@ describe('summarizeReport', () => {
         health: 90,
         drift: { changedCount: 0 },
         status: { instructions: 'healthy', domains: 'partial', hooks: 'n/a' },
-        actions: ['aspens doc init --recommended'],
+        actions: ['aspens doc init --mode chunked --domains config'],
       },
     ], { newestSourceMtime: 1234 });
 
     expect(summary.repoStatus).toBe('partially stale');
     expect(summary.changedFiles).toBe(3);
     expect(summary.averageHealth).toBe(80);
-    expect(summary.actions).toEqual(['aspens doc sync', 'aspens doc init --recommended']);
+    expect(summary.actions).toEqual(['aspens doc sync', 'aspens doc init --mode chunked --domains config']);
+  });
+});
+
+describe('summarizeValueComparison', () => {
+  it('describes computed artifact coverage and freshness', () => {
+    const comparison = summarizeValueComparison([
+      {
+        instructionExists: true,
+        skillCount: 17,
+        domainCoverage: { covered: 6, total: 7 },
+        hubCoverage: { mentioned: 1, total: 5 },
+        status: { instructions: 'healthy', hooks: 'healthy' },
+        drift: { changedCount: 0 },
+      },
+      {
+        instructionExists: true,
+        skillCount: 18,
+        domainCoverage: { covered: 6, total: 7 },
+        hubCoverage: { mentioned: 5, total: 5 },
+        status: { instructions: 'healthy', hooks: 'n/a' },
+        drift: { changedCount: 0 },
+      },
+    ]);
+
+    expect(comparison.withoutAspens).toContain('0 generated instruction files');
+    expect(comparison.withAspens).toContain('2/2 instruction files present');
+    expect(comparison.withAspens).toContain('35 generated skills');
+    expect(comparison.freshness).toContain('current');
+    expect(comparison.automation).toContain('1/1 hook-capable target has');
+  });
+});
+
+describe('summarizeMissing', () => {
+  it('rolls up missing hooks, stale docs, uncovered domains, and weak root context', () => {
+    const items = summarizeMissing([
+      {
+        label: 'Claude Code',
+        status: { instructions: 'stale', hooks: 'missing' },
+        drift: { changedCount: 3 },
+        domainCoverage: { missing: ['core'] },
+        hubCoverage: { mentioned: 2, total: 5 },
+      },
+      {
+        label: 'Codex CLI',
+        status: { instructions: 'healthy', hooks: 'n/a' },
+        drift: { changedCount: 0 },
+        domainCoverage: { missing: ['core', 'api'] },
+        hubCoverage: { mentioned: 5, total: 5 },
+      },
+    ]);
+
+    expect(items.some(item => item.kind === 'stale')).toBe(true);
+    expect(items.some(item => item.kind === 'hooks')).toBe(true);
+    expect(items.some(item => item.kind === 'domains' && item.message.includes('core'))).toBe(true);
+    expect(items.some(item => item.kind === 'root-context' && item.message.includes('Claude Code'))).toBe(true);
+  });
+});
+
+describe('evaluateHookHealth', () => {
+  it('detects broken hook command paths', () => {
+    mkdirSync(join(TEST_DIR, '.claude', 'hooks'), { recursive: true });
+    mkdirSync(join(TEST_DIR, '.claude', 'skills'), { recursive: true });
+    writeFileSync(join(TEST_DIR, '.claude', 'hooks', 'skill-activation-prompt.sh'), '#!/bin/bash\n', 'utf8');
+    writeFileSync(join(TEST_DIR, '.claude', 'skills', 'skill-rules.json'), '{}\n', 'utf8');
+    writeFileSync(join(TEST_DIR, '.claude', 'settings.json'), JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [{
+          hooks: [{ type: 'command', command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/missing-hook.sh"' }],
+        }],
+      },
+    }, null, 2));
+
+    const health = evaluateHookHealth(TEST_DIR);
+    expect(health.installed).toBe(true);
+    expect(health.healthy).toBe(false);
+    expect(health.invalidCommands).toHaveLength(1);
+    expect(health.issues.some(issue => issue.includes('broken hook commands'))).toBe(true);
   });
 });

@@ -4,12 +4,22 @@ import { scanRepo } from './scanner.js';
 import { buildRepoGraph } from './graph-builder.js';
 import { loadConfig, TARGETS } from './target.js';
 import { findSkillFiles } from './skill-reader.js';
+import { getGitRoot } from './git-helpers.js';
 
 const SOURCE_EXTS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
   '.py', '.rb', '.go', '.rs', '.java', '.cs',
   '.php', '.swift', '.kt', '.kts', '.scala',
   '.clj', '.ex', '.exs', '.elm', '.vue', '.svelte',
+]);
+
+const LOW_SIGNAL_DOMAIN_NAMES = new Set([
+  'config',
+  'test',
+  'tests',
+  '__tests__',
+  'spec',
+  'e2e',
 ]);
 
 export async function analyzeImpact(repoPath, options = {}) {
@@ -44,6 +54,7 @@ export function summarizeTarget(repoPath, target, scan, graph, sourceState) {
   const skillFiles = findSkillFiles(join(repoPath, target.skillsDir), {
     skillFilename: target.skillFilename,
   });
+  const hookHealth = target.supportsHooks ? evaluateHookHealth(repoPath) : null;
   const instructionPath = join(repoPath, target.instructionsFile);
   const instructionExists = existsSync(instructionPath);
   const contextText = buildContextText(repoPath, target, skillFiles);
@@ -58,21 +69,34 @@ export function summarizeTarget(repoPath, target, scan, graph, sourceState) {
   const status = computeTargetStatus({
     instructionExists,
     skillCount: skillFiles.length,
-    hooksInstalled: target.supportsHooks
-      ? existsSync(join(repoPath, '.claude', 'hooks', 'skill-activation-prompt.sh'))
-      : false,
+    hookHealth,
     domainCoverage,
     drift,
   }, target);
   const health = computeHealthScore({
     instructionExists,
     skillCount: skillFiles.length,
-    hooksInstalled: status.hooksInstalled,
+    hooksHealthy: status.hooks === 'healthy',
     domainCoverage,
     hubCoverage,
     drift,
   }, target);
-  const actions = recommendActions({ status, drift });
+  const usefulness = summarizeUsefulness({
+    target,
+    skillCount: skillFiles.length,
+    domainCoverage,
+    hubCoverage,
+    status,
+  });
+  const actions = recommendActions({
+    repoPath,
+    target,
+    status,
+    drift,
+    domainCoverage,
+    hubCoverage,
+    usefulness,
+  });
 
   return {
     id: target.id,
@@ -81,20 +105,26 @@ export function summarizeTarget(repoPath, target, scan, graph, sourceState) {
     instructionExists,
     skillCount: skillFiles.length,
     hooksInstalled: status.hooksInstalled,
+    hookHealth,
     lastUpdated,
     drift,
     domainCoverage,
     hubCoverage,
     status,
     health,
+    usefulness,
     actions,
   };
 }
 
 export function computeDomainCoverage(domains, skills) {
-  const details = (domains || [])
+  const domainList = (domains || [])
     .map(domain => domain?.name?.toLowerCase())
-    .filter(Boolean)
+    .filter(Boolean);
+  const relevantDomains = domainList.filter(name => !LOW_SIGNAL_DOMAIN_NAMES.has(name));
+  const excludedDomains = domainList.filter(name => LOW_SIGNAL_DOMAIN_NAMES.has(name));
+
+  const details = relevantDomains
     .map(name => {
       const match = findMatchingSkill(skills || [], name);
       return {
@@ -109,6 +139,7 @@ export function computeDomainCoverage(domains, skills) {
     covered: details.filter(detail => detail.status === 'covered').length,
     total: details.length,
     missing: details.filter(detail => detail.status === 'missing').map(detail => detail.domain),
+    excluded: excludedDomains,
     details,
   };
 }
@@ -139,7 +170,7 @@ export function computeHealthScore(input, target) {
   if (input.drift.changedFiles.length > 0) {
     score -= Math.min(20, input.drift.changedFiles.length * 3);
   }
-  if (target.supportsHooks && !input.hooksInstalled) {
+  if (target.supportsHooks && !input.hooksHealthy) {
     score -= 10;
   }
 
@@ -178,8 +209,11 @@ export function computeTargetStatus(input, target) {
     : input.domainCoverage.covered === input.domainCoverage.total ? 'healthy'
     : input.domainCoverage.covered === 0 ? 'missing'
     : 'partial';
-  const hooksInstalled = target.supportsHooks ? !!input.hooksInstalled : false;
-  const hooks = target.supportsHooks ? (hooksInstalled ? 'healthy' : 'missing') : 'n/a';
+  const hooksInstalled = target.supportsHooks ? !!input.hookHealth?.installed : false;
+  const hooks = !target.supportsHooks ? 'n/a'
+    : !input.hookHealth?.installed ? 'missing'
+    : input.hookHealth?.healthy ? 'healthy'
+    : 'broken';
 
   return {
     instructions,
@@ -196,11 +230,25 @@ export function recommendActions(target) {
   } else if (target.status.instructions === 'stale' || target.drift.changedCount > 0) {
     actions.push('aspens doc sync');
   }
-  if (target.status.hooks === 'missing') {
+  if (target.status.hooks === 'missing' || target.status.hooks === 'broken') {
     actions.push('aspens doc init --hooks-only');
   }
-  if (target.status.domains === 'partial' && !actions.includes('aspens doc init --recommended')) {
-    actions.push('aspens doc init --recommended');
+  if (target.status.domains === 'partial') {
+    const missing = target.domainCoverage?.missing || [];
+    if (missing.length > 0 && missing.length <= 3) {
+      actions.push(`aspens doc init --mode chunked --domains ${missing.join(',')}`);
+    } else if (!actions.includes('aspens doc init --recommended')) {
+      actions.push('aspens doc init --recommended');
+    }
+  }
+  if (
+    target.status.instructions === 'healthy' &&
+    target.status.domains === 'healthy' &&
+    target.status.hooks !== 'missing' &&
+    target.hubCoverage?.total > 0 &&
+    target.hubCoverage.mentioned < target.hubCoverage.total
+  ) {
+    actions.push('aspens doc init --mode base-only --strategy improve');
   }
   return [...new Set(actions)];
 }
@@ -210,10 +258,12 @@ export function summarizeReport(targets, sourceState) {
   const missingTargets = targets.filter(target =>
     target.status.instructions === 'missing' ||
     target.status.domains === 'missing' ||
-    target.status.hooks === 'missing'
+    target.status.hooks === 'missing' ||
+    target.status.hooks === 'broken'
   );
   const partialTargets = targets.filter(target => target.status.domains === 'partial');
   const actions = [...new Set(targets.flatMap(target => target.actions))];
+  const missing = summarizeMissing(targets);
 
   return {
     repoStatus:
@@ -228,7 +278,178 @@ export function summarizeReport(targets, sourceState) {
       ? Math.round(targets.reduce((sum, target) => sum + target.health, 0) / targets.length)
       : 0,
     latestSourceMtime: sourceState.newestSourceMtime,
+    missing,
   };
+}
+
+export function summarizeValueComparison(targets) {
+  const instructionFilesPresent = targets.filter(target => target.instructionExists).length;
+  const totalSkills = targets.reduce((sum, target) => sum + (target.skillCount || 0), 0);
+  const coveredDomains = Math.max(...targets.map(target => target.domainCoverage?.covered || 0), 0);
+  const totalDomains = Math.max(...targets.map(target => target.domainCoverage?.total || 0), 0);
+  const hookTargets = targets.filter(target => target.status?.hooks !== 'n/a').length;
+  const healthyHooks = targets.filter(target => target.status?.hooks === 'healthy').length;
+  const staleTargets = targets.filter(target => target.status?.instructions === 'stale');
+  const driftCount = Math.max(...targets.map(target => target.drift?.changedCount || 0), 0);
+  const surfacedHubs = Math.max(...targets.map(target => target.hubCoverage?.mentioned || 0), 0);
+  const totalHubs = Math.max(...targets.map(target => target.hubCoverage?.total || 0), 0);
+
+  return {
+    withoutAspens: `Without aspens artifacts, these targets would have 0 generated instruction files, 0 generated skills, and 0 surfaced hub files.`,
+    withAspens: `With aspens now: ${instructionFilesPresent}/${targets.length} instruction file${targets.length === 1 ? '' : 's'} present, ${totalSkills} generated skill${totalSkills === 1 ? '' : 's'}, ${coveredDomains}/${totalDomains || 0} meaningful source domain${totalDomains === 1 ? '' : 's'} mapped, ${totalHubs > 0 ? `${surfacedHubs}/${totalHubs} top hub files surfaced` : 'no hub data available'}.`,
+    freshness: staleTargets.length > 0
+      ? `${staleTargets.length} target(s) are stale with ${driftCount} changed source file(s) since the last generation.`
+      : 'Generated docs are current against the source tree.',
+    automation: hookTargets > 0
+      ? `${healthyHooks}/${hookTargets} hook-capable target${hookTargets === 1 ? '' : 's'} ${hookTargets === 1 ? 'has' : 'have'} automatic context loading installed.`
+      : 'No hook-capable targets detected.',
+  };
+}
+
+export function summarizeMissing(targets) {
+  const items = [];
+
+  const missingInstructions = targets.filter(target => target.status.instructions === 'missing');
+  if (missingInstructions.length > 0) {
+    items.push({
+      kind: 'instructions',
+      severity: 'high',
+      message: `${missingInstructions.length} target(s) are missing root instruction files`,
+    });
+  }
+
+  const staleTargets = targets.filter(target => target.status.instructions === 'stale');
+  if (staleTargets.length > 0) {
+    const changedFiles = Math.max(...staleTargets.map(target => target.drift.changedCount), 0);
+    items.push({
+      kind: 'stale',
+      severity: 'high',
+      message: `${staleTargets.length} target(s) have stale docs with ${changedFiles} changed source file(s) since generation`,
+    });
+  }
+
+  const missingHooks = targets.filter(target => target.status.hooks === 'missing');
+  if (missingHooks.length > 0) {
+    items.push({
+      kind: 'hooks',
+      severity: 'medium',
+      message: `${missingHooks.length} hook-capable target(s) are missing automatic context loading`,
+    });
+  }
+
+  const brokenHooks = targets.filter(target => target.status.hooks === 'broken');
+  if (brokenHooks.length > 0) {
+    items.push({
+      kind: 'hook-errors',
+      severity: 'high',
+      message: brokenHooks
+        .map(target => `${target.label} hooks are configured but broken`)
+        .join(' | '),
+    });
+  }
+
+  const uncoveredDomains = [...new Set(targets.flatMap(target => target.domainCoverage?.missing || []))];
+  if (uncoveredDomains.length > 0) {
+    items.push({
+      kind: 'domains',
+      severity: 'medium',
+      message: `${uncoveredDomains.length} meaningful source domain(s) are not matched by dedicated skills or activation rules: ${uncoveredDomains.slice(0, 4).join(', ')}`,
+    });
+  }
+
+  const weakRootContext = targets
+    .filter(target => target.hubCoverage?.total > 0 && target.hubCoverage.mentioned < target.hubCoverage.total)
+    .map(target => ({
+      label: target.label,
+      missing: target.hubCoverage.total - target.hubCoverage.mentioned,
+    }));
+  if (weakRootContext.length > 0) {
+    items.push({
+      kind: 'root-context',
+      severity: 'low',
+      message: weakRootContext
+        .map(item => `${item.label} is missing ${item.missing} top hub file${item.missing === 1 ? '' : 's'} from root context`)
+        .join(' | '),
+    });
+  }
+
+  return items;
+}
+
+export function evaluateHookHealth(repoPath) {
+  const gitRoot = getGitRoot(repoPath) || repoPath;
+  const settingsPath = join(repoPath, '.claude', 'settings.json');
+  const rulesPath = join(repoPath, '.claude', 'skills', 'skill-rules.json');
+  const hooksDir = join(repoPath, '.claude', 'hooks');
+  const requiredScripts = [
+    'skill-activation-prompt.sh',
+    'graph-context-prompt.sh',
+    'post-tool-use-tracker.sh',
+  ];
+
+  const installed = existsSync(join(hooksDir, 'skill-activation-prompt.sh'));
+  const missingScripts = requiredScripts.filter(file => !existsSync(join(hooksDir, file)));
+  const issues = [];
+
+  if (!existsSync(settingsPath)) {
+    issues.push('missing .claude/settings.json');
+  }
+  if (!existsSync(rulesPath)) {
+    issues.push('missing .claude/skills/skill-rules.json');
+  }
+  if (missingScripts.length > 0) {
+    issues.push(`missing hook scripts: ${missingScripts.join(', ')}`);
+  }
+
+  const invalidCommands = [];
+  if (existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      const commands = extractHookCommandsFromSettings(settings);
+      for (const command of commands) {
+        if (!command.includes('.claude/hooks/')) continue;
+        const resolvedPath = commandToHookPath(command, gitRoot);
+        if (!resolvedPath || !existsSync(resolvedPath)) {
+          invalidCommands.push(command);
+        }
+      }
+    } catch {
+      issues.push('invalid .claude/settings.json');
+    }
+  }
+
+  if (invalidCommands.length > 0) {
+    issues.push(`broken hook commands: ${invalidCommands.length}`);
+  }
+
+  return {
+    installed,
+    healthy: installed && issues.length === 0,
+    issues,
+    invalidCommands,
+    missingScripts,
+  };
+}
+
+function extractHookCommandsFromSettings(settings) {
+  const commands = [];
+  if (!settings?.hooks || typeof settings.hooks !== 'object') return commands;
+  for (const entries of Object.values(settings.hooks)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (!Array.isArray(entry?.hooks)) continue;
+      for (const hook of entry.hooks) {
+        if (typeof hook?.command === 'string') commands.push(hook.command);
+      }
+    }
+  }
+  return commands;
+}
+
+function commandToHookPath(command, gitRoot) {
+  const match = command.match(/\$CLAUDE_PROJECT_DIR\/(.+?\.sh)\b/);
+  if (!match) return null;
+  return join(gitRoot, ...match[1].split('/'));
 }
 
 function inferTargetsFromScan(scan) {
@@ -279,6 +500,49 @@ function findMatchingSkill(skills, domainName) {
     }
   }
   return null;
+}
+
+function summarizeUsefulness(input) {
+  const strengths = [];
+  const blindSpots = [];
+  const activationExamples = [];
+
+  strengths.push(`${input.skillCount} skill${input.skillCount === 1 ? '' : 's'} available to the agent`);
+
+  if (input.domainCoverage.total > 0) {
+    strengths.push(`${input.domainCoverage.covered}/${input.domainCoverage.total} source modules map to skills or activation rules`);
+  }
+
+  if (input.target.supportsHooks && input.status.hooks === 'healthy') {
+    strengths.push('hooks can auto-load relevant Claude context while you work');
+  }
+
+  if (input.hubCoverage.total > 0 && input.hubCoverage.mentioned > 0) {
+    strengths.push(`${input.hubCoverage.mentioned}/${input.hubCoverage.total} top hub files are surfaced in root context`);
+  }
+
+  for (const detail of input.domainCoverage.details.filter(d => d.status === 'covered').slice(0, 3)) {
+    activationExamples.push(`${detail.domain} -> ${detail.reason}`);
+  }
+
+  const missing = input.domainCoverage.details.filter(d => d.status === 'missing');
+  if (missing.length > 0) {
+    blindSpots.push(`${missing.length} uncovered module${missing.length === 1 ? '' : 's'}: ${missing.slice(0, 3).map(d => d.domain).join(', ')}`);
+  }
+
+  if ((input.domainCoverage.excluded || []).length > 0) {
+    strengths.push(`support buckets excluded from scoring: ${(input.domainCoverage.excluded || []).slice(0, 3).join(', ')}`);
+  }
+
+  if (input.hubCoverage.total > 0 && input.hubCoverage.mentioned < input.hubCoverage.total) {
+    blindSpots.push(`${input.hubCoverage.total - input.hubCoverage.mentioned} top hub file${input.hubCoverage.total - input.hubCoverage.mentioned === 1 ? '' : 's'} still missing from root context`);
+  }
+
+  return {
+    strengths,
+    blindSpots,
+    activationExamples,
+  };
 }
 
 function collectSourceState(repoPath) {
