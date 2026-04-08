@@ -35,7 +35,7 @@ You are working on the **CLI execution layer** — the bridge between assembled 
 - **Validation:** `validateSkillFiles()` checks for truncation (XML tag collisions), missing frontmatter, missing sections, bad file path references.
 - **Skill rules generation:** `extractRulesFromSkills()` reads all skills via `skill-reader.js`, produces `skill-rules.json` (v2.0) with file patterns, keywords, and intent patterns.
 - **Domain patterns:** `generateDomainPatterns()` converts file patterns to bash `detect_skill_domain()` function using `BEGIN/END` markers.
-- **Settings merge:** `mergeSettings()` merges aspens hook config into existing `settings.json`, detecting aspens-managed hooks by `ASPENS_HOOK_MARKERS` (`skill-activation-prompt`, `post-tool-use-tracker`).
+- **Settings merge:** `mergeSettings()` merges aspens hook config into existing `settings.json`, detecting aspens-managed hooks by `ASPENS_HOOK_MARKERS` (`skill-activation-prompt`, `graph-context-prompt`, `post-tool-use-tracker`). After merging, `dedupeAspensHookEntries()` removes duplicate aspens-managed entries per event type (keyed by marker + matcher combo) while preserving non-aspens hooks.
 - **Directory-scoped writes:** `writeTransformedFiles()` handles files outside `.claude/` (e.g., `src/billing/AGENTS.md`) with explicit path allowlist — only `CLAUDE.md`, `AGENTS.md` exact files and `.claude/`, `.agents/`, `.codex/` prefixes are permitted.
 - **`findSkillFiles` matching:** Only matches the exact `skillFilename` (e.g., `skill.md` or `SKILL.md`), not arbitrary `.md` files in the skills directory.
 
@@ -46,8 +46,8 @@ You are working on the **CLI execution layer** — the bridge between assembled 
 - **Path sanitization is non-negotiable** — `sanitizePath()` blocks `..` traversal, absolute paths, and any path not in the allowed set.
 - **Prompt partials resolve before variables** — `{{skill-format}}` resolves to `partials/skill-format.md` first. If no file, falls through to variable substitution.
 - **Timeout resolution:** `resolveTimeout(flagValue, fallbackSeconds)` — `--timeout` flag wins, then `ASPENS_TIMEOUT` env, then caller-provided fallback. Size-based defaults (small: 120s, medium: 300s, large: 600s, very-large: 900s) are set by command handlers, not runner.
-- **`mergeSettings` preserves non-aspens hooks** — identifies aspens hooks by `ASPENS_HOOK_MARKERS`, replaces matching entries, preserves everything else.
+- **`mergeSettings` preserves non-aspens hooks** — identifies aspens hooks by `ASPENS_HOOK_MARKERS`, replaces matching entries, preserves everything else. Post-merge deduplication ensures no duplicate aspens entries accumulate across repeated merges.
 - **Debug mode:** Set `ASPENS_DEBUG=1` to dump raw stream-json to `$TMPDIR/aspens-debug-stream.json` (Claude) or `$TMPDIR/aspens-debug-codex-stream.json` (Codex). Codex also logs exit code and output length to stderr.
 
 ---
-**Last Updated:** 2026-04-07
+**Last Updated:** 2026-04-08

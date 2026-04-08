@@ -143,10 +143,19 @@ export async function docImpactCommand(path, options) {
   }
 
   console.log();
-  if (options.apply && report.summary.actions.length > 0) {
-    p.log.info(`Applying ${report.summary.actions.length} recommended action(s)...`);
-    for (const action of report.summary.actions) {
-      await applyRecommendedAction(repoPath, action, options);
+  const applyPlan = buildApplyPlan(report.targets);
+
+  if (applyPlan.length > 0) {
+    const confirmApply = await p.confirm({
+      message: buildApplyConfirmationMessage(),
+      initialValue: true,
+    });
+
+    if (!p.isCancel(confirmApply) && confirmApply) {
+      p.log.info(`Applying ${applyPlan.length} recommended action(s)...`);
+      for (const item of applyPlan) {
+        await applyRecommendedAction(repoPath, item.action, options, item.target);
+      }
     }
   }
 
@@ -267,7 +276,29 @@ function renderAnalysis(analysis) {
   }
 }
 
-async function applyRecommendedAction(repoPath, action, options) {
+export function buildApplyPlan(targets) {
+  const seen = new Set();
+  const plan = [];
+
+  for (const target of targets || []) {
+    for (const action of target.actions || []) {
+      const key = action === 'aspens doc sync'
+        ? action
+        : `${target.id}:${action}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      plan.push({ action, target });
+    }
+  }
+
+  return plan;
+}
+
+export function buildApplyConfirmationMessage() {
+  return 'Do you want to apply recommendations?';
+}
+
+async function applyRecommendedAction(repoPath, action, options, target = null) {
   p.log.info(pc.dim(`Running: ${action}`));
 
   if (action === 'aspens doc sync') {
@@ -299,7 +330,7 @@ async function applyRecommendedAction(repoPath, action, options) {
       hooks: true,
       verbose: !!options.verbose,
       graph: options.graph !== false,
-      target: null,
+      target: target?.id || null,
       backend: options.backend || null,
       recommended: false,
     });
@@ -320,28 +351,28 @@ async function applyRecommendedAction(repoPath, action, options) {
       hooks: true,
       verbose: !!options.verbose,
       graph: options.graph !== false,
-      target: null,
+      target: target?.id || null,
       backend: options.backend || null,
       hooksOnly: false,
     });
     return;
   }
 
-  if (action === 'aspens doc init --mode base-only --strategy improve') {
+  if (action === 'aspens doc init --mode base-only --strategy improve' || action === 'aspens doc init --mode base-only --strategy rewrite') {
     await docInitCommand(repoPath, {
       recommended: false,
       dryRun: false,
       force: false,
       timeout: options.timeout || 300,
       mode: 'base-only',
-      strategy: 'improve',
+      strategy: action.includes('--strategy rewrite') ? 'rewrite' : 'improve',
       domains: null,
       model: options.model || null,
       hook: true,
       hooks: true,
       verbose: !!options.verbose,
       graph: options.graph !== false,
-      target: null,
+      target: target?.id || null,
       backend: options.backend || null,
       hooksOnly: false,
     });
@@ -363,7 +394,7 @@ async function applyRecommendedAction(repoPath, action, options) {
       hooks: true,
       verbose: !!options.verbose,
       graph: options.graph !== false,
-      target: null,
+      target: target?.id || null,
       backend: options.backend || null,
       hooksOnly: false,
     });

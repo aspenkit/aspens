@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { transformForTarget, validateTransformedFiles, projectCodexDomainDocs } from '../src/lib/target-transform.js';
+import { transformForTarget, validateTransformedFiles, projectCodexDomainDocs, ensureRootKeyFilesSection } from '../src/lib/target-transform.js';
 import { TARGETS } from '../src/lib/target.js';
 
 const mockScanResult = {
@@ -14,6 +14,14 @@ const mockClaudeFiles = [
   { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\n---\n\n## Activation\n\nThis skill triggers when editing billing files:\n- src/services/billing/**\n\n---\n\nBilling conventions.' },
   { path: 'CLAUDE.md', content: '# My Project\n\nProject overview.\n\n## Commands\n\nnpm test\n' },
 ];
+
+const mockGraph = {
+  hubs: [
+    { path: 'app/core/db.py', fanIn: 9 },
+    { path: 'app/core/cache_service.py', fanIn: 7 },
+    { path: 'app/middleware/rate_limit.py', fanIn: 6 },
+  ],
+};
 
 describe('transformForTarget', () => {
   it('returns files unchanged when source and dest are the same', () => {
@@ -128,6 +136,27 @@ describe('projectCodexDomainDocs', () => {
     expect(result[0].path).toBe('src/services/billing/AGENTS.md');
     expect(result[0].content).toContain('Billing conventions');
     expect(result[0].content).not.toContain('## Activation');
+  });
+});
+
+describe('ensureRootKeyFilesSection', () => {
+  it('inserts a key files section before behavior when missing', () => {
+    const content = '# Backend\n\n## Commands\n\nuv run pytest\n\n## Behavior\n\n- Verify before claiming\n';
+    const result = ensureRootKeyFilesSection(content, mockGraph);
+
+    expect(result).toContain('## Key Files');
+    expect(result).toContain('`app/core/cache_service.py`');
+    expect(result.indexOf('## Key Files')).toBeLessThan(result.indexOf('## Behavior'));
+  });
+
+  it('replaces an incomplete key files section with all top hubs', () => {
+    const content = '# Backend\n\n## Key Files\n\n- `app/core/db.py` - 9 dependents\n\n## Behavior\n';
+    const result = ensureRootKeyFilesSection(content, mockGraph);
+
+    expect(result).toContain('`app/core/db.py` - 9 dependents');
+    expect(result).toContain('`app/core/cache_service.py` - 7 dependents');
+    expect(result).toContain('`app/middleware/rate_limit.py` - 6 dependents');
+    expect(result.match(/## Key Files/g)).toHaveLength(1);
   });
 });
 

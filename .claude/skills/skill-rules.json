@@ -139,6 +139,7 @@
       "filePatterns": [
         "src/commands/doc-impact.js",
         "src/lib/impact.js",
+        "src/prompts/impact-analyze.md",
         "tests/impact.test.js"
       ],
       "promptTriggers": {
@@ -149,6 +150,8 @@
           "drift",
           "health score",
           "context health",
+          "hook health",
+          "usefulness",
           "doc",
           "doc impact",
           "context",
@@ -157,6 +160,8 @@
           "domain",
           "commands",
           "doc-impact",
+          "prompts",
+          "impact-analyze",
           "tests",
           "impact.test"
         ],
@@ -165,8 +170,8 @@
           "health score.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*context health",
           "context health.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*doc impact",
-          "doc impact.*(create|update|fix|add|modify|change|debug|refactor|implement|build)"
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*hook health",
+          "hook health.*(create|update|fix|add|modify|change|debug|refactor|implement|build)"
         ]
       }
     },

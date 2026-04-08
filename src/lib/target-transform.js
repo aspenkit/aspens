@@ -180,6 +180,39 @@ function buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphS
   return result;
 }
 
+export function ensureRootKeyFilesSection(content, graphSerialized) {
+  if (!content || !graphSerialized?.hubs?.length) return content;
+
+  const section = buildHubFilesSection(graphSerialized);
+  if (!section) return content;
+
+  const trimmed = content.trimEnd();
+  const keyFilesSectionRegex = /## Key Files\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/;
+
+  if (keyFilesSectionRegex.test(trimmed)) {
+    return trimmed.replace(keyFilesSectionRegex, section).replace(/(\n){3,}/g, '\n\n') + '\n';
+  }
+
+  const behaviorIndex = trimmed.search(/\n## Behavior\b/);
+  const lastUpdatedIndex = trimmed.search(/\n\*\*Last Updated\b/);
+  const insertAt = behaviorIndex >= 0
+    ? behaviorIndex
+    : lastUpdatedIndex >= 0
+      ? lastUpdatedIndex
+      : trimmed.length;
+
+  const before = trimmed.slice(0, insertAt).trimEnd();
+  const after = trimmed.slice(insertAt).trimStart();
+
+  return (
+    before +
+    '\n\n' +
+    section +
+    (after ? '\n\n' + after : '') +
+    '\n'
+  ).replace(/(\n){3,}/g, '\n\n');
+}
+
 function syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget, hasGraph = false) {
   const skillRefs = buildCodexSkillRefs(baseSkill, domainSkills, destTarget, hasGraph);
   if (skillRefs.length === 0) return content;
@@ -215,6 +248,18 @@ function buildCodexSkillRefs(baseSkill, domainSkills, destTarget, hasGraph = fal
     refs.push('- `' + join(destTarget.skillsDir, 'architecture', destTarget.skillFilename) + '` — Import graph and code-map reference for structural changes.');
   }
   return refs;
+}
+
+function buildHubFilesSection(serializedGraph) {
+  if (!serializedGraph?.hubs?.length) return null;
+
+  const lines = ['## Key Files', '', '**Hub files (most depended-on):**'];
+  for (const hub of serializedGraph.hubs.slice(0, 5)) {
+    lines.push('- `' + hub.path + '` - ' + hub.fanIn + ' dependents');
+  }
+  lines.push('');
+
+  return lines.join('\n');
 }
 
 function extractFrontmatterField(content, field) {

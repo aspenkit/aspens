@@ -6,6 +6,7 @@ import {
   resolveTarget,
   resolveTargets,
   getAllowedPaths,
+  mergeConfiguredTargets,
   readConfig,
   writeConfig,
   inferConfig,
@@ -91,6 +92,16 @@ describe('getAllowedPaths', () => {
     expect(dirPrefixes).toContain('.codex/');
     expect(exactFiles).toContain('CLAUDE.md');
     expect(exactFiles).toContain('AGENTS.md');
+  });
+});
+
+describe('mergeConfiguredTargets', () => {
+  it('preserves existing targets when a narrower run is persisted', () => {
+    expect(mergeConfiguredTargets(['claude', 'codex'], ['claude'])).toEqual(['claude', 'codex']);
+  });
+
+  it('adds newly requested targets without duplicates', () => {
+    expect(mergeConfiguredTargets(['claude'], ['claude', 'codex'])).toEqual(['claude', 'codex']);
   });
 });
 

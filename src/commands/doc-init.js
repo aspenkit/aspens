@@ -11,9 +11,9 @@ import { persistGraphArtifacts } from '../lib/graph-persistence.js';
 import { installGitHook } from '../lib/git-hook.js';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
-import { TARGETS, resolveTarget, getAllowedPaths, writeConfig, loadConfig } from '../lib/target.js';
+import { TARGETS, resolveTarget, getAllowedPaths, writeConfig, loadConfig, mergeConfiguredTargets } from '../lib/target.js';
 import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
-import { transformForTarget, validateTransformedFiles } from '../lib/target-transform.js';
+import { transformForTarget, validateTransformedFiles, ensureRootKeyFilesSection } from '../lib/target-transform.js';
 import { findSkillFiles } from '../lib/skill-reader.js';
 import { getGitRoot } from '../lib/git-helpers.js';
 
@@ -122,6 +122,7 @@ export async function docInitCommand(path, options) {
   const verbose = !!options.verbose;
   const model = options.model || null;
   const recommended = !!options.recommended;
+  const { config: existingConfig } = loadConfig(repoPath, { persist: false });
 
   // --hooks-only: skip skill generation, just install/update hooks
   if (options.hooksOnly) {
@@ -703,7 +704,8 @@ export async function docInitCommand(path, options) {
   }
 
   // Step 10: Persist target config
-  writeConfig(repoPath, { targets: targetIds, backend: backend.id });
+  const persistedTargets = mergeConfiguredTargets(existingConfig?.targets, targetIds);
+  writeConfig(repoPath, { targets: persistedTargets, backend: backend.id });
 
   console.log(pc.dim('  Verification: ') + [
     `${targets.map(t => t.label).join(' + ')} configured`,
@@ -907,30 +909,7 @@ async function installHooks(repoPath, options) {
 }
 
 function createHookSettings(repoPath, templateSettings) {
-  const gitRoot = getGitRoot(repoPath) || repoPath;
-  const projectRelative = toPosixRelative(gitRoot, repoPath);
-  const hookPrefix = projectRelative ? `$CLAUDE_PROJECT_DIR/${projectRelative}` : '$CLAUDE_PROJECT_DIR';
-  const settings = JSON.parse(JSON.stringify(templateSettings));
-
-  for (const entries of Object.values(settings.hooks || {})) {
-    if (!Array.isArray(entries)) continue;
-    for (const entry of entries) {
-      if (!Array.isArray(entry.hooks)) continue;
-      for (const hook of entry.hooks) {
-        if (typeof hook.command === 'string' && hook.command.includes('$CLAUDE_PROJECT_DIR')) {
-          hook.command = hook.command.replace('$CLAUDE_PROJECT_DIR', hookPrefix);
-        }
-      }
-    }
-  }
-
-  return settings;
-}
-
-function toPosixRelative(from, to) {
-  const rel = relative(from, to);
-  if (!rel || rel === '.') return '';
-  return rel.split('\\').join('/');
+  return JSON.parse(JSON.stringify(templateSettings));
 }
 
 // --- Generation modes ---
@@ -984,6 +963,20 @@ function buildGraphContext(graph) {
     }
     sections.push('');
   }
+
+  return sections.join('\n');
+}
+
+function buildRootInstructionsGraphContext(graph) {
+  if (!graph?.hubs?.length) return '';
+
+  const sections = ['## Key Files To Surface In Root Context', ''];
+  sections.push('Add a concise `## Key Files` section to the root instructions file and mention these hub files explicitly:');
+  for (const hub of graph.hubs.slice(0, 5)) {
+    const fileInfo = graph.files?.[hub.path];
+    sections.push(`- \`${hub.path}\` — ${hub.fanIn} dependents${fileInfo?.lines ? `, ${fileInfo.lines} lines` : ''}`);
+  }
+  sections.push('');
 
   return sections.join('\n');
 }
@@ -1503,8 +1496,9 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       });
     }
 
+    const rootGraphContext = buildRootInstructionsGraphContext(repoGraph);
     const claudeMdPrompt = loadPrompt('doc-init-claudemd', CANONICAL_VARS) +
-      `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${existingClaudeMdSection}`;
+      `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${rootGraphContext ? `\n\n${rootGraphContext}` : ''}${existingClaudeMdSection}`;
 
     try {
       let { text, usage } = await runLLM(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner), _backendId);
@@ -1526,6 +1520,9 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
         claudeMdSpinner.stop(pc.yellow(`${instructionsArtifactLabel()} — failed after retries`));
         p.log.warn(`Could not generate ${instructionsArtifactLabel()}. Try: aspens doc init --strategy rewrite --mode base-only`);
       } else {
+        files = files.map(file => file.path === 'CLAUDE.md'
+          ? { ...file, content: ensureRootKeyFilesSection(file.content, repoGraph) }
+          : file);
         allFiles.push(...files);
         claudeMdSpinner.stop(pc.green(`${instructionsArtifactLabel()} generated`));
       }

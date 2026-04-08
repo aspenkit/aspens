@@ -118,6 +118,25 @@ export function getAllowedPaths(targets) {
   };
 }
 
+export function mergeConfiguredTargets(existingTargets = [], nextTargets = []) {
+  const validIds = new Set(Object.keys(TARGETS));
+  const merged = [];
+
+  for (const target of existingTargets) {
+    if (validIds.has(target) && !merged.includes(target)) {
+      merged.push(target);
+    }
+  }
+
+  for (const target of nextTargets) {
+    if (validIds.has(target) && !merged.includes(target)) {
+      merged.push(target);
+    }
+  }
+
+  return merged;
+}
+
 /**
  * Shorthand — returns path info for a target.
  * @param {string} targetId

@@ -103,6 +103,21 @@ describe('target status and actions', () => {
     });
     expect(actions).toEqual(['aspens doc sync', 'aspens doc init --mode chunked --domains profile']);
   });
+
+  it('recommends rewrite when only root hub coverage is incomplete', () => {
+    const actions = recommendActions({
+      status: {
+        instructions: 'healthy',
+        domains: 'healthy',
+        hooks: 'healthy',
+      },
+      drift: { changedCount: 0 },
+      domainCoverage: { missing: [] },
+      hubCoverage: { mentioned: 3, total: 5 },
+    });
+
+    expect(actions).toEqual(['aspens doc init --mode base-only --strategy rewrite']);
+  });
 });
 
 describe('computeHealthScore', () => {
@@ -218,5 +233,25 @@ describe('evaluateHookHealth', () => {
     expect(health.healthy).toBe(false);
     expect(health.invalidCommands).toHaveLength(1);
     expect(health.issues.some(issue => issue.includes('broken hook commands'))).toBe(true);
+  });
+
+  it('treats subdirectory-prefixed hook commands as broken for the project root', () => {
+    mkdirSync(join(TEST_DIR, '.claude', 'hooks'), { recursive: true });
+    mkdirSync(join(TEST_DIR, '.claude', 'skills'), { recursive: true });
+    writeFileSync(join(TEST_DIR, '.claude', 'hooks', 'skill-activation-prompt.sh'), '#!/bin/bash\n', 'utf8');
+    writeFileSync(join(TEST_DIR, '.claude', 'hooks', 'graph-context-prompt.sh'), '#!/bin/bash\n', 'utf8');
+    writeFileSync(join(TEST_DIR, '.claude', 'hooks', 'post-tool-use-tracker.sh'), '#!/bin/bash\n', 'utf8');
+    writeFileSync(join(TEST_DIR, '.claude', 'skills', 'skill-rules.json'), '{}\n', 'utf8');
+    writeFileSync(join(TEST_DIR, '.claude', 'settings.json'), JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [{
+          hooks: [{ type: 'command', command: '"$CLAUDE_PROJECT_DIR/backend/.claude/hooks/skill-activation-prompt.sh"' }],
+        }],
+      },
+    }, null, 2));
+
+    const health = evaluateHookHealth(TEST_DIR);
+    expect(health.healthy).toBe(false);
+    expect(health.invalidCommands).toEqual(['"$CLAUDE_PROJECT_DIR/backend/.claude/hooks/skill-activation-prompt.sh"']);
   });
 });

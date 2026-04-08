@@ -4,7 +4,6 @@ import { scanRepo } from './scanner.js';
 import { buildRepoGraph } from './graph-builder.js';
 import { loadConfig, TARGETS } from './target.js';
 import { findSkillFiles } from './skill-reader.js';
-import { getGitRoot } from './git-helpers.js';
 
 const SOURCE_EXTS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
@@ -248,7 +247,7 @@ export function recommendActions(target) {
     target.hubCoverage?.total > 0 &&
     target.hubCoverage.mentioned < target.hubCoverage.total
   ) {
-    actions.push('aspens doc init --mode base-only --strategy improve');
+    actions.push('aspens doc init --mode base-only --strategy rewrite');
   }
   return [...new Set(actions)];
 }
@@ -377,7 +376,6 @@ export function summarizeMissing(targets) {
 }
 
 export function evaluateHookHealth(repoPath) {
-  const gitRoot = getGitRoot(repoPath) || repoPath;
   const settingsPath = join(repoPath, '.claude', 'settings.json');
   const rulesPath = join(repoPath, '.claude', 'skills', 'skill-rules.json');
   const hooksDir = join(repoPath, '.claude', 'hooks');
@@ -408,7 +406,7 @@ export function evaluateHookHealth(repoPath) {
       const commands = extractHookCommandsFromSettings(settings);
       for (const command of commands) {
         if (!command.includes('.claude/hooks/')) continue;
-        const resolvedPath = commandToHookPath(command, gitRoot);
+        const resolvedPath = commandToHookPath(command, repoPath);
         if (!resolvedPath || !existsSync(resolvedPath)) {
           invalidCommands.push(command);
         }
@@ -446,10 +444,10 @@ function extractHookCommandsFromSettings(settings) {
   return commands;
 }
 
-function commandToHookPath(command, gitRoot) {
+function commandToHookPath(command, repoPath) {
   const match = command.match(/\$CLAUDE_PROJECT_DIR\/(.+?\.sh)\b/);
   if (!match) return null;
-  return join(gitRoot, ...match[1].split('/'));
+  return join(repoPath, ...match[1].split('/'));
 }
 
 function inferTargetsFromScan(scan) {

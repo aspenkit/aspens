@@ -20,7 +20,7 @@ You are working on the **template library** — bundled agents, slash commands, 
 - `src/templates/agents/*.md` — Agent persona templates (11 bundled)
 - `src/templates/commands/*.md` — Slash command templates (2 bundled)
 - `src/templates/hooks/` — Hook scripts (5 bundled): `skill-activation-prompt.sh/mjs`, `graph-context-prompt.sh/mjs`, `post-tool-use-tracker.sh`
-- `src/templates/settings/settings.json` — Default settings with hook configuration
+- `src/templates/settings/settings.json` — Default settings with hook configuration (commands are double-quoted for shell safety)
 - `src/prompts/add-skill.md` — System prompt for LLM-powered skill generation from reference docs
 
 ## Key Concepts
@@ -30,7 +30,8 @@ You are working on the **template library** — bundled agents, slash commands, 
 - **Backend-aware generation:** `generateSkillFromDoc` uses `runLLM()` imported from `runner.js` to dispatch to Claude or Codex based on config. `getAllowedPaths([target])` provides path safety for `parseFileOutput`.
 - **Skill subcommand:** `aspens add skill <name>` scaffolds a blank skill template. `--from <file>` generates a skill from a reference doc using the configured backend. `--list` shows installed skills.
 - **Hook templates (monorepo-aware):** Shell hooks (`skill-activation-prompt.sh`, `graph-context-prompt.sh`, `post-tool-use-tracker.sh`) compute `PROJECT_DIR` from the script's own location (`cd "$SCRIPT_DIR/../.." && pwd`) and pass it as `ASPENS_PROJECT_DIR` to the `.mjs` counterparts. The `.mjs` scripts prefer `ASPENS_PROJECT_DIR` over `CLAUDE_PROJECT_DIR`, enabling correct operation in monorepo subdirectories where `CLAUDE_PROJECT_DIR` points to git root.
-- **`doc init` hook installation (step 13):** Generates `skill-rules.json` from skills, copies hook files, generates `post-tool-use-tracker.sh` with domain patterns (via `BEGIN/END` markers), merges `settings.json` with backup. `createHookSettings()` adjusts hook command paths for subdirectory projects.
+- **Settings template quoting:** Hook commands in `settings.json` are wrapped in double quotes (`"\"$CLAUDE_PROJECT_DIR/.claude/hooks/...\""`), ensuring paths with spaces or special characters are handled correctly by the shell.
+- **`doc init` hook installation (step 13):** Generates `skill-rules.json` from skills, copies hook files, generates `post-tool-use-tracker.sh` with domain patterns (via `BEGIN/END` markers), merges `settings.json` with backup. `createHookSettings()` adjusts hook command paths for subdirectory projects — matches `$CLAUDE_PROJECT_DIR` anywhere in the command string (not just at the start) to handle quoted paths.
 - **Template discovery:** `listAvailable()` reads template dir, filters `.md`/`.sh` files, regex-parses `name:` and `description:`.
 - **No-overwrite policy:** `addResource()` skips files that already exist via `existsSync` check. Same for `addSkillCommand`.
 - **Plan/execute gitignore:** Adding `plan` or `execute` agents auto-adds `dev/` to `.gitignore` for plan storage.
