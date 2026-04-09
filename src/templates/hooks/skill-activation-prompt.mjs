@@ -104,7 +104,8 @@ export function getSessionActiveSkills(projectDir, currentRepo) {
       if (currentRepo && session.repo && session.repo !== currentRepo) {
         return [];
       }
-      return session.active_skills || [];
+      const skills = session.active_skills || [];
+      return skills.filter(s => typeof s === 'string');
     }
   } catch {
     // Session file doesn't exist or is invalid — that's fine
@@ -169,8 +170,8 @@ export function matchSkills(prompt, rules, currentRepo, sessionSkills) {
       continue;
     }
 
-    // AUTO-ACTIVATE: alwaysActivate + scope matches (exact repo OR "all")
-    if (config.alwaysActivate && (config.scope === currentRepo || config.scope === 'all')) {
+    // AUTO-ACTIVATE: alwaysActivate (scope already filtered above)
+    if (config.alwaysActivate) {
       matched.push({ name: skillName, matchType: 'auto', config });
       addedSkills.add(skillName);
       continue;
@@ -224,7 +225,7 @@ export function matchSkills(prompt, rules, currentRepo, sessionSkills) {
  * @param {string} projectDir - Absolute path to the project root
  * @returns {string} Formatted output for stdout
  */
-export function formatOutput(matched, currentRepo, projectDir) {
+export function formatOutput(matched, currentRepo) {
   if (matched.length === 0) {
     return '';
   }
@@ -287,25 +288,25 @@ async function main() {
       data = JSON.parse(input);
     } catch {
       // Invalid JSON — exit silently
-      process.exit(0);
+      return;
     }
 
     const prompt = data.prompt || '';
     if (!prompt) {
-      process.exit(0);
+      return;
     }
 
     // Determine project directory
     const projectDir = process.env.ASPENS_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR;
     if (!projectDir) {
-      process.exit(0);
+      return;
     }
 
     // Load skill rules
     const rulesPath = join(projectDir, '.claude', 'skills', 'skill-rules.json');
     if (!existsSync(rulesPath)) {
       // No skill rules file — exit silently
-      process.exit(0);
+      return;
     }
 
     let rules;
@@ -313,11 +314,11 @@ async function main() {
       rules = JSON.parse(readFileSync(rulesPath, 'utf-8'));
     } catch {
       // Invalid rules file — exit silently
-      process.exit(0);
+      return;
     }
 
     if (!rules.skills || typeof rules.skills !== 'object') {
-      process.exit(0);
+      return;
     }
 
     // Detect current repository
@@ -363,7 +364,7 @@ async function main() {
 
     // Format and emit output
     if (matched.length > 0) {
-      const output = formatOutput(matched, currentRepo, projectDir);
+      const output = formatOutput(matched, currentRepo);
 
       // stderr: terminal status line
       const highPriority = matched.filter(
@@ -378,11 +379,10 @@ async function main() {
       }
     }
 
-    process.exit(0);
+    return;
   } catch (err) {
     // NEVER block the user's prompt — log and exit cleanly
     process.stderr.write(`[Skills] Error: ${err.message}\n`);
-    process.exit(0);
   }
 }
 

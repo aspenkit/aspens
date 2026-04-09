@@ -39,7 +39,7 @@ describe.sequential('save-tokens prompt guard', () => {
     const result = runGuard({ prompt: 'hello' });
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain('Claude token telemetry is unavailable');
+    expect(result.stdout).toContain('Claude token telemetry is unavailable');
   });
 
   it('warns without blocking above the warning threshold', () => {
@@ -48,8 +48,8 @@ describe.sequential('save-tokens prompt guard', () => {
     const result = runGuard({ prompt: 'continue' });
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain('current context is 176k/200k');
-    expect(result.stderr).toContain('/save-handoff');
+    expect(result.stdout).toContain('current context is 176k/200k');
+    expect(result.stdout).toContain('/save-handoff');
   });
 
   it('warns strongly and saves a handoff above the compact threshold', () => {
@@ -58,9 +58,9 @@ describe.sequential('save-tokens prompt guard', () => {
     const result = runGuard({ prompt: 'continue' });
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toContain('current context is 201k/200k');
-    expect(result.stderr).toContain('Handoff saved: .aspens/sessions/');
-    expect(result.stderr).toContain('/resume-handoff-latest');
+    expect(result.stdout).toContain('current context is 201k/200k');
+    expect(result.stdout).toContain('Handoff saved: .aspens/sessions/');
+    expect(result.stdout).toContain('/resume-handoff-latest');
   });
 });
 

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { join, resolve, relative } from 'path';
 import { fileURLToPath } from 'url';
 
 const DEFAULT_CONFIG = {
@@ -106,7 +106,7 @@ export function saveHandoff(projectDir, input = {}, reason = 'limit') {
   const tokenCount = Number.isInteger(snapshot.tokens) ? snapshot.tokens : null;
   const tokenLabel = tokenCount === null ? 'unknown' : `~${tokenCount.toLocaleString()}`;
   const prompt = extractPrompt(input);
-  const transcriptExcerpt = readTranscriptExcerpt(input);
+  const transcriptExcerpt = readTranscriptExcerpt(input, projectDir);
 
   const lines = [
     '# Claude save-tokens handoff',
@@ -123,9 +123,11 @@ export function saveHandoff(projectDir, input = {}, reason = 'limit') {
   lines.push('');
 
   if (prompt) {
-    lines.push('## Latest prompt');
+    lines.push('## Latest prompt (quoted user input)');
     lines.push('');
+    lines.push('```text');
     lines.push(prompt);
+    lines.push('```');
     lines.push('');
   }
 
@@ -176,6 +178,9 @@ export function runStatusline() {
   const input = readHookInput();
   const projectDir = getProjectDir();
   const config = loadSaveTokensConfig(projectDir);
+
+  if (!config.enabled) return;
+
   const telemetry = recordClaudeContextTelemetry(projectDir, input);
 
   if (telemetry.currentContextTokens > 0) {
@@ -199,7 +204,8 @@ export function runPromptGuard() {
   const currentTokens = snapshot.tokens;
 
   if (!Number.isInteger(currentTokens)) {
-    console.error(
+    // stdout → injected into Claude's context as a system message
+    console.log(
       'save-tokens: Claude token telemetry is unavailable. ' +
       'Open an issue if this persists: https://github.com/aspenkit/aspens/issues'
     );
@@ -218,22 +224,23 @@ export function runPromptGuard() {
       lines.push(`Handoff saved: ${handoffPath}`);
     }
     lines.push('');
-    lines.push('Recommended:');
-    lines.push('1. Run /save-handoff to save a rich summary');
+    lines.push('IMPORTANT — you must tell the user:');
+    lines.push('1. Run /save-handoff to save a rich handoff summary');
     lines.push('2. Start a fresh Claude session');
     lines.push('3. Run /resume-handoff-latest to continue');
     lines.push('');
-    lines.push('Alternative:');
-    lines.push('Continue here, or run /compact if you prefer to compact this session.');
+    lines.push('Alternative: continue here, or run /compact to compact this session.');
 
-    console.error(lines.join('\n'));
+    // stdout → injected into Claude's context as a system message
+    console.log(lines.join('\n'));
     return 0;
   }
 
   if (currentTokens >= config.warnAtTokens) {
-    console.error(
+    // stdout → injected into Claude's context as a system message
+    console.log(
       `save-tokens: current context is ${formatTokens(currentTokens)}/${formatTokens(config.compactAtTokens)}. ` +
-      'Consider running /save-handoff soon.'
+      'Tell the user to consider running /save-handoff soon.'
     );
   }
 
@@ -250,7 +257,7 @@ export function runPrecompact() {
   }
 
   const handoffPath = saveHandoff(projectDir, input, 'precompact');
-  console.error(`save-tokens: handoff saved before compact to ${handoffPath}.`);
+  console.log(`save-tokens: handoff saved before compact to ${handoffPath}.`);
   return 0;
 }
 
@@ -269,16 +276,29 @@ function extractPrompt(input) {
   return input.prompt || input.user_prompt || input.message || '';
 }
 
-function readTranscriptExcerpt(input) {
+function readTranscriptExcerpt(input, projectDir) {
   const transcriptPath = input.transcript_path || input.transcriptPath || '';
-  if (!transcriptPath || !existsSync(transcriptPath)) return '';
+  if (!transcriptPath) return '';
+
+  const safeTranscriptPath = safeProjectFilePath(projectDir, transcriptPath);
+  if (!safeTranscriptPath || !existsSync(safeTranscriptPath)) return '';
 
   try {
-    const content = readFileSync(transcriptPath, 'utf8');
+    const content = readFileSync(safeTranscriptPath, 'utf8');
     return content.slice(-4000);
   } catch {
     return '';
   }
+}
+
+function safeProjectFilePath(projectDir, filePath) {
+  const projectRoot = resolve(projectDir);
+  const candidate = resolve(filePath);
+  const rel = relative(projectRoot, candidate);
+  if (rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && !rel.includes('..\\'))) {
+    return candidate;
+  }
+  return null;
 }
 
 function sumInputContextTokens(currentUsage) {

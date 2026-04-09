@@ -14,5 +14,5 @@ get_script_dir() {
 SCRIPT_DIR="$(get_script_dir)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-INPUT=$(cat)
-printf '%s' "$INPUT" | ASPENS_PROJECT_DIR="$PROJECT_DIR" NODE_NO_WARNINGS=1 node "$SCRIPT_DIR/save-tokens.mjs" prompt-guard
+ASPENS_PROJECT_DIR="$PROJECT_DIR" NODE_NO_WARNINGS=1 node "$SCRIPT_DIR/save-tokens.mjs" prompt-guard
+exit 0

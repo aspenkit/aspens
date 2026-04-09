@@ -49,30 +49,30 @@ function showWelcome() {
     ${pc.green('aspens doc sync --install-hook')}    Enable/repair automatic doc updates after commits
 
   ${pc.bold('Generate & Sync')}
-    ${pc.green('aspens doc init')} ${pc.dim('[path]')}          Generate docs from your code
+    ${pc.green('aspens doc init')}                   Generate docs from your code
     ${pc.green('aspens doc init --recommended')}     Install the full recommended setup
     ${pc.green('aspens doc init --dry-run')}         Preview without writing
     ${pc.green('aspens doc init --mode chunked')}    One domain at a time (large repos)
     ${pc.green('aspens doc init --target all')}      Generate Claude + Codex docs together
     ${pc.green('aspens doc init --model haiku')}     Use a specific backend model
     ${pc.green('aspens doc init --verbose')}         See backend activity in real time
-    ${pc.green('aspens doc sync')} ${pc.dim('[path]')}          Update generated docs from recent commits
-    ${pc.green('aspens doc impact')} ${pc.dim('[path]')}        Check freshness, coverage, and hooks
+    ${pc.green('aspens doc sync')}                   Update generated docs from recent commits
+    ${pc.green('aspens doc impact')}                 Check freshness, coverage, and hooks
     ${pc.green('aspens doc sync --install-hook')}    Auto-update generated docs after git commits
     ${pc.green('aspens doc sync --commits 5')}       Sync from last 5 commits
     ${pc.green('aspens doc sync --refresh')}         Refresh all skills from current code
 
   ${pc.bold('Claude Add-ons')}
     ${pc.green('aspens save-tokens')}                Install token warnings + handoff commands
-    ${pc.green('aspens add agent')} ${pc.dim('[name]')}         Add Claude-side agents ${pc.dim(`(${countTemplates('agents')} available)`)}
-    ${pc.green('aspens add command')} ${pc.dim('[name]')}       Add slash commands ${pc.dim(`(${countTemplates('commands')} available)`)}
-    ${pc.green('aspens add hook')} ${pc.dim('[name]')}          Add auto-triggering hooks ${pc.dim(`(${countTemplates('hooks')} available)`)}
+    ${pc.green('aspens add agent')} ${pc.dim('[name]')}        Add Claude-side agents ${pc.dim(`(${countTemplates('agents')} available)`)}
+    ${pc.green('aspens add command')} ${pc.dim('[name]')}      Add slash commands ${pc.dim(`(${countTemplates('commands')} available)`)}
+    ${pc.green('aspens add hook')} ${pc.dim('[name]')}         Add auto-triggering hooks ${pc.dim(`(${countTemplates('hooks')} available)`)}
     ${pc.green('aspens add agent --list')}           Browse the library
     ${pc.green('aspens customize agents')}           Inject project context into agents
 
   ${pc.bold('Utilities')}
-    ${pc.green('aspens scan')} ${pc.dim('[path]')}              Inspect tech stack, domains, and repo shape (no AI)
-    ${pc.green('aspens add skill')} ${pc.dim('<name>')}         Add custom skills (conventions, workflows)
+    ${pc.green('aspens scan')}                       Inspect tech stack, domains, and repo shape (no AI)
+    ${pc.green('aspens add skill')} ${pc.dim('<name>')}        Add custom skills (conventions, workflows)
 
   ${pc.bold('Options')}
     ${pc.yellow('--dry-run')}          Preview without writing      ${pc.yellow('--verbose')}     See backend activity

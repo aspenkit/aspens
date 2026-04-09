@@ -178,6 +178,9 @@ export function runStatusline() {
   const input = readHookInput();
   const projectDir = getProjectDir();
   const config = loadSaveTokensConfig(projectDir);
+
+  if (!config.enabled) return;
+
   const telemetry = recordClaudeContextTelemetry(projectDir, input);
 
   if (telemetry.currentContextTokens > 0) {
@@ -201,7 +204,8 @@ export function runPromptGuard() {
   const currentTokens = snapshot.tokens;
 
   if (!Number.isInteger(currentTokens)) {
-    console.error(
+    // stdout → injected into Claude's context as a system message
+    console.log(
       'save-tokens: Claude token telemetry is unavailable. ' +
       'Open an issue if this persists: https://github.com/aspenkit/aspens/issues'
     );
@@ -220,22 +224,23 @@ export function runPromptGuard() {
       lines.push(`Handoff saved: ${handoffPath}`);
     }
     lines.push('');
-    lines.push('Recommended:');
-    lines.push('1. Run /save-handoff to save a rich summary');
+    lines.push('IMPORTANT — you must tell the user:');
+    lines.push('1. Run /save-handoff to save a rich handoff summary');
     lines.push('2. Start a fresh Claude session');
     lines.push('3. Run /resume-handoff-latest to continue');
     lines.push('');
-    lines.push('Alternative:');
-    lines.push('Continue here, or run /compact if you prefer to compact this session.');
+    lines.push('Alternative: continue here, or run /compact to compact this session.');
 
-    console.error(lines.join('\n'));
+    // stdout → injected into Claude's context as a system message
+    console.log(lines.join('\n'));
     return 0;
   }
 
   if (currentTokens >= config.warnAtTokens) {
-    console.error(
+    // stdout → injected into Claude's context as a system message
+    console.log(
       `save-tokens: current context is ${formatTokens(currentTokens)}/${formatTokens(config.compactAtTokens)}. ` +
-      'Consider running /save-handoff soon.'
+      'Tell the user to consider running /save-handoff soon.'
     );
   }
 
@@ -252,7 +257,7 @@ export function runPrecompact() {
   }
 
   const handoffPath = saveHandoff(projectDir, input, 'precompact');
-  console.error(`save-tokens: handoff saved before compact to ${handoffPath}.`);
+  console.log(`save-tokens: handoff saved before compact to ${handoffPath}.`);
   return 0;
 }
 

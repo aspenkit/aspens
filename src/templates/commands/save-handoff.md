@@ -9,7 +9,7 @@ Write a structured handoff file to `.aspens/sessions/` so a future Claude sessio
 1. Generate a timestamp: `YYYY-MM-DDTHH-MM-SS` (replace `:` and `.` with `-`).
 2. Write a markdown file to `.aspens/sessions/<timestamp>-claude-handoff.md` with this structure:
 
-```
+```md
 # Claude save-tokens handoff
 
 - Saved: <ISO timestamp>
