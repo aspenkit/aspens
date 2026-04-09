@@ -804,6 +804,12 @@ function ensureRecommendedAgentGitignore(repoPath, summaryLines) {
   summaryLines.push(`${pc.green('+')} .gitignore (dev/)`);
 }
 
+function toPosixRelative(from, to) {
+  const rel = relative(from, to);
+  if (!rel || rel === '.') return '';
+  return rel.split('\\').join('/');
+}
+
 function showTokenSummary(startTime) {
   if (tokenTracker.calls > 0) {
     const elapsed = Math.round((Date.now() - startTime) / 1000);

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync } from 'fs';
-import { join, resolve, relative } from 'path';
+import { join } from 'path';
 import { fileURLToPath } from 'url';
 
 const DEFAULT_CONFIG = {
@@ -106,7 +106,7 @@ export function saveHandoff(projectDir, input = {}, reason = 'limit') {
   const tokenCount = Number.isInteger(snapshot.tokens) ? snapshot.tokens : null;
   const tokenLabel = tokenCount === null ? 'unknown' : `~${tokenCount.toLocaleString()}`;
   const prompt = extractPrompt(input);
-  const transcriptExcerpt = readTranscriptExcerpt(input, projectDir);
+  const transcriptExcerpt = readTranscriptExcerpt(input);
 
   const lines = [
     '# Claude save-tokens handoff',
@@ -123,11 +123,9 @@ export function saveHandoff(projectDir, input = {}, reason = 'limit') {
   lines.push('');
 
   if (prompt) {
-    lines.push('## Latest prompt (quoted user input)');
+    lines.push('## Latest prompt');
     lines.push('');
-    lines.push('```text');
     lines.push(prompt);
-    lines.push('```');
     lines.push('');
   }
 
@@ -271,29 +269,16 @@ function extractPrompt(input) {
   return input.prompt || input.user_prompt || input.message || '';
 }
 
-function readTranscriptExcerpt(input, projectDir) {
+function readTranscriptExcerpt(input) {
   const transcriptPath = input.transcript_path || input.transcriptPath || '';
-  if (!transcriptPath) return '';
-
-  const safeTranscriptPath = safeProjectFilePath(projectDir, transcriptPath);
-  if (!safeTranscriptPath || !existsSync(safeTranscriptPath)) return '';
+  if (!transcriptPath || !existsSync(transcriptPath)) return '';
 
   try {
-    const content = readFileSync(safeTranscriptPath, 'utf8');
+    const content = readFileSync(transcriptPath, 'utf8');
     return content.slice(-4000);
   } catch {
     return '';
   }
-}
-
-function safeProjectFilePath(projectDir, filePath) {
-  const projectRoot = resolve(projectDir);
-  const candidate = resolve(filePath);
-  const rel = relative(projectRoot, candidate);
-  if (rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && !rel.includes('..\\'))) {
-    return candidate;
-  }
-  return null;
 }
 
 function sumInputContextTokens(currentUsage) {

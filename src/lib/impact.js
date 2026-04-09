@@ -466,9 +466,11 @@ export function evaluateSaveTokensHealth(repoPath, saveTokensConfig = null) {
   const commandsDir = join(repoPath, '.claude', 'commands');
   const requiredHookFiles = [
     'save-tokens.mjs',
-    'save-tokens-statusline.sh',
-    'save-tokens-prompt-guard.sh',
-    'save-tokens-precompact.sh',
+    ...(saveTokensNeedsTokenWarnings(saveTokensConfig) ? [
+      'save-tokens-statusline.sh',
+      'save-tokens-prompt-guard.sh',
+    ] : []),
+    ...(saveTokensConfig?.saveHandoff !== false ? ['save-tokens-precompact.sh'] : []),
   ];
   const legacyHookFiles = [
     'save-tokens-lib.mjs',
@@ -482,9 +484,11 @@ export function evaluateSaveTokensHealth(repoPath, saveTokensConfig = null) {
     'resume-handoff.md',
   ];
   const requiredSettingsCommands = [
-    'save-tokens-statusline.sh',
-    'save-tokens-prompt-guard.sh',
-    'save-tokens-precompact.sh',
+    ...(saveTokensNeedsTokenWarnings(saveTokensConfig) ? [
+      'save-tokens-statusline.sh',
+      'save-tokens-prompt-guard.sh',
+    ] : []),
+    ...(saveTokensConfig?.saveHandoff !== false ? ['save-tokens-precompact.sh'] : []),
   ];
 
   if (!configured) {
@@ -553,6 +557,10 @@ export function evaluateSaveTokensHealth(repoPath, saveTokensConfig = null) {
     invalidCommands,
     installedLegacyHookFiles,
   };
+}
+
+function saveTokensNeedsTokenWarnings(config) {
+  return config?.warnAtTokens !== Number.MAX_SAFE_INTEGER || config?.compactAtTokens !== Number.MAX_SAFE_INTEGER;
 }
 
 export function evaluateHookHealth(repoPath) {

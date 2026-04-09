@@ -26,7 +26,7 @@ get_script_dir() {
 SCRIPT_DIR="$(get_script_dir)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Exit early if CLAUDE_PROJECT_DIR is not set
+# Exit early if neither CLAUDE_PROJECT_DIR nor PROJECT_DIR is set
 if [[ -z "$CLAUDE_PROJECT_DIR" ]] && [[ -z "$PROJECT_DIR" ]]; then
     exit 0
 fi

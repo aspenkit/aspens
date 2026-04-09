@@ -11,14 +11,18 @@ import {
 } from '../src/templates/hooks/save-tokens.mjs';
 
 const TEST_DIR = join(import.meta.dirname, 'tmp-save-tokens-hooks');
+const EXTERNAL_DIR = join(import.meta.dirname, 'tmp-save-tokens-external');
 
 beforeEach(() => {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+  if (existsSync(EXTERNAL_DIR)) rmSync(EXTERNAL_DIR, { recursive: true, force: true });
   mkdirSync(TEST_DIR, { recursive: true });
+  mkdirSync(EXTERNAL_DIR, { recursive: true });
 });
 
 afterAll(() => {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+  if (existsSync(EXTERNAL_DIR)) rmSync(EXTERNAL_DIR, { recursive: true, force: true });
 });
 
 describe('save-tokens hook telemetry', () => {
@@ -84,7 +88,37 @@ describe('save-tokens hook telemetry', () => {
 
     const content = readFileSync(join(TEST_DIR, handoffPath), 'utf8');
     expect(content).toContain('- Session tokens: unknown (missing-claude-statusline)');
+    expect(content).toContain('```text\ncontinue the checkout task\n```');
     expect(content).toContain('continue the checkout task');
+  });
+
+  it('ignores transcript paths outside the project directory', () => {
+    const sessionsDir = join(TEST_DIR, '.aspens', 'sessions');
+    mkdirSync(sessionsDir, { recursive: true });
+    const externalTranscript = join(EXTERNAL_DIR, 'external-transcript.jsonl');
+    writeFileSync(externalTranscript, 'SECRET_TRANSCRIPT\n', 'utf8');
+
+    const handoffPath = saveHandoff(TEST_DIR, {
+      prompt: 'continue',
+      transcript_path: externalTranscript,
+    }, 'precompact');
+
+    const content = readFileSync(join(TEST_DIR, handoffPath), 'utf8');
+    expect(content).not.toContain('SECRET_TRANSCRIPT');
+    expect(content).not.toContain('## Recent transcript excerpt');
+  });
+
+  it('includes transcript excerpts from inside the project directory', () => {
+    const transcriptPath = join(TEST_DIR, 'transcript.jsonl');
+    writeFileSync(transcriptPath, 'SAFE_TRANSCRIPT\n', 'utf8');
+
+    const handoffPath = saveHandoff(TEST_DIR, {
+      prompt: 'continue',
+      transcript_path: transcriptPath,
+    }, 'precompact');
+
+    const content = readFileSync(join(TEST_DIR, handoffPath), 'utf8');
+    expect(content).toContain('SAFE_TRANSCRIPT');
   });
 
   it('finds the newest handoff and ignores README markdown', () => {

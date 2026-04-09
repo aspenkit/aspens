@@ -10,7 +10,7 @@ const HOOK_PATH = join(HOOKS_DIR, 'post-commit');
 const SUBPROJECT_DIR = join(TEST_DIR, 'backend');
 
 beforeEach(() => {
-  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
+  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
   mkdirSync(TEST_DIR, { recursive: true });
   execFileSync('git', ['init'], { cwd: TEST_DIR, stdio: 'pipe' });
   mkdirSync(SUBPROJECT_DIR, { recursive: true });
@@ -20,7 +20,7 @@ afterAll(() => {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
 });
 
-describe('installGitHook', () => {
+describe.sequential('installGitHook', () => {
   it('creates post-commit hook with shebang and markers', () => {
     installGitHook(TEST_DIR);
     const content = readFileSync(HOOK_PATH, 'utf8');
@@ -68,6 +68,30 @@ describe('installGitHook', () => {
     expect(content.match(/^#!\/bin\/sh/gm)).toHaveLength(1);
   });
 
+  it('upgrades old unlabeled aspens hook block instead of appending a duplicate', () => {
+    writeFileSync(HOOK_PATH, [
+      '#!/bin/sh',
+      '# >>> aspens doc-sync hook (do not edit) >>>',
+      'npx aspens doc sync --commits 1',
+      '# <<< aspens doc-sync hook <<<',
+      '',
+    ].join('\n'), 'utf8');
+
+    installGitHook(TEST_DIR);
+
+    const content = readFileSync(HOOK_PATH, 'utf8');
+    expect(content).toContain('# >>> aspens doc-sync hook (.) (do not edit) >>>');
+    expect(content).not.toContain('# >>> aspens doc-sync hook (do not edit) >>>');
+    expect(content.match(/aspens doc-sync hook/g)).toHaveLength(2);
+  });
+
+  it('ignores generated directory-scoped AGENTS.md files', () => {
+    installGitHook(TEST_DIR);
+    const content = readFileSync(HOOK_PATH, 'utf8');
+
+    expect(content).toContain("grep -v '^.*\\/AGENTS\\.md$'");
+  });
+
   it('installs subproject hooks at the git root and syncs the subproject path', () => {
     installGitHook(SUBPROJECT_DIR);
     const content = readFileSync(HOOK_PATH, 'utf8');
@@ -87,7 +111,7 @@ describe('installGitHook', () => {
   });
 });
 
-describe('removeGitHook', () => {
+describe.sequential('removeGitHook', () => {
   it('removes hook file when it only contains aspens block', () => {
     installGitHook(TEST_DIR);
     expect(existsSync(HOOK_PATH)).toBe(true);

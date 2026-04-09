@@ -50,7 +50,7 @@ __aspens_doc_sync_${projectSlug}() {
 
   # Skip aspens-only commits (skills, CLAUDE.md, AGENTS.md, graph artifacts)
   CHANGED="\$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)"
-  NON_ASPENS="\$(echo "\$CHANGED" | ${scopePrefix}grep -v '^${generatedPrefix}\\.claude/' | grep -v '^${generatedPrefix}\\.codex/' | grep -v '^${generatedPrefix}\\.agents/' | grep -v '^${generatedPrefix}CLAUDE\\.md\$' | grep -v '^${generatedPrefix}AGENTS\\.md\$' | grep -v '^${generatedPrefix}\\.aspens\\.json\$' || true)"
+  NON_ASPENS="\$(echo "\$CHANGED" | ${scopePrefix}grep -v '^${generatedPrefix}\\.claude/' | grep -v '^${generatedPrefix}\\.codex/' | grep -v '^${generatedPrefix}\\.agents/' | grep -v '^${generatedPrefix}CLAUDE\\.md\$' | grep -v '^${generatedPrefix}AGENTS\\.md\$' | grep -v '^${generatedPrefix}.*\\/AGENTS\\.md\$' | grep -v '^${generatedPrefix}\\.aspens\\.json\$' || true)"
   if [ -z "\$NON_ASPENS" ]; then
     return 0
   fi
@@ -84,6 +84,11 @@ __aspens_doc_sync_${projectSlug}
     const existing = readFileSync(hookPath, 'utf8');
     if (existing.includes(`# >>> aspens doc-sync hook (${projectLabel})`)) {
       console.log(pc.yellow(`\n  Hook already installed for ${projectLabel}.\n`));
+      return;
+    }
+    if (hasUnlabeledAspensBlock(existing)) {
+      writeFileSync(hookPath, existing.replace(buildUnlabeledMarkerRegex(), '\n' + hookBlock).trim() + '\n', 'utf8');
+      console.log(pc.green(`\n  Upgraded aspens doc-sync hook for ${projectLabel}.\n`));
       return;
     }
     writeFileSync(hookPath, existing + '\n' + hookBlock, 'utf8');
@@ -164,4 +169,12 @@ function buildMarkerRegex(projectLabel) {
   return new RegExp(
     `\\n?# >>> aspens doc-sync hook \\(${escaped}\\) \\(do not edit\\) >>>[\\s\\S]*?# <<< aspens doc-sync hook \\(${escaped}\\) <<<\\n?`
   );
+}
+
+function hasUnlabeledAspensBlock(content) {
+  return content.includes('# >>> aspens doc-sync hook (do not edit) >>>');
+}
+
+function buildUnlabeledMarkerRegex() {
+  return /\n?# >>> aspens doc-sync hook \(do not edit\) >>>[\s\S]*?# <<< aspens doc-sync hook <<</;
 }

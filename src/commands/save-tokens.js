@@ -80,12 +80,13 @@ export async function saveTokensCommand(path = '.', _options = {}) {
   if (!hadReadme) {
     summaryLines.push(`${pc.green('+')} .aspens/sessions/README.md`);
   } else {
-    summaryLines.push(`${pc.yellow('~')} .aspens/sessions/README.md`);
+    summaryLines.push(`${pc.dim('-')} .aspens/sessions/README.md (already exists)`);
   }
 
   const hasClaudeTarget = targets.includes('claude');
   if (hasClaudeTarget) {
-    installClaudeSaveTokens(repoPath, summaryLines);
+    const installResult = installClaudeSaveTokens(repoPath, summaryLines);
+    applyStatusLineAvailability(finalConfig, installResult.statusLineInstalled, summaryLines);
   }
 
   const persistedTargets = mergeConfiguredTargets(existingConfig?.targets, targets);
@@ -131,7 +132,8 @@ export function installSaveTokensRecommended(repoPath, existingConfig, targets, 
 
   const hasClaudeTarget = targets.some(target => target.id === 'claude');
   if (hasClaudeTarget) {
-    installClaudeSaveTokens(repoPath, summaryLines);
+    const installResult = installClaudeSaveTokens(repoPath, summaryLines);
+    applyStatusLineAvailability(saveTokensConfig, installResult.statusLineInstalled, summaryLines);
   }
 
   return saveTokensConfig;
@@ -186,9 +188,8 @@ function installClaudeSaveTokens(repoPath, summaryLines) {
   }
 
   const settingsPath = join(repoPath, '.claude', 'settings.json');
-  const existingSettings = existsSync(settingsPath)
-    ? JSON.parse(readFileSync(settingsPath, 'utf8'))
-    : null;
+  const existingSettings = readJsonFile(settingsPath, summaryLines, '.claude/settings.json');
+  const statusLineInstalled = canInstallSaveTokensStatusLine(existingSettings);
 
   if (existingSettings && !existsSync(settingsPath + '.bak')) {
     writeFileSync(settingsPath + '.bak', JSON.stringify(existingSettings, null, 2) + '\n', 'utf8');
@@ -208,6 +209,32 @@ function installClaudeSaveTokens(repoPath, summaryLines) {
     copyFileSync(src, dest);
     summaryLines.push(`${existed ? pc.yellow('~') : pc.green('+')} .claude/commands/${cmd}`);
   }
+
+  return { statusLineInstalled };
+}
+
+function readJsonFile(path, summaryLines, label) {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    summaryLines.push(`${pc.yellow('!')} ${label} (invalid JSON; left unchanged)`);
+    return null;
+  }
+}
+
+function canInstallSaveTokensStatusLine(settings) {
+  if (!settings?.statusLine) return true;
+  return String(settings.statusLine.command || '').includes('save-tokens-statusline');
+}
+
+function applyStatusLineAvailability(config, statusLineInstalled, summaryLines) {
+  if (statusLineInstalled) return config;
+  config.warnAtTokens = Number.MAX_SAFE_INTEGER;
+  config.compactAtTokens = Number.MAX_SAFE_INTEGER;
+  config.sessionRotation = false;
+  summaryLines.push(`${pc.yellow('!')} save-tokens token warnings disabled (custom Claude statusLine is already configured)`);
+  return config;
 }
 
 function removeSaveTokens(repoPath, existingConfig) {
