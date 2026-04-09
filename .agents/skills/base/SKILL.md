@@ -18,12 +18,13 @@ Node.js (ESM) | Commander | Vitest | es-module-lexer | @clack/prompts | picocolo
 - `npm test` — Run vitest suite
 - `npm start` / `node bin/cli.js` — Run CLI
 - `aspens scan [path]` — Deterministic repo analysis (no LLM)
-- `aspens doc init [path]` — Generate skills + hooks + AGENTS.md (`--target claude|codex|all`, `--recommended` for smart defaults)
+- `aspens doc init [path]` — Generate skills + hooks + AGENTS.md (`--target claude|codex|all`, `--recommended` for full recommended setup)
 - `aspens doc impact [path]` — Show freshness, coverage, and drift of generated context (`--apply` for auto-repair, `--backend`/`--model`/`--timeout`/`--verbose` for LLM interpretation)
 - `aspens doc sync [path]` — Incremental skill updates from git diffs
 - `aspens doc graph [path]` — Rebuild import graph cache (`.claude/graph.json`)
 - `aspens add <type> [name]` — Install templates (agents, commands, hooks)
 - `aspens customize agents` — Inject project context into installed agents
+- `aspens save-tokens [path]` — Install token-saving session settings (`--recommended` for no-prompt install, `--remove` to uninstall)
 
 ## Architecture
 CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules (`src/lib/`)
@@ -38,14 +39,15 @@ CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules 
 - `src/lib/diff-helpers.js` — Targeted file diffs and prioritized diff truncation for doc-sync
 - `src/lib/git-helpers.js` — Git repo detection, git root resolution, diff retrieval, log formatting
 - `src/lib/git-hook.js` — Post-commit git hook installation/removal for auto doc-sync (monorepo-aware)
-- `src/lib/impact.js` — Context health analysis: domain coverage, hub surfacing, drift detection, hook health evaluation, usefulness summary, value comparison
+- `src/lib/impact.js` — Context health analysis: domain coverage, hub surfacing, drift detection, hook health, save-tokens health, usefulness summary, value comparison, opportunities
+- `src/lib/save-tokens.js` — Save-tokens config defaults, settings builders, gitignore/readme generators
 - `src/lib/timeout.js` — Timeout resolution (`--timeout` flag > `ASPENS_TIMEOUT` env > default)
 - `src/lib/errors.js` — `CliError` class (structured errors caught by CLI top-level handler)
-- `src/lib/target.js` — Target definitions (claude/codex), config persistence (`.aspens.json`)
+- `src/lib/target.js` — Target definitions (claude/codex), config persistence (`.aspens.json`) with `saveTokens` feature config
 - `src/lib/target-transform.js` — Transforms Claude-format output to other target formats
 - `src/lib/backend.js` — Backend detection and resolution (which CLI generates content)
 - `src/prompts/` — Prompt templates with `{{partial}}` and `{{variable}}` substitution
-- `src/templates/` — Bundled agents, commands, hooks, and settings for `aspens add` / `doc init`
+- `src/templates/` — Bundled agents, commands, hooks, and settings for `aspens add` / `doc init` / `save-tokens`
 
 ## Critical Conventions
 - **Pure ESM** — `"type": "module"` throughout; use `import`/`export`, never `require()`
@@ -61,11 +63,11 @@ CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules 
 
 ## Structure
 - `bin/` — CLI entry point (commander setup, CliError handler)
-- `src/commands/` — Command handlers (scan, doc-init, doc-impact, doc-sync, doc-graph, add, customize)
+- `src/commands/` — Command handlers (scan, doc-init, doc-impact, doc-sync, doc-graph, add, customize, save-tokens)
 - `src/lib/` — Core library modules
 - `src/prompts/` — Prompt templates + partials
 - `src/templates/` — Installable agents, commands, hooks, settings
 - `tests/` — Vitest test files
 
 ---
-**Last Updated:** 2026-04-08
+**Last Updated:** 2026-04-09

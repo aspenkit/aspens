@@ -21,7 +21,7 @@ Keywords: doc-init, generate skills, discovery agents, chunked generation, recom
 You are working on **aspens' skill generation pipeline** — the system that scans repos and uses Claude/Codex CLI to generate skills, hooks, and instructions files.
 
 ## Key Files
-- `src/commands/doc-init.js` — Main pipeline: backend selection → target selection → scan → graph → discovery → strategy → mode → generate → validate → transform → write → hooks → config
+- `src/commands/doc-init.js` — Main pipeline: backend selection → target selection → scan → graph → discovery → strategy → mode → generate → validate → transform → write → hooks → recommended extras → config
 - `src/lib/runner.js` — `runClaude()`, `runCodex()`, `runLLM()`, `loadPrompt()`, `parseFileOutput()`, `validateSkillFiles()`
 - `src/lib/skill-writer.js` — Writes files, generates `skill-rules.json`, domain bash patterns, merges `settings.json`
 - `src/lib/skill-reader.js` — Parses skill frontmatter, activation patterns, keywords (used by skill-writer)
@@ -33,31 +33,22 @@ You are working on **aspens' skill generation pipeline** — the system that sca
 - `src/prompts/` — `doc-init.md` (base), `doc-init-domain.md`, `doc-init-claudemd.md`, `discover-domains.md`, `discover-architecture.md`
 
 ## Key Concepts
-- **Pipeline steps:** (1) detect backends (2) **backend selection** (3) **target selection** (4) scan + graph (5) existing docs discovery check (6) parallel discovery agents (7) strategy (8) mode (9) generate (10) validate (11) transform for non-Claude targets (12) show files + dry-run (13) write (14) install hooks (Claude-only) (15) persist config to `.aspens.json`
-- **`--recommended` flag:** Skips interactive prompts with smart defaults. Reuses existing target config from `.aspens.json`. Auto-selects backend from target. Defaults strategy to `improve` when existing docs found. Auto-picks discovery skip when docs exist. Auto-selects generation mode based on repo size (chunked for large repos or >6 domains, all-at-once otherwise).
+- **Pipeline steps:** (1) detect backends (2) **backend selection** (3) **target selection** (4) scan + graph (5) existing docs discovery check (6) parallel discovery agents (7) strategy (8) mode (9) generate (10) validate (11) transform for non-Claude targets (12) show files + dry-run (13) write (14) install hooks (Claude-only) (15) **recommended extras** (save-tokens, agents, git hook) (16) persist config to `.aspens.json`
+- **`--recommended` flag:** Skips interactive prompts with smart defaults. Reuses existing target config from `.aspens.json`. Auto-selects backend from target. Defaults strategy to `improve` when existing docs found. Auto-picks discovery skip when docs exist. Auto-selects generation mode based on repo size. **Also installs save-tokens, bundled Claude agents, `dev/` gitignore entry, and doc-sync git hook** (step 15).
+- **Recommended extras (step 15):** When `--recommended` and not `--dry-run`: calls `installSaveTokensRecommended()` from `save-tokens.js` (if Claude target), copies all bundled agent templates to `.claude/agents/` (skips existing), adds `dev/` to `.gitignore`, installs doc-sync git hook if not present. Summary lines printed after.
 - **Backend before target:** Backend selection (step 2) happens before target selection (step 3). If both CLIs available, user picks backend first, then targets. Pre-selects matching target in the multiselect. With `--recommended`, backend is inferred from existing target config.
-- **Canonical generation:** All prompts receive `CANONICAL_VARS` (hardcoded Claude paths: `.claude/skills/`, `skill.md`, `CLAUDE.md`). Generation always produces Claude-canonical format regardless of target. Non-Claude targets are produced by post-generation transform.
+- **Canonical generation:** All prompts receive `CANONICAL_VARS` (hardcoded Claude paths). Generation always produces Claude-canonical format regardless of target. Non-Claude targets are produced by post-generation transform.
 - **`parseLLMOutput` with strict single-file fallback:** Codex often returns plain markdown without `<file>` tags. `parseLLMOutput(text, allowedPaths, expectedPath)` only wraps tagless text as the expected file for **true single-file prompts** (exactly one `exactFile` in allowedPaths, no `dirPrefixes`). Multi-file prompts require proper `<file>` tags.
-- **Existing docs reuse:** When existing Claude docs are found and strategy is `improve`, reuse is handled as improvement context without a separate loading spinner. Supports cross-target reuse (e.g., existing Claude docs → generate Codex output).
-- **Domain reuse helpers:** `loadReusableDomains()` tries `loadReusableDomainsFromRules()` (reads `skill-rules.json` from source target, falls back to `.claude/skills/` for non-Claude targets) first. Falls back to `findSkillFiles()` with `extractKeyFilePatterns()` to derive file patterns from `## Key Files` sections when activation patterns are missing.
-- **Target selection:** `--target claude|codex|all` or interactive multiselect if both CLIs available. With `--recommended`, reuses `.aspens.json` targets or falls back to backend id. Stored in `.aspens.json`.
-- **Backend routing:** `runLLM()` imported from `runner.js` dispatches to `runClaude()` or `runCodex()` based on `_backendId`. `--backend` flag overrides auto-detection.
-- **Content transform (step 11):** Canonical files preserved as originals. Non-Claude targets get `transformForTarget()` applied. If Claude not in target list, canonical files are filtered out of final output.
-- **Hub file injection into instructions file:** In chunked mode, `buildRootInstructionsGraphContext()` generates a prompt section listing top hub files, appended to the CLAUDE.md generation prompt. After generation, `ensureRootKeyFilesSection()` (from `target-transform.js`) post-processes the output to guarantee a `## Key Files` section exists with hub data.
-- **Split writes:** Direct-write files (`.claude/`, `.agents/`, `CLAUDE.md`, root `AGENTS.md`) use `writeSkillFiles()`. Directory-scoped files (e.g., `src/billing/AGENTS.md`) use `writeTransformedFiles()` with warn-and-skip policy.
-- **Dynamic labels:** `baseArtifactLabel()` and `instructionsArtifactLabel()` return target-appropriate names ("base skill" vs "root AGENTS.md") for spinner messages.
-- **Parallel discovery:** Two agents run via `Promise.all` — domain discovery and architecture analysis — before any user prompt.
-- **Generation modes:** `all-at-once` = single call; `chunked` = base + per-domain (up to 3 parallel) + instructions file; `base-only` = just base skill; `pick` = interactive domain picker. With `--recommended`, mode is auto-selected based on repo size.
-- **Retry logic:** Base skill and instructions file retry up to 2 times if `parseLLMOutput` returns empty (format correction prompt asking for `<file>` tags).
-- **Config persistence with target merging:** Step 15 uses `mergeConfiguredTargets(existingTargets, newTargets)` to avoid dropping previously configured targets when running a narrower `doc init` (e.g., `--target claude` on a repo configured for both). Existing config is loaded at command start with `persist: false`.
-- **Hook settings:** `createHookSettings()` deep-copies the template settings without path adjustment — hook commands use `$CLAUDE_PROJECT_DIR` as-is, with double-quoting in the template for shell safety.
-- **Hook installation:** Only for targets with `supportsHooks: true` (Claude). Generates `skill-rules.json`, copies hook scripts, merges `settings.json`. Git hook offer checks for project-specific marker (`aspens doc-sync hook (<label>)`).
-- **Verification line:** After config persist, prints a summary of targets configured, domains analyzed, and hook status.
+- **Existing docs reuse:** When existing Claude docs are found and strategy is `improve`, reuse is handled as improvement context without a separate loading spinner. Supports cross-target reuse.
+- **Domain reuse helpers:** `loadReusableDomains()` tries `loadReusableDomainsFromRules()` first, falls back to `findSkillFiles()` with `extractKeyFilePatterns()`.
+- **Config persistence with target merging:** Uses `mergeConfiguredTargets()` to avoid dropping previously configured targets. `writeConfig` now also persists `saveTokens` config from the recommended install.
+- **Hook installation:** Only for targets with `supportsHooks: true` (Claude). Generates `skill-rules.json`, copies hook scripts, merges `settings.json`.
+- **Git hook offer:** With `--recommended`, git hook is auto-installed (no prompt). Without `--recommended`, interactive prompt offered.
 
 ## Critical Rules
 - **Base skill + instructions file are essential** — pipeline retries automatically with format correction. Domain skill failures are acceptable (user retries with `--domains`).
 - **`improve` strategy preserves hand-written content** — LLM must read existing skills first and not discard human-authored rules.
-- **Discovery runs before user prompt** — domain picker shows discovered domains, not scanner directory names. Discovery can be skipped if existing docs are found and user opts to reuse (auto-skipped with `--recommended`).
+- **Discovery runs before user prompt** — domain picker shows discovered domains, not scanner directory names.
 - **PARALLEL_LIMIT = 3** — domain skills generate in batches of 3 concurrent calls. Base skill always sequential first. Instructions file always sequential last.
 - **CliError, not process.exit()** — all error exits throw `CliError`; cancellations `return` early.
 - **`--hooks-only` is Claude-only** — hardcoded to `TARGETS.claude` regardless of config.
@@ -67,4 +58,4 @@ You are working on **aspens' skill generation pipeline** — the system that sca
 - **Partials:** `src/prompts/partials/skill-format.md`, `src/prompts/partials/examples.md`
 
 ---
-**Last Updated:** 2026-04-08
+**Last Updated:** 2026-04-09
