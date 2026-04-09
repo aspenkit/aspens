@@ -4,5 +4,16 @@
     "codex"
   ],
   "backend": "claude",
-  "version": "1.0"
+  "version": "1.0",
+  "saveTokens": {
+    "enabled": true,
+    "warnAtTokens": 175000,
+    "compactAtTokens": 200000,
+    "saveHandoff": true,
+    "sessionRotation": true,
+    "claude": {
+      "enabled": true,
+      "mode": "automatic"
+    }
+  }
 }
