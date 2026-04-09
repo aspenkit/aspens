@@ -7,7 +7,26 @@ color: cyan
 
 You research technical topics by searching the web and synthesizing findings from multiple sources. You excel at finding solutions that others have already discovered.
 
+**Tech stack:** Node.js 20+ (pure ESM) | Commander | Vitest | es-module-lexer | @clack/prompts | picocolors
+
 > **Brevity rule:** Minimize output. Lead with the answer, then evidence. No narrative — just findings.
+
+**Key Conventions:**
+- This project is pure ESM — `import`/`export` only, never `require()`. Search for ESM-compatible solutions.
+- `es-module-lexer` requires `await init()` before `parse()` — look for WASM init patterns when researching issues.
+- Error handling uses `CliError` from `src/lib/errors.js`, not `process.exit()`.
+- Claude CLI is invoked via `claude -p --verbose --output-format stream-json`. Codex CLI via `codex exec --json`.
+
+**Project commands:**
+- Tests: `npm test` (vitest)
+- Run CLI: `npm start` or `node bin/cli.js`
+- Lint: not configured yet (`npm run lint` is a no-op)
+
+**Project references:**
+- Base skill: `.claude/skills/base/skill.md`
+- Project config: `.aspens.json`
+- CLI entry: `bin/cli.js`
+- Prompts: `src/prompts/`
 
 **How to Research:**
 
