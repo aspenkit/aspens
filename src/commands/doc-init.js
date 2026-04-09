@@ -1,5 +1,5 @@
 import { resolve, join, dirname, relative } from 'path';
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
@@ -16,6 +16,7 @@ import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
 import { transformForTarget, validateTransformedFiles, ensureRootKeyFilesSection } from '../lib/target-transform.js';
 import { findSkillFiles } from '../lib/skill-reader.js';
 import { getGitRoot } from '../lib/git-helpers.js';
+import { installSaveTokensRecommended } from './save-tokens.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -703,9 +704,38 @@ export async function docInitCommand(path, options) {
     await installHooks(repoPath, options);
   }
 
+  const recommendedSummaryLines = [];
+  let nextSaveTokensConfig = existingConfig?.saveTokens;
+  if (recommended && !options.dryRun) {
+    if (hasHookTarget) {
+      if (options.hooks !== false) {
+        nextSaveTokensConfig = installSaveTokensRecommended(repoPath, existingConfig, targets, recommendedSummaryLines);
+      }
+      installRecommendedClaudeAgents(repoPath, recommendedSummaryLines);
+    }
+
+    const gitRoot = getGitRoot(repoPath);
+    if (gitRoot && options.hook !== false) {
+      const hookPath = join(gitRoot, '.git', 'hooks', 'post-commit');
+      const hookInstalled = existsSync(hookPath) &&
+        readFileSync(hookPath, 'utf8').includes(`aspens doc-sync hook (${toPosixRelative(gitRoot, repoPath) || '.'})`);
+      if (!hookInstalled) {
+        installGitHook(repoPath);
+      }
+    }
+  }
+
+  if (recommendedSummaryLines.length > 0) {
+    console.log();
+    console.log(pc.dim('  Recommended setup:'));
+    for (const line of recommendedSummaryLines) {
+      console.log(`  ${line}`);
+    }
+  }
+
   // Step 10: Persist target config
   const persistedTargets = mergeConfiguredTargets(existingConfig?.targets, targetIds);
-  writeConfig(repoPath, { targets: persistedTargets, backend: backend.id });
+  writeConfig(repoPath, { targets: persistedTargets, backend: backend.id, saveTokens: nextSaveTokensConfig });
 
   console.log(pc.dim('  Verification: ') + [
     `${targets.map(t => t.label).join(' + ')} configured`,
@@ -717,7 +747,7 @@ export async function docInitCommand(path, options) {
 
   // Offer auto-sync git hook (works for all targets — runs `aspens doc sync` on commit)
   const gitRoot = getGitRoot(repoPath);
-  if (options.hook !== false && !options.dryRun && gitRoot) {
+  if (!recommended && options.hook !== false && !options.dryRun && gitRoot) {
     const hookPath = join(gitRoot, '.git', 'hooks', 'post-commit');
     const hookInstalled = existsSync(hookPath) &&
       readFileSync(hookPath, 'utf8').includes(`aspens doc-sync hook (${toPosixRelative(gitRoot, repoPath) || '.'})`);
@@ -739,6 +769,39 @@ export async function docInitCommand(path, options) {
     (overwritten ? `, ${pc.yellow(`${overwritten} overwritten`)}` : '') +
     (skipped ? `, ${pc.dim(`${skipped} skipped`)}` : '')
   );
+}
+
+function installRecommendedClaudeAgents(repoPath, summaryLines) {
+  const agentsSourceDir = join(TEMPLATES_DIR, 'agents');
+  const agentsTargetDir = join(repoPath, '.claude', 'agents');
+  if (!existsSync(agentsSourceDir)) return;
+  mkdirSync(agentsTargetDir, { recursive: true });
+
+  for (const filename of readdirSync(agentsSourceDir).filter(name => name.endsWith('.md')).sort()) {
+    const source = join(agentsSourceDir, filename);
+    const target = join(agentsTargetDir, filename);
+    if (existsSync(target)) {
+      summaryLines.push(`${pc.dim('-')} .claude/agents/${filename} (already exists)`);
+      continue;
+    }
+    copyFileSync(source, target);
+    summaryLines.push(`${pc.green('+')} .claude/agents/${filename}`);
+  }
+
+  ensureRecommendedAgentGitignore(repoPath, summaryLines);
+}
+
+function ensureRecommendedAgentGitignore(repoPath, summaryLines) {
+  const gitignorePath = join(repoPath, '.gitignore');
+  const entry = 'dev/';
+  if (existsSync(gitignorePath)) {
+    const content = readFileSync(gitignorePath, 'utf8');
+    if (/^dev\/$/m.test(content)) return;
+    writeFileSync(gitignorePath, content.trimEnd() + `\n${entry}\n`, 'utf8');
+  } else {
+    writeFileSync(gitignorePath, `${entry}\n`, 'utf8');
+  }
+  summaryLines.push(`${pc.green('+')} .gitignore (dev/)`);
 }
 
 function showTokenSummary(startTime) {

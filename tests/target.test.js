@@ -128,13 +128,67 @@ describe('config persistence', () => {
     const dir = join(FIXTURES_DIR, 'config-roundtrip');
     mkdirSync(dir, { recursive: true });
 
-    writeConfig(dir, { targets: ['claude', 'codex'], backend: 'claude' });
+    writeConfig(dir, {
+      targets: ['claude', 'codex'],
+      backend: 'claude',
+      saveTokens: {
+        enabled: true,
+        warnAtTokens: 175000,
+        compactAtTokens: 200000,
+        saveHandoff: true,
+        sessionRotation: true,
+        claude: { enabled: true, mode: 'automatic' },
+      },
+    });
     const config = readConfig(dir);
 
     expect(config).not.toBeNull();
     expect(config.targets).toEqual(['claude', 'codex']);
     expect(config.backend).toBe('claude');
     expect(config.version).toBe('1.0');
+    expect(config.saveTokens.warnAtTokens).toBe(175000);
+  });
+
+  it('can remove saveTokens config without dropping targets', () => {
+    const dir = join(FIXTURES_DIR, 'config-remove-save-tokens');
+    mkdirSync(dir, { recursive: true });
+
+    writeConfig(dir, {
+      targets: ['claude', 'codex'],
+      backend: 'claude',
+      saveTokens: {
+        enabled: true,
+        warnAtTokens: 175000,
+        compactAtTokens: 200000,
+        saveHandoff: true,
+        sessionRotation: true,
+      },
+    });
+    writeConfig(dir, { targets: ['claude', 'codex'], backend: 'claude', saveTokens: null });
+
+    const config = readConfig(dir);
+    expect(config.targets).toEqual(['claude', 'codex']);
+    expect(config.saveTokens).toBeUndefined();
+  });
+
+  it('accepts MAX_SAFE_INTEGER as disabled-threshold sentinel', () => {
+    const dir = join(FIXTURES_DIR, 'config-disabled-warn');
+    mkdirSync(dir, { recursive: true });
+
+    writeConfig(dir, {
+      targets: ['claude'],
+      saveTokens: {
+        enabled: true,
+        warnAtTokens: Number.MAX_SAFE_INTEGER,
+        compactAtTokens: 200000,
+        saveHandoff: true,
+        sessionRotation: true,
+      },
+    });
+    const config = readConfig(dir);
+    expect(config).not.toBeNull();
+    expect(config.saveTokens.warnAtTokens).toBe(Number.MAX_SAFE_INTEGER);
+    expect(config.saveTokens.compactAtTokens).toBe(200000);
   });
 
   it('defaults backend to null when not provided', () => {

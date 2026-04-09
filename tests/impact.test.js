@@ -5,12 +5,14 @@ import {
   computeDomainCoverage,
   computeHubCoverage,
   computeDrift,
+  evaluateSaveTokensHealth,
   evaluateHookHealth,
   computeHealthScore,
   computeTargetStatus,
   recommendActions,
   summarizeReport,
   summarizeMissing,
+  summarizeOpportunities,
   summarizeValueComparison,
 } from '../src/lib/impact.js';
 
@@ -188,6 +190,36 @@ describe('summarizeValueComparison', () => {
   });
 });
 
+describe('summarizeOpportunities', () => {
+  it('recommends optional aspens features that are not installed', () => {
+    const opportunities = summarizeOpportunities(TEST_DIR, [
+      { id: 'claude' },
+    ], { targets: ['claude'] });
+
+    expect(opportunities.map(item => item.command)).toEqual([
+      'aspens save-tokens',
+      'aspens add agent all && aspens customize agents',
+      'aspens doc sync --install-hook',
+    ]);
+  });
+
+  it('does not recommend save-tokens or agents when they are already installed', () => {
+    mkdirSync(join(TEST_DIR, '.claude', 'agents'), { recursive: true });
+    writeFileSync(join(TEST_DIR, '.claude', 'agents', 'planner.md'), 'agent\n', 'utf8');
+
+    const opportunities = summarizeOpportunities(TEST_DIR, [
+      { id: 'claude' },
+    ], {
+      targets: ['claude'],
+      saveTokens: { enabled: true },
+    });
+
+    expect(opportunities.map(item => item.command)).not.toContain('aspens save-tokens');
+    expect(opportunities.map(item => item.command)).not.toContain('aspens add agent all && aspens customize agents');
+    expect(opportunities.map(item => item.command)).toContain('aspens customize agents');
+  });
+});
+
 describe('summarizeMissing', () => {
   it('rolls up missing hooks, stale docs, uncovered domains, and weak root context', () => {
     const items = summarizeMissing([
@@ -255,3 +287,98 @@ describe('evaluateHookHealth', () => {
     expect(health.invalidCommands).toEqual(['"$CLAUDE_PROJECT_DIR/backend/.claude/hooks/skill-activation-prompt.sh"']);
   });
 });
+
+describe('evaluateSaveTokensHealth', () => {
+  const saveTokensConfig = {
+    enabled: true,
+    claude: { enabled: true },
+  };
+
+  it('is not configured when save-tokens config is absent', () => {
+    const health = evaluateSaveTokensHealth(TEST_DIR, null);
+
+    expect(health.configured).toBe(false);
+    expect(health.healthy).toBe(true);
+  });
+
+  it('reports healthy when save-tokens files, commands, and settings are installed', () => {
+    installSaveTokensFixture();
+
+    const health = evaluateSaveTokensHealth(TEST_DIR, saveTokensConfig);
+
+    expect(health.configured).toBe(true);
+    expect(health.healthy).toBe(true);
+    expect(health.issues).toEqual([]);
+  });
+
+  it('detects broken save-tokens settings and missing slash commands', () => {
+    installSaveTokensFixture();
+    rmSync(join(TEST_DIR, '.claude', 'commands', 'resume-handoff-latest.md'));
+    writeFileSync(join(TEST_DIR, '.claude', 'settings.json'), JSON.stringify({
+      statusLine: {
+        type: 'command',
+        command: '"$CLAUDE_PROJECT_DIR/backend/.claude/hooks/save-tokens-statusline.sh"',
+      },
+      hooks: {},
+    }, null, 2), 'utf8');
+
+    const health = evaluateSaveTokensHealth(TEST_DIR, saveTokensConfig);
+
+    expect(health.healthy).toBe(false);
+    expect(health.missingCommandFiles).toEqual(['resume-handoff-latest.md']);
+    expect(health.invalidCommands).toEqual(['"$CLAUDE_PROJECT_DIR/backend/.claude/hooks/save-tokens-statusline.sh"']);
+    expect(health.issues.some(issue => issue.includes('missing save-tokens slash commands'))).toBe(true);
+    expect(health.issues.some(issue => issue.includes('missing save-tokens settings entries'))).toBe(true);
+  });
+
+  it('reports legacy save-tokens hook payloads left behind', () => {
+    installSaveTokensFixture();
+    writeFileSync(join(TEST_DIR, '.claude', 'hooks', 'save-tokens-lib.mjs'), 'old\n', 'utf8');
+
+    const health = evaluateSaveTokensHealth(TEST_DIR, saveTokensConfig);
+
+    expect(health.healthy).toBe(false);
+    expect(health.installedLegacyHookFiles).toEqual(['save-tokens-lib.mjs']);
+    expect(health.issues.some(issue => issue.includes('legacy save-tokens hook files'))).toBe(true);
+  });
+});
+
+function installSaveTokensFixture() {
+  mkdirSync(join(TEST_DIR, '.claude', 'hooks'), { recursive: true });
+  mkdirSync(join(TEST_DIR, '.claude', 'commands'), { recursive: true });
+  for (const file of [
+    'save-tokens.mjs',
+    'save-tokens-statusline.sh',
+    'save-tokens-prompt-guard.sh',
+    'save-tokens-precompact.sh',
+  ]) {
+    writeFileSync(join(TEST_DIR, '.claude', 'hooks', file), '#!/bin/bash\n', 'utf8');
+  }
+  for (const file of [
+    'save-handoff.md',
+    'resume-handoff-latest.md',
+    'resume-handoff.md',
+  ]) {
+    writeFileSync(join(TEST_DIR, '.claude', 'commands', file), 'command\n', 'utf8');
+  }
+  writeFileSync(join(TEST_DIR, '.claude', 'settings.json'), JSON.stringify({
+    statusLine: {
+      type: 'command',
+      command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-statusline.sh"',
+    },
+    hooks: {
+      UserPromptSubmit: [{
+        hooks: [{
+          type: 'command',
+          command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-prompt-guard.sh"',
+        }],
+      }],
+      PreCompact: [{
+        hooks: [{
+          type: 'command',
+          command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-precompact.sh"',
+        }],
+      }],
+    },
+  }, null, 2), 'utf8');
+}

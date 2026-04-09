@@ -155,4 +155,81 @@ describe('mergeSettings', () => {
     const merged = mergeSettings(existing, template);
     expect(merged.hooks.UserPromptSubmit).toHaveLength(1);
   });
+
+  it('treats save-tokens hooks as aspens-managed during merge', () => {
+    const existing = {
+      hooks: {
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-prompt-guard.sh"',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const template = {
+      hooks: {
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-prompt-guard.sh"',
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const merged = mergeSettings(existing, template);
+    expect(merged.hooks.UserPromptSubmit).toHaveLength(1);
+  });
+
+  it('adds aspens statusLine when none exists', () => {
+    const merged = mergeSettings({ hooks: {} }, {
+      statusLine: {
+        type: 'command',
+        command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-statusline.sh"',
+      },
+    });
+
+    expect(merged.statusLine.command).toContain('save-tokens-statusline.sh');
+  });
+
+  it('preserves a non-aspens custom statusLine', () => {
+    const merged = mergeSettings({
+      statusLine: {
+        type: 'command',
+        command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/my-statusline.sh"',
+      },
+    }, {
+      statusLine: {
+        type: 'command',
+        command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-statusline.sh"',
+      },
+    });
+
+    expect(merged.statusLine.command).toContain('my-statusline.sh');
+  });
+
+  it('preserves a non-aspens custom statusLine even when the template has a different non-aspens statusLine', () => {
+    const merged = mergeSettings({
+      statusLine: {
+        type: 'command',
+        command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/my-statusline.sh"',
+      },
+    }, {
+      statusLine: {
+        type: 'command',
+        command: '"$CLAUDE_PROJECT_DIR/.claude/hooks/vendor-statusline.sh"',
+      },
+    });
+
+    expect(merged.statusLine.command).toContain('my-statusline.sh');
+  });
 });

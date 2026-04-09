@@ -4,6 +4,7 @@ import { scanRepo } from './scanner.js';
 import { buildRepoGraph } from './graph-builder.js';
 import { loadConfig, TARGETS } from './target.js';
 import { findSkillFiles } from './skill-reader.js';
+import { getGitRoot } from './git-helpers.js';
 
 const SOURCE_EXTS = new Set([
   '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
@@ -37,8 +38,9 @@ export async function analyzeImpact(repoPath, options = {}) {
     }
   }
 
-  const targetReports = targets.map(target => summarizeTarget(repoPath, target, scan, graph, sourceState));
+  const targetReports = targets.map(target => summarizeTarget(repoPath, target, scan, graph, sourceState, config));
   const summary = summarizeReport(targetReports, sourceState);
+  summary.opportunities = summarizeOpportunities(repoPath, targetReports, config);
 
   return {
     scan,
@@ -49,11 +51,12 @@ export async function analyzeImpact(repoPath, options = {}) {
   };
 }
 
-export function summarizeTarget(repoPath, target, scan, graph, sourceState) {
+export function summarizeTarget(repoPath, target, scan, graph, sourceState, config = null) {
   const skillFiles = findSkillFiles(join(repoPath, target.skillsDir), {
     skillFilename: target.skillFilename,
   });
   const hookHealth = target.supportsHooks ? evaluateHookHealth(repoPath) : null;
+  const saveTokensHealth = target.id === 'claude' ? evaluateSaveTokensHealth(repoPath, config?.saveTokens || null) : null;
   const instructionPath = join(repoPath, target.instructionsFile);
   const instructionExists = existsSync(instructionPath);
   const contextText = buildContextText(repoPath, target, skillFiles);
@@ -79,6 +82,7 @@ export function summarizeTarget(repoPath, target, scan, graph, sourceState) {
     domainCoverage,
     hubCoverage,
     drift,
+    saveTokensHealth,
   }, target);
   const usefulness = summarizeUsefulness({
     target,
@@ -105,6 +109,7 @@ export function summarizeTarget(repoPath, target, scan, graph, sourceState) {
     skillCount: skillFiles.length,
     hooksInstalled: status.hooksInstalled,
     hookHealth,
+    saveTokensHealth,
     lastUpdated,
     drift,
     domainCoverage,
@@ -171,6 +176,9 @@ export function computeHealthScore(input, target) {
   }
   if (target.supportsHooks && !input.hooksHealthy) {
     score -= 10;
+  }
+  if (input.saveTokensHealth?.configured && !input.saveTokensHealth?.healthy) {
+    score -= 5;
   }
 
   return Math.max(0, Math.min(100, score));
@@ -305,6 +313,71 @@ export function summarizeValueComparison(targets) {
   };
 }
 
+export function summarizeOpportunities(repoPath, targets, config = null) {
+  const opportunities = [];
+  const hasClaude = (targets || []).some(target => target.id === 'claude');
+
+  if (hasClaude && !config?.saveTokens?.enabled) {
+    opportunities.push({
+      kind: 'save-tokens',
+      message: 'Save-tokens features are not installed',
+      command: 'aspens save-tokens',
+    });
+  }
+
+  const claudeAgentCount = hasClaude ? countClaudeAgentTemplates(repoPath) : 0;
+  if (hasClaude && claudeAgentCount === 0) {
+    opportunities.push({
+      kind: 'agents',
+      message: 'Claude agents are not installed. Add all agents, then customize them to this codebase',
+      command: 'aspens add agent all && aspens customize agents',
+    });
+  } else if (hasClaude && claudeAgentCount > 0) {
+    opportunities.push({
+      kind: 'customize-agents',
+      message: 'Claude agents can be customized with this project’s generated context',
+      command: 'aspens customize agents',
+    });
+  }
+
+  if (!isDocSyncHookInstalled(repoPath)) {
+    opportunities.push({
+      kind: 'doc-sync-hook',
+      message: 'Automatic context sync after git commits is not installed',
+      command: 'aspens doc sync --install-hook',
+    });
+  }
+
+  return opportunities;
+}
+
+function countClaudeAgentTemplates(repoPath) {
+  const agentsDir = join(repoPath, '.claude', 'agents');
+  if (!existsSync(agentsDir)) return 0;
+  try {
+    return readdirSync(agentsDir).filter(name => name.endsWith('.md')).length;
+  } catch {
+    return 0;
+  }
+}
+
+function isDocSyncHookInstalled(repoPath) {
+  const gitRoot = getGitRoot(repoPath);
+  if (!gitRoot) return false;
+  const hookPath = join(gitRoot, '.git', 'hooks', 'post-commit');
+  if (!existsSync(hookPath)) return false;
+  const projectLabel = toPosixRelative(gitRoot, repoPath) || '.';
+  try {
+    const content = readFileSync(hookPath, 'utf8');
+    return (
+      content.includes(`# >>> aspens doc-sync hook (${projectLabel})`) ||
+      content.includes('aspens doc sync')
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function summarizeMissing(targets) {
   const items = [];
 
@@ -372,7 +445,114 @@ export function summarizeMissing(targets) {
     });
   }
 
+  const brokenSaveTokens = targets.filter(target => target.saveTokensHealth?.configured && !target.saveTokensHealth.healthy);
+  if (brokenSaveTokens.length > 0) {
+    items.push({
+      kind: 'save-tokens',
+      severity: 'medium',
+      message: brokenSaveTokens
+        .map(target => `${target.label} save-tokens automation is configured but broken`)
+        .join(' | '),
+    });
+  }
+
   return items;
+}
+
+export function evaluateSaveTokensHealth(repoPath, saveTokensConfig = null) {
+  const configured = !!saveTokensConfig?.enabled && saveTokensConfig?.claude?.enabled !== false;
+  const settingsPath = join(repoPath, '.claude', 'settings.json');
+  const hooksDir = join(repoPath, '.claude', 'hooks');
+  const commandsDir = join(repoPath, '.claude', 'commands');
+  const requiredHookFiles = [
+    'save-tokens.mjs',
+    'save-tokens-statusline.sh',
+    'save-tokens-prompt-guard.sh',
+    'save-tokens-precompact.sh',
+  ];
+  const legacyHookFiles = [
+    'save-tokens-lib.mjs',
+    'save-tokens-statusline.mjs',
+    'save-tokens-prompt-guard.mjs',
+    'save-tokens-precompact.mjs',
+  ];
+  const requiredCommandFiles = [
+    'save-handoff.md',
+    'resume-handoff-latest.md',
+    'resume-handoff.md',
+  ];
+  const requiredSettingsCommands = [
+    'save-tokens-statusline.sh',
+    'save-tokens-prompt-guard.sh',
+    'save-tokens-precompact.sh',
+  ];
+
+  if (!configured) {
+    return {
+      configured: false,
+      healthy: true,
+      issues: [],
+      missingHookFiles: [],
+      missingCommandFiles: [],
+      invalidCommands: [],
+    };
+  }
+
+  const issues = [];
+  const missingHookFiles = requiredHookFiles.filter(file => !existsSync(join(hooksDir, file)));
+  const missingCommandFiles = requiredCommandFiles.filter(file => !existsSync(join(commandsDir, file)));
+  const installedLegacyHookFiles = legacyHookFiles.filter(file => existsSync(join(hooksDir, file)));
+  const invalidCommands = [];
+  const foundSettingsCommands = new Set();
+
+  if (missingHookFiles.length > 0) {
+    issues.push(`missing save-tokens hook files: ${missingHookFiles.join(', ')}`);
+  }
+  if (missingCommandFiles.length > 0) {
+    issues.push(`missing save-tokens slash commands: ${missingCommandFiles.join(', ')}`);
+  }
+  if (installedLegacyHookFiles.length > 0) {
+    issues.push(`legacy save-tokens hook files still installed: ${installedLegacyHookFiles.join(', ')}`);
+  }
+
+  if (!existsSync(settingsPath)) {
+    issues.push('missing .claude/settings.json');
+  } else {
+    try {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      for (const command of extractAutomationCommandsFromSettings(settings)) {
+        for (const expected of requiredSettingsCommands) {
+          if (command.includes(expected)) foundSettingsCommands.add(expected);
+        }
+        if (!command.includes('.claude/hooks/')) continue;
+        if (!command.includes('save-tokens-')) continue;
+        const resolvedPath = commandToHookPath(command, repoPath);
+        if (!resolvedPath || !existsSync(resolvedPath)) {
+          invalidCommands.push(command);
+        }
+      }
+    } catch {
+      issues.push('invalid .claude/settings.json');
+    }
+  }
+
+  const missingSettingsCommands = requiredSettingsCommands.filter(command => !foundSettingsCommands.has(command));
+  if (missingSettingsCommands.length > 0) {
+    issues.push(`missing save-tokens settings entries: ${missingSettingsCommands.join(', ')}`);
+  }
+  if (invalidCommands.length > 0) {
+    issues.push(`broken save-tokens settings commands: ${invalidCommands.length}`);
+  }
+
+  return {
+    configured,
+    healthy: issues.length === 0,
+    issues,
+    missingHookFiles,
+    missingCommandFiles,
+    invalidCommands,
+    installedLegacyHookFiles,
+  };
 }
 
 export function evaluateHookHealth(repoPath) {
@@ -444,10 +624,24 @@ function extractHookCommandsFromSettings(settings) {
   return commands;
 }
 
+function extractAutomationCommandsFromSettings(settings) {
+  const commands = extractHookCommandsFromSettings(settings);
+  if (typeof settings?.statusLine?.command === 'string') {
+    commands.push(settings.statusLine.command);
+  }
+  return commands;
+}
+
 function commandToHookPath(command, repoPath) {
   const match = command.match(/\$CLAUDE_PROJECT_DIR\/(.+?\.sh)\b/);
   if (!match) return null;
   return join(repoPath, ...match[1].split('/'));
+}
+
+function toPosixRelative(from, to) {
+  const rel = relative(from, to);
+  if (!rel || rel === '.') return '';
+  return rel.split('\\').join('/');
 }
 
 function inferTargetsFromScan(scan) {

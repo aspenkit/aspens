@@ -33,6 +33,13 @@ export async function docImpactCommand(path, options) {
       console.log(pc.dim('    ') + formatMissingItem(item));
     }
   }
+  if (report.summary.opportunities?.length > 0) {
+    console.log();
+    console.log(pc.bold('  Missing Aspens Setup'));
+    for (const item of report.summary.opportunities.slice(0, 4)) {
+      console.log(pc.dim('    ') + `${item.message}: ${pc.cyan(item.command)}`);
+    }
+  }
 
   let analysis = null;
   const available = detectAvailableBackends();
@@ -121,6 +128,17 @@ export async function docImpactCommand(path, options) {
       console.log(pc.dim('    Hook issues: '));
       for (const issue of target.hookHealth.issues.slice(0, 3)) {
         console.log(pc.dim('      ') + issue);
+      }
+    }
+
+    if (target.saveTokensHealth?.configured) {
+      console.log(pc.bold('    Save-tokens: ') + (target.saveTokensHealth.healthy ? pc.green('healthy') : pc.yellow('broken')));
+      if (target.saveTokensHealth.healthy) {
+        console.log(pc.dim('      ') + 'statusLine + prompt guard + precompact + handoff commands installed');
+      } else {
+        for (const issue of target.saveTokensHealth.issues.slice(0, 3)) {
+          console.log(pc.dim('      ') + issue);
+        }
       }
     }
 
@@ -225,6 +243,7 @@ function buildImpactAnalysisPrompt(repoPath, report, comparison) {
       instructionExists: target.instructionExists,
       skillCount: target.skillCount,
       hooksInstalled: target.hooksInstalled,
+      saveTokensHealth: target.saveTokensHealth,
       lastUpdated: target.lastUpdated,
       health: target.health,
       status: target.status,

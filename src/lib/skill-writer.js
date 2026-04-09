@@ -226,6 +226,12 @@ export function mergeSettings(existing, template) {
   // Clone to avoid mutations
   const merged = JSON.parse(JSON.stringify(existing));
 
+  if (template?.statusLine) {
+    if (!merged.statusLine || isAspensHook(merged.statusLine.command || '')) {
+      merged.statusLine = template.statusLine;
+    }
+  }
+
   if (!template || !template.hooks) return merged;
 
   // If existing has no hooks, add them wholesale
@@ -311,7 +317,14 @@ export function mergeSettings(existing, template) {
 
 // --- Internal helpers ---
 
-const ASPENS_HOOK_MARKERS = ['skill-activation-prompt', 'graph-context-prompt', 'post-tool-use-tracker'];
+const ASPENS_HOOK_MARKERS = [
+  'skill-activation-prompt',
+  'graph-context-prompt',
+  'post-tool-use-tracker',
+  'save-tokens-statusline',
+  'save-tokens-prompt-guard',
+  'save-tokens-precompact',
+];
 
 /**
  * Check if a command string is an aspens-managed hook.
