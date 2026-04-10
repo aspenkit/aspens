@@ -117,6 +117,79 @@ function trackUsage(usage, promptLength) {
   }
 }
 
+function validateGeneratedChunk(files, repoPath) {
+  if (files.length === 0) return files;
+
+  let validation = { valid: true, issues: [] };
+  try {
+    validation = validateSkillFiles(files, repoPath);
+  } catch (err) {
+    p.log.warn(`Validation failed: ${err.message}`);
+    return files;
+  }
+
+  const truncated = validation.issues.filter(issue => issue.issue === 'truncated').map(issue => issue.file);
+  if (truncated.length > 0) {
+    p.log.warn(`Removed ${truncated.length} truncated file(s) from this chunk.`);
+    files = files.filter(file => !truncated.includes(file.path));
+  }
+
+  return files;
+}
+
+function buildOutputFilesForTargets(canonicalFiles, targets, scan, graphSerialized) {
+  let outputFiles = [...canonicalFiles];
+  const nonClaudeTargets = targets.filter(target => target.id !== 'claude');
+
+  if (nonClaudeTargets.length > 0) {
+    for (const target of nonClaudeTargets) {
+      const transformed = transformForTarget(canonicalFiles, TARGETS.claude, target, {
+        scanResult: scan,
+        graphSerialized,
+      });
+
+      const transformValidation = validateTransformedFiles(transformed);
+      if (!transformValidation.valid) {
+        p.log.warn(`Transform issues for ${target.label}:`);
+        for (const issue of transformValidation.issues) {
+          console.log(pc.dim('  ') + pc.yellow('!') + ' ' + issue);
+        }
+      }
+
+      const validTransformed = transformValidation.valid
+        ? transformed
+        : transformed.filter(file => validateTransformedFiles([file]).valid);
+
+      outputFiles = [...outputFiles, ...validTransformed];
+    }
+
+    if (!targets.some(target => target.id === 'claude')) {
+      outputFiles = outputFiles.filter(file => !canonicalFiles.includes(file));
+    }
+  }
+
+  return outputFiles;
+}
+
+function writeIncrementalOutputs(repoPath, files, shouldForce, writeState) {
+  const changedFiles = files.filter(file => writeState.contentsByPath.get(file.path) !== file.content);
+  if (changedFiles.length === 0) return;
+
+  const directWriteFiles = changedFiles.filter(file => !(file.path.endsWith('/AGENTS.md') && file.path !== 'AGENTS.md'));
+  const dirScopedFiles = changedFiles.filter(file => file.path.endsWith('/AGENTS.md') && file.path !== 'AGENTS.md');
+  const results = [
+    ...writeSkillFiles(repoPath, directWriteFiles, { force: shouldForce }),
+    ...writeTransformedFiles(repoPath, dirScopedFiles, { force: shouldForce }),
+  ];
+
+  for (const file of changedFiles) {
+    writeState.contentsByPath.set(file.path, file.content);
+  }
+  for (const result of results) {
+    writeState.resultsByPath.set(result.path, result);
+  }
+}
+
 export async function docInitCommand(path, options) {
   const repoPath = resolve(path);
   _repoPath = repoPath;
@@ -223,6 +296,17 @@ export async function docInitCommand(path, options) {
   const primaryTarget = targets[0];
   _primaryTarget = primaryTarget;
   _allowedPaths = null; // canonical generation uses defaults
+  const persistedTargets = mergeConfiguredTargets(existingConfig?.targets, targetIds);
+
+  // Persist the selected target/backend up front so a failed generation run
+  // still updates repo config to reflect the user's explicit choice.
+  if (!options.dryRun) {
+    writeConfig(repoPath, {
+      targets: persistedTargets,
+      backend: backend.id,
+      saveTokens: existingConfig?.saveTokens,
+    });
+  }
 
   console.log(pc.dim(`  Target: ${targets.map(t => t.label).join(' + ')}`));
   console.log(pc.dim(`  Backend: ${backend.label}`));
@@ -545,6 +629,11 @@ export async function docInitCommand(path, options) {
 
   // Step 5: Generate skills
   let allFiles = [];
+  const shouldForce = options.force || existingDocsStrategy === 'improve' || existingDocsStrategy === 'rewrite';
+  const shouldWriteIncrementally = mode === 'chunked' && !options.dryRun;
+  const incrementalWriteState = shouldWriteIncrementally
+    ? { contentsByPath: new Map(), resultsByPath: new Map() }
+    : null;
   const reuseExistingCanonical = (
     existingDocsStrategy === 'improve' &&
     _reuseSourceTarget?.id === 'claude'
@@ -553,11 +642,30 @@ export async function docInitCommand(path, options) {
     p.log.info(pc.dim(`Using existing ${_reuseSourceTarget.label} docs as improvement context.`));
   }
 
+  if (shouldWriteIncrementally) {
+    console.log();
+    const allowIncrementalWrite = await p.confirm({
+      message: 'Allow aspens to write generated files incrementally during chunked generation? This includes skills, repo docs, and supported hook/config updates.',
+      initialValue: true,
+    });
+
+    if (p.isCancel(allowIncrementalWrite) || !allowIncrementalWrite) {
+      p.cancel('Aborted');
+      return;
+    }
+  }
+
   if (mode === 'all-at-once') {
     allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, !!options.mode);
   } else {
     const domainsOnly = isDomainsOnly; // retrying specific domains — skip base + CLAUDE.md
-    allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, domainsOnly);
+    allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, domainsOnly, {
+      writeIncrementally: shouldWriteIncrementally,
+      targets,
+      graphSerialized,
+      shouldForce,
+      writeState: incrementalWriteState,
+    });
   }
 
   if (allFiles.length === 0) {
@@ -570,27 +678,29 @@ export async function docInitCommand(path, options) {
 
   // Step 6: Validate generated files
   let validation = { valid: true, issues: [] };
-  try {
-    validation = validateSkillFiles(allFiles, repoPath);
-  } catch (err) {
-    p.log.warn(`Validation failed: ${err.message}`);
-  }
-
-  if (!validation.valid) {
-    console.log();
-    p.log.warn(`Found ${validation.issues.length} issue(s) in generated skills:`);
-    for (const issue of validation.issues) {
-      const icon = issue.issue === 'bad-path' ? pc.yellow('?') : pc.red('!');
-      console.log(pc.dim('  ') + `${icon} ${pc.dim(issue.file)} — ${issue.detail}`);
+  if (!shouldWriteIncrementally) {
+    try {
+      validation = validateSkillFiles(allFiles, repoPath);
+    } catch (err) {
+      p.log.warn(`Validation failed: ${err.message}`);
     }
 
-    // Filter out truncated files — they'd be useless
-    const truncated = validation.issues.filter(i => i.issue === 'truncated').map(i => i.file);
-    if (truncated.length > 0) {
-      allFiles = allFiles.filter(f => !truncated.includes(f.path));
-      p.log.warn(`Removed ${truncated.length} truncated file(s). Re-run to regenerate them.`);
+    if (!validation.valid) {
+      console.log();
+      p.log.warn(`Found ${validation.issues.length} issue(s) in generated skills:`);
+      for (const issue of validation.issues) {
+        const icon = issue.issue === 'bad-path' ? pc.yellow('?') : pc.red('!');
+        console.log(pc.dim('  ') + `${icon} ${pc.dim(issue.file)} — ${issue.detail}`);
+      }
+
+      // Filter out truncated files — they'd be useless
+      const truncated = validation.issues.filter(i => i.issue === 'truncated').map(i => i.file);
+      if (truncated.length > 0) {
+        allFiles = allFiles.filter(f => !truncated.includes(f.path));
+        p.log.warn(`Removed ${truncated.length} truncated file(s). Re-run to regenerate them.`);
+      }
+      console.log();
     }
-    console.log();
   }
 
   // Step 6.5: Transform canonical output for each target
@@ -599,89 +709,61 @@ export async function docInitCommand(path, options) {
   // For non-Claude targets: transform canonical → target format.
   // For --target all: keep canonical + add transformed for each non-Claude target.
   const canonicalFiles = [...allFiles]; // preserve originals
-  const nonClaudeTargets = targets.filter(t => t.id !== 'claude');
-
-  if (nonClaudeTargets.length > 0) {
-    for (const target of nonClaudeTargets) {
-      const transformSpinner = p.spinner();
-      transformSpinner.start(`Transforming output for ${target.label}...`);
-
-      const transformed = transformForTarget(canonicalFiles, TARGETS.claude, target, {
-        scanResult: scan,
-        graphSerialized,
-      });
-
-      const transformValidation = validateTransformedFiles(transformed);
-      if (!transformValidation.valid) {
-        p.log.warn(`Transform issues for ${target.label}:`);
-        for (const issue of transformValidation.issues) {
-          console.log(pc.dim('  ') + pc.yellow('!') + ' ' + issue);
-        }
-      }
-
-      const validTransformed = transformValidation.valid
-        ? transformed
-        : transformed.filter(f => validateTransformedFiles([f]).valid);
-
-      allFiles = [...allFiles, ...validTransformed];
-      transformSpinner.stop(`Transformed ${validTransformed.length} files for ${target.label}`);
-    }
-
-    // If no Claude target requested, remove the canonical Claude files from output
-    if (!targets.some(t => t.id === 'claude')) {
-      allFiles = allFiles.filter(f => !canonicalFiles.includes(f));
-    }
+  if (!shouldWriteIncrementally) {
+    allFiles = buildOutputFilesForTargets(canonicalFiles, targets, scan, graphSerialized);
   }
 
-  // Step 7: Show what will be written
-  const shouldForce = options.force || existingDocsStrategy === 'improve' || existingDocsStrategy === 'rewrite';
-  console.log();
-  p.log.info('Files to write:');
-  for (const file of allFiles) {
-    const hasIssues = validation.issues?.some(i => i.file === file.path) ?? false;
-    const willOverwrite = existsSync(join(repoPath, file.path));
-    const willWrite = shouldForce || !willOverwrite || hasIssues;
-    const icon = hasIssues ? pc.yellow('~') : willWrite && willOverwrite ? pc.yellow('~') : willWrite ? pc.green('+') : pc.dim('-');
-    console.log(pc.dim('  ') + icon + ' ' + file.path);
-  }
-  console.log();
-
-  // Dry run
-  if (options.dryRun) {
-    p.log.info('Dry run — no files written. Preview:');
+  let results = [];
+  if (!shouldWriteIncrementally) {
+    // Step 7: Show what will be written
+    console.log();
+    p.log.info('Files to write:');
     for (const file of allFiles) {
-      console.log(pc.bold(`\n--- ${file.path} ---`));
-      console.log(pc.dim(file.content));
+      const hasIssues = validation.issues?.some(i => i.file === file.path) ?? false;
+      const willOverwrite = existsSync(join(repoPath, file.path));
+      const willWrite = shouldForce || !willOverwrite || hasIssues;
+      const icon = hasIssues ? pc.yellow('~') : willWrite && willOverwrite ? pc.yellow('~') : willWrite ? pc.green('+') : pc.dim('-');
+      console.log(pc.dim('  ') + icon + ' ' + file.path);
     }
-    showTokenSummary(startTime);
-    p.outro('Dry run complete');
-    return;
+    console.log();
+
+    // Dry run
+    if (options.dryRun) {
+      p.log.info('Dry run — no files written. Preview:');
+      for (const file of allFiles) {
+        console.log(pc.bold(`\n--- ${file.path} ---`));
+        console.log(pc.dim(file.content));
+      }
+      showTokenSummary(startTime);
+      p.outro('Dry run complete');
+      return;
+    }
+
+    // Confirm
+    const proceed = await p.confirm({
+      message: `Write ${allFiles.length} files to ${repoPath}?`,
+      initialValue: true,
+    });
+
+    if (p.isCancel(proceed) || !proceed) {
+      p.cancel('Aborted');
+      return;
+    }
+
+    // Step 8: Write files
+    const writeSpinner = p.spinner();
+    writeSpinner.start('Writing files...');
+    const directWriteFiles = allFiles.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
+    const dirScopedFiles = allFiles.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
+
+    results = [
+      ...writeSkillFiles(repoPath, directWriteFiles, { force: shouldForce }),
+      ...writeTransformedFiles(repoPath, dirScopedFiles, { force: shouldForce }),
+    ];
+    writeSpinner.stop('Done');
+  } else {
+    results = [...incrementalWriteState.resultsByPath.values()];
   }
-
-  // Confirm
-  const proceed = await p.confirm({
-    message: `Write ${allFiles.length} files to ${repoPath}?`,
-    initialValue: true,
-  });
-
-  if (p.isCancel(proceed) || !proceed) {
-    p.cancel('Aborted');
-    return;
-  }
-
-  // Step 8: Write files
-  // Split: Claude-target files use writeSkillFiles (standard paths),
-  // directory-scoped files (e.g., src/billing/AGENTS.md) use writeTransformedFiles (warn-and-skip)
-  const writeSpinner = p.spinner();
-  writeSpinner.start('Writing files...');
-  const directWriteFiles = allFiles.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
-  const dirScopedFiles = allFiles.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
-
-  const results = [
-    ...writeSkillFiles(repoPath, directWriteFiles, { force: shouldForce }),
-    ...writeTransformedFiles(repoPath, dirScopedFiles, { force: shouldForce }),
-  ];
-  writeSpinner.stop('Done');
 
   // Summary
   console.log();
@@ -734,7 +816,6 @@ export async function docInitCommand(path, options) {
   }
 
   // Step 10: Persist target config
-  const persistedTargets = mergeConfiguredTargets(existingConfig?.targets, targetIds);
   writeConfig(repoPath, { targets: persistedTargets, backend: backend.id, saveTokens: nextSaveTokensConfig });
 
   console.log(pc.dim('  Verification: ') + [
@@ -1387,9 +1468,16 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
   }
 }
 
-async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, timeoutMs, strategy, verbose, model, findings, domainsOnly = false) {
+async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, timeoutMs, strategy, verbose, model, findings, domainsOnly = false, incrementalOptions = {}) {
   const allFiles = [];
   const skippedDomains = [];
+  const {
+    writeIncrementally = false,
+    targets = [],
+    graphSerialized = null,
+    shouldForce = false,
+    writeState = null,
+  } = incrementalOptions;
   const today = new Date().toISOString().split('T')[0];
   const scanSummary = buildScanSummary(scan);
   const graphContext = buildGraphContext(repoGraph);
@@ -1446,8 +1534,17 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       baseSpinner.stop(pc.yellow(`${baseLabel} — failed after retries`));
       p.log.warn(`Could not generate ${baseLabel}. Try again with: aspens doc init --strategy rewrite --mode base-only`);
     } else {
+      files = validateGeneratedChunk(files, repoPath);
       allFiles.push(...files);
       baseSkillContent = files.find(f => f.path.includes('/base/'))?.content;
+      if (writeIncrementally && files.length > 0) {
+        writeIncrementalOutputs(
+          repoPath,
+          buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized),
+          shouldForce,
+          writeState
+        );
+      }
       baseSpinner.stop(pc.green(`${baseLabel} generated`));
     }
   } catch (err) {
@@ -1519,8 +1616,19 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       const succeeded = [];
       for (const result of results) {
         if (result.success && result.files.length > 0) {
-          allFiles.push(...result.files);
-          succeeded.push(result.domain);
+          const validFiles = validateGeneratedChunk(result.files, repoPath);
+          if (validFiles.length > 0) {
+            allFiles.push(...validFiles);
+            if (writeIncrementally) {
+              writeIncrementalOutputs(
+                repoPath,
+                buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized),
+                shouldForce,
+                writeState
+              );
+            }
+            succeeded.push(result.domain);
+          }
         } else if (!result.success) {
           skippedDomains.push(result.domain);
         }
@@ -1592,7 +1700,16 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
         files = files.map(file => file.path === 'CLAUDE.md'
           ? { ...file, content: ensureRootKeyFilesSection(file.content, repoGraph) }
           : file);
+        files = validateGeneratedChunk(files, repoPath);
         allFiles.push(...files);
+        if (writeIncrementally && files.length > 0) {
+          writeIncrementalOutputs(
+            repoPath,
+            buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized),
+            shouldForce,
+            writeState
+          );
+        }
         claudeMdSpinner.stop(pc.green(`${instructionsArtifactLabel()} generated`));
       }
     } catch (err) {

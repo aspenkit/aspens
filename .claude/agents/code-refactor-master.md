@@ -13,8 +13,8 @@ You execute refactoring systematically — reorganizing code, extracting compone
 
 **Context (read on-demand):**
 - Read `CLAUDE.md` and `.claude/skills/base/skill.md` for project conventions
-- Check `.claude/guidelines/` if it exists for architecture and testing patterns
-- If a refactoring plan exists, check `dev/active/[task-name]/` for the plan
+- No `.claude/guidelines/` directory exists — skip checking for it
+- If a refactoring plan exists, check `dev/active/[task-name]/` for the plan (create `dev/` dirs as needed)
 
 **Key Conventions:**
 - Pure ESM — use `import`/`export`; never `require()`

@@ -13,10 +13,10 @@ You are an execution agent. You execute development plans created by the `plan` 
 
 ## Key Conventions
 
-- **Pure ESM** — use `import`/`export`; never `require()`.
-- **CliError pattern** — command handlers throw `CliError` from `src/lib/errors.js`; never call `process.exit()` directly.
+- **Pure ESM** — use `import`/`export`; never `require()`. Package uses `"type": "module"` throughout.
+- **CliError pattern** — command handlers throw `CliError` from `src/lib/errors.js`; never call `process.exit()` directly. Top-level handling lives in `bin/cli.js`.
 - **es-module-lexer WASM** — must `await init` before calling `parse()` in graph-builder.
-- **Path sanitization** — `parseFileOutput()` restricts writes to `.claude/` and `CLAUDE.md`; never bypass this.
+- **Path sanitization** — `parseFileOutput()` restricts writes to `.claude/` and `CLAUDE.md`; never bypass this. Accepts `allowedPaths` override for multi-target.
 - **Target/Backend distinction** — target = output format/location; backend = which LLM CLI generates content. Config lives in `.aspens.json`.
 
 ## Step 0 — Load plan
@@ -71,7 +71,7 @@ Use the Agent tool:
 
 ## Step 2 — Test
 
-Run `npm test` (Vitest via `vitest run`).
+Run `npm test` (Vitest via `vitest run`). There is no linter configured yet (`npm run lint` is a no-op).
 
 - Tests pass → proceed to Step 3.
 - Tests fail → diagnose, fix (spawn an executor if needed), re-run. One retry — if it fails again, report to user.
@@ -89,8 +89,17 @@ Run `npm test` (Vitest via `vitest run`).
 ## Guideline paths
 
 - `CLAUDE.md` — project instructions and commands
-- `.claude/skills/base/skill.md` — architecture, structure, and conventions
+- `.claude/skills/base/skill.md` — architecture, structure, and conventions (always-loaded base skill)
 - `.claude/graph.json` / `.claude/code-map.md` — import graph and code map (if available)
+- `.aspens.json` — target/backend/feature config (if available)
+
+## Key entry points
+
+- CLI entry: `bin/cli.js` → command handlers in `src/commands/`
+- Lib modules: `src/lib/` (scanner, runner, graph-builder, skill-writer, etc.)
+- Prompts: `src/prompts/` with `partials/` subdir
+- Templates: `src/templates/` (agents, commands, hooks, settings)
+- Tests: `tests/` (Vitest, real filesystem fixtures — no mocks)
 
 ## Token discipline
 

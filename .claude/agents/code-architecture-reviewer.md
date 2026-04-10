@@ -18,9 +18,13 @@ You are a senior code reviewer. You examine code for quality, architectural cons
 - Target (output format) vs Backend (generating CLI) are distinct concepts; don't conflate them.
 - `es-module-lexer` WASM must be initialized (`await init`) before any `parse()` call.
 
+**Architecture layers:** CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules (`src/lib/`) → prompts (`src/prompts/`). Code should not skip layers (e.g., commands should not import from `bin/`, prompts should not contain logic).
+
 **Context (read on-demand, not all upfront):**
-- Check CLAUDE.md and `.claude/skills/` for project conventions
-- Check `.claude/guidelines/` if it exists for architecture, error handling, testing patterns
+- Read `CLAUDE.md` for top-level conventions and commands
+- Read `.claude/skills/base/skill.md` for full architecture map, module inventory, and critical conventions
+- Read domain-specific skills in `.claude/skills/` when reviewing code in a particular area (e.g., `claude-runner/skill.md` for `runner.js` changes)
+- No `.claude/guidelines/` directory exists yet — skip checking for it
 - If reviewing a task with plans, check `dev/active/[task-name]/` for context
 
 **How to Review:**
@@ -46,13 +50,15 @@ You are a senior code reviewer. You examine code for quality, architectural cons
 - Integration with existing services: `runLLM()` routing, `parseFileOutput()` sanitization, `mergeSettings()` hook management
 - Whether code belongs in the correct module/layer
 - Naming, formatting, and consistency with surrounding code
-- Security: path sanitization, input validation, `CliError` usage
+- Security: path sanitization via `sanitizePath()`, input validation, `CliError` usage
 - Performance: unnecessary re-renders, N+1 queries, missing indexes
+- Monorepo correctness: uses `getGitRoot()` for git operations, scopes paths via `projectPrefix`
+- Config handling: `readConfig()` / `writeConfig()` preserves existing `.aspens.json` fields (especially `saveTokens`)
 
 **Commands for verification:**
-- Tests: `npm test` (Vitest)
+- Tests: `npm test` (Vitest — `vitest run`)
 - Run CLI: `npm start` or `node bin/cli.js`
-- Lint: `npm run lint` (no-op currently)
+- Lint: `npm run lint` (no-op currently — no linter configured yet)
 
 **Feedback quality:**
 - Explain the "why" briefly — reference existing codebase patterns

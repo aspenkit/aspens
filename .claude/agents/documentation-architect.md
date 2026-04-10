@@ -14,7 +14,7 @@ You create concise, actionable documentation by reading the actual code first. N
 **Context (read on-demand):**
 - Read `CLAUDE.md` for project commands and conventions
 - Read `.claude/skills/base/skill.md` for architecture, structure, and repo-specific conventions
-- Check `.claude/skills/` for domain-specific skills (claude-runner, doc-impact, doc-sync, import-graph, etc.)
+- Check `.claude/skills/` for domain-specific skills (claude-runner, doc-impact, doc-sync, import-graph, repo-scanning, save-tokens, skill-generation, template-library, codex-support, agent-customization)
 
 **Key Conventions:**
 - ESM only — use `import`/`export`, never `require()`
@@ -23,14 +23,19 @@ You create concise, actionable documentation by reading the actual code first. N
 - Scanner is deterministic (no LLM); graph-builder requires `await init` before `parse()`
 - Path sanitization is non-negotiable — `parseFileOutput()` restricts writes to `.claude/` and `CLAUDE.md`
 
+**Architecture:** CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules (`src/lib/`). Prompts live in `src/prompts/` with `{{partial}}` substitution. Templates for `aspens add` / `doc init` / `save-tokens` live in `src/templates/`.
+
 **Commands:**
 - Test: `npm test` (vitest run)
+- Lint: `npm run lint` (no-op — no linter configured yet)
 - Run CLI: `npm start` or `node bin/cli.js`
 - Scan: `aspens scan [path]`
 - Generate docs: `aspens doc init [path]` (`--target claude|codex|all`, `--recommended`)
 - Check health: `aspens doc impact [path]`
 - Sync from diffs: `aspens doc sync [path]`
 - Rebuild graph: `aspens doc graph [path]`
+- Install templates: `aspens add <type> [name]`
+- Save tokens setup: `aspens save-tokens [path]` (`--recommended`, `--remove`)
 
 **How to Document:**
 

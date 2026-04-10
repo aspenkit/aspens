@@ -18,9 +18,21 @@ You review development plans to catch issues before implementation begins. Your 
 - Path sanitization is non-negotiable — `parseFileOutput()` restricts writes to `.claude/` and `CLAUDE.md`.
 - `es-module-lexer` WASM must be `await init`'d before calling `parse()`.
 
+**Project commands:**
+- `npm test` — Vitest (`vitest run`)
+- `npm start` / `node bin/cli.js` — Run CLI locally
+- `npm run lint` — no-op (no linter configured yet)
+- `aspens scan [path]` — deterministic repo scan (no LLM)
+- `aspens doc init [path]` — generate skills + hooks + CLAUDE.md
+- `aspens doc sync [path]` — incremental skill updates from git diffs
+- `aspens doc impact [path]` — context health analysis
+
+**Architecture:** CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules (`src/lib/`). Prompts live in `src/prompts/` with `{{partial}}` substitution. Templates in `src/templates/`.
+
 **Context (read on-demand, not all upfront):**
-- Read `CLAUDE.md` and `.claude/skills/` for project conventions
-- Read `.claude/skills/base/skill.md` for architecture and module map
+- `CLAUDE.md` — top-level project instructions and command reference
+- `.claude/skills/base/skill.md` — architecture, module map, and all conventions
+- `.claude/skills/` — domain-specific skills (claude-runner, codex-support, doc-impact, doc-sync, import-graph, repo-scanning, save-tokens, skill-generation, template-library, agent-customization)
 
 **How to Review:**
 

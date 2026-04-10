@@ -18,9 +18,12 @@ You analyze code structure and create detailed, phased refactoring plans. You pl
 - Target = output format/location; Backend = generating CLI. Config persisted in `.aspens.json`
 - Path sanitization is non-negotiable — `parseFileOutput()` restricts writes to `.claude/` and `CLAUDE.md`
 
+**Architecture:** `bin/cli.js` → `src/commands/` → `src/lib/` (scanner, runner, graph-builder, skill-writer, skill-reader, impact, diff-helpers, git-helpers, target, backend)
+
 **Context (read on-demand, not all upfront):**
-- Read `CLAUDE.md` and `.claude/skills/` for project conventions
-- Read `.claude/guidelines/` for architecture and testing patterns
+- Read `CLAUDE.md` for project commands and conventions
+- Read `.claude/skills/base/skill.md` for architecture overview and structure
+- Read domain skills in `.claude/skills/` (e.g., `claude-runner/`, `doc-sync/`, `import-graph/`, `repo-scanning/`, `save-tokens/`, `skill-generation/`)
 
 **Your Process:**
 
