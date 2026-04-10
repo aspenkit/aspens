@@ -35,9 +35,10 @@ You are working on **save-tokens** — the feature that installs Claude Code hoo
 - **Claude-only feature:** Save-tokens hooks and statusline only work with Claude Code. Config is stored in `.aspens.json` under `saveTokens`.
 - **Three hook entry points:** Shell wrappers (`*.sh`) read stdin, resolve project dir, and call `save-tokens.mjs` with a subcommand (`statusline`, `prompt-guard`, `precompact`).
 - **Statusline:** Records Claude context telemetry to `.aspens/sessions/claude-context.json` on every status update. Displays `save-tokens Xk/Yk` in the Claude status bar.
-- **Prompt guard:** Checks token count against `warnAtTokens` (175k default) and `compactAtTokens` (200k default). Above compact threshold: saves a handoff and recommends fresh session. Above warn threshold: suggests `/save-handoff`.
+- **Prompt guard:** Checks token count against `warnAtTokens` (175k default) and `compactAtTokens` (200k default). Above compact threshold: saves a handoff and recommends starting a fresh session then running `/resume-handoff-latest`. Above warn threshold: suggests `/save-handoff`.
 - **Precompact:** Auto-saves a handoff before Claude compaction when `saveHandoff` is enabled.
-- **Handoff files:** Saved to `.aspens/sessions/<timestamp>-claude-handoff.md` with task summary, token count, latest prompt, transcript excerpt. Pruned to keep max 10.
+- **Handoff files:** Saved to `.aspens/sessions/<timestamp>-claude-handoff.md`. Structured with: metadata (tokens, working dir, branch), task summary, files modified, git commits, recent prompts, current state, next steps. Content extracted from JSONL transcript via `extractSessionFacts()`. Pruned to keep max 10.
+- **`extractSessionFacts(input)`:** Parses the session's JSONL transcript to extract: `originalTask` (first user message), `recentPrompts` (last 3 user messages, 200 char max each), `filesModified` (from Edit/Write tool_use blocks), `gitCommits` (from Bash git commit commands), `branch` (from user record `gitBranch` field). Falls back to `input.prompt` as task summary when no transcript is available. Task summary capped at 500 chars.
 - **Telemetry:** `recordClaudeContextTelemetry()` sums input/output/cache tokens from Claude's `context_window.current_usage`. Stale telemetry (>5 min) is ignored.
 - **Config thresholds:** `warnAtTokens` and `compactAtTokens` can be `Number.MAX_SAFE_INTEGER` as disabled sentinel.
 - **Settings merge:** `buildSaveTokensSettings()` produces `statusLine` + `hooks` config. Merged into existing `settings.json` via `mergeSettings()` which treats save-tokens hooks as aspens-managed.
@@ -52,9 +53,10 @@ You are working on **save-tokens** — the feature that installs Claude Code hoo
 - **Sessions dir gitignored** — `.aspens/sessions/.gitignore` excludes everything except `.gitignore` and `README.md`.
 - **Settings backup** — First install creates `.claude/settings.json.bak` if settings exist and no backup exists yet.
 - **`doc init --recommended`** — Calls `installSaveTokensRecommended()` from `save-tokens.js`, also installs agents and doc-sync git hook.
+- **Transcript parsing is best-effort** — `extractSessionFacts()` catches all errors and returns empty facts on failure. Invalid JSON lines are silently skipped.
 
 ## References
 - **Impact integration:** `src/lib/impact.js` — `evaluateSaveTokensHealth()` validates installed state
 
 ---
-**Last Updated:** 2026-04-09
+**Last Updated:** 2026-04-10
