@@ -31,8 +31,10 @@ get_script_dir() {
 }
 
 SCRIPT_DIR="$(get_script_dir)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 log_debug "SCRIPT_DIR=$SCRIPT_DIR"
 log_debug "CLAUDE_PROJECT_DIR=$CLAUDE_PROJECT_DIR"
+log_debug "ASPENS_PROJECT_DIR=$PROJECT_DIR"
 
 cd "$SCRIPT_DIR" || { echo "⚡ [Skills] Failed to cd to $SCRIPT_DIR" >&2; exit 0; }
 
@@ -49,7 +51,7 @@ STDOUT_FILE=$(mktemp)
 STDERR_FILE=$(mktemp)
 trap 'rm -f "$STDOUT_FILE" "$STDERR_FILE"' EXIT
 
-printf '%s' "$INPUT" | NODE_NO_WARNINGS=1 node skill-activation-prompt.mjs \
+printf '%s' "$INPUT" | ASPENS_PROJECT_DIR="$PROJECT_DIR" NODE_NO_WARNINGS=1 node skill-activation-prompt.mjs \
     >"$STDOUT_FILE" 2>"$STDERR_FILE"
 EXIT_CODE=$?
 

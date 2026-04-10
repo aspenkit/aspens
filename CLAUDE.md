@@ -1,6 +1,6 @@
 # aspens
 
-CLI for generating and maintaining AI-ready repo docs for Claude Code and Codex CLI. Stack: Node.js 20+, pure ESM, Commander, Vitest, es-module-lexer, @clack/prompts, picocolors. Entry point: `src/index.js` and CLI at `bin/cli.js`.
+CLI for keeping coding-agent context accurate as your codebase changes. Supports Claude Code and Codex CLI. Stack: Node.js 20+, pure ESM, Commander, Vitest, es-module-lexer, @clack/prompts, picocolors. Entry point: `src/index.js` and CLI at `bin/cli.js`.
 
 ## Skills
 
@@ -12,11 +12,13 @@ CLI for generating and maintaining AI-ready repo docs for Claude Code and Codex 
 - `npm start` — run the CLI (`node bin/cli.js`)
 - `npm run lint` — no-op check (`echo 'No linter configured yet' && exit 0`)
 - `aspens scan [path]` — deterministic repo scan
-- `aspens doc init [path]` — generate skills, hooks, and instructions file (`--target claude|codex|all`)
+- `aspens doc init [path]` — generate skills, hooks, and instructions file (`--target claude|codex|all`, `--recommended` for full recommended setup including save-tokens, agents, and doc-sync hook)
+- `aspens doc impact [path]` — show freshness, coverage, drift, and LLM interpretation of generated context (interactive apply for repairs)
 - `aspens doc sync [path]` — update docs from recent diffs
 - `aspens doc graph [path]` — rebuild `.claude/graph.json`
 - `aspens add <type> [name]` — install bundled templates
 - `aspens customize agents` — inject project context into installed agents
+- `aspens save-tokens [path]` — install token-saving session settings (`--recommended`, `--remove`)
 
 ## Release
 

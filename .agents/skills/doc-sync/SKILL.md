@@ -23,18 +23,19 @@ You are working on **doc-sync**, the incremental skill update command (`aspens d
 - `src/commands/doc-sync.js` — Main command: git diff → graph rebuild → skill mapping → LLM update → publish for targets → write. Also contains refresh mode and `skillToDomain()` export.
 - `src/prompts/doc-sync.md` — System prompt for diff-based sync (uses `{{skill-format}}` partial, target-specific path variables)
 - `src/prompts/doc-sync-refresh.md` — System prompt for `--refresh` mode (full skill review)
-- `src/lib/git-helpers.js` — `isGitRepo()`, `getGitDiff()`, `getGitLog()`, `getChangedFiles()` — git primitives
+- `src/lib/git-helpers.js` — `getGitRoot()`, `isGitRepo()`, `getGitDiff()`, `getGitLog()`, `getChangedFiles()` — git primitives
 - `src/lib/diff-helpers.js` — `getSelectedFilesDiff()`, `buildPrioritizedDiff()`, `truncateDiff()`, `truncate()` — diff budgeting
-- `src/lib/git-hook.js` — `installGitHook()` / `removeGitHook()` for post-commit auto-sync
+- `src/lib/git-hook.js` — `installGitHook()` / `removeGitHook()` for post-commit auto-sync (monorepo-aware)
 - `src/lib/context-builder.js` — `buildDomainContext()`, `buildBaseContext()` used by refresh mode
 - `src/lib/runner.js` — `runLLM()`, `loadPrompt()`, `parseFileOutput()` shared across commands
 - `src/lib/skill-writer.js` — `writeSkillFiles()`, `writeTransformedFiles()`, `extractRulesFromSkills()` for output
 - `src/lib/target-transform.js` — `projectCodexDomainDocs()`, `transformForTarget()` for multi-target publish
 
 ## Key Concepts
+- **Monorepo-aware:** `getGitRoot(repoPath)` resolves the actual git root. `projectPrefix` (`toGitRelative`) computes the subdirectory offset. `scopeProjectFiles()` filters changed files to the project subdirectory. Diffs are fetched from `gitRoot` but file paths are project-relative.
 - **Multi-target publish:** `configuredTargets()` reads `.aspens.json` for all configured targets. `chooseSyncSourceTarget()` picks the best source (prefers Claude if both exist). LLM generates for the source target; `publishFilesForTargets()` transforms output for all other configured targets. `graphSerialized` is passed through to control conditional architecture references.
 - **Backend routing:** `runLLM()` from `runner.js` dispatches to `runClaude()` or `runCodex()` based on `config.backend` (defaults to source target's id).
-- **Diff-based flow:** Gets `git diff HEAD~N..HEAD` and `git log`, feeds them plus existing skill contents and graph context to the selected backend.
+- **Diff-based flow:** Gets `git diff HEAD~N..HEAD` from git root, scopes changed files to project prefix, then feeds diff plus existing skill contents and graph context to the selected backend.
 - **Prompt path variables:** Passes `{ skillsDir, skillFilename, instructionsFile, configDir }` from source target to `loadPrompt()` for path substitution in prompts.
 - **Refresh mode (`--refresh`):** Skips diff entirely. Reviews every skill against the current codebase. Base skill refreshed first, then domain skills in parallel batches of `PARALLEL_LIMIT` (3). Also refreshes instructions file and reports uncovered domains.
 - **Graph rebuild on every sync:** Calls `buildRepoGraph` + `persistGraphArtifacts` (with source target) to keep graph fresh. `graphSerialized` return value is captured and forwarded to `publishFilesForTargets` for conditional Codex architecture refs. Graph failure is non-fatal.
@@ -46,7 +47,7 @@ You are working on **doc-sync**, the incremental skill update command (`aspens d
 - **Split writes:** Direct-write files (`.claude/`, `AGENTS.md`, root `AGENTS.md`) use `writeSkillFiles()`. Directory-scoped `AGENTS.md` files (e.g. `src/AGENTS.md`) use `writeTransformedFiles()`.
 - **Skill-rules regeneration:** After writing, regenerates `skill-rules.json` via `extractRulesFromSkills()` — only for targets with `supportsHooks: true` (Claude). Uses `hookTarget` from publish targets list.
 - **`findExistingSkills` is target-aware:** Uses `target.skillsDir` and `target.skillFilename` to locate skills for any target.
-- **Git hook:** `installGitHook()` creates a `post-commit` hook with 5-minute cooldown lock file. Hook skips aspens-only commits (filters `.claude/`, `.codex/`, `.agents/`, `AGENTS.md`, `AGENTS.md`, `.aspens.json`). Works for all configured targets.
+- **Git hook (monorepo-aware):** `installGitHook()` installs at the git root with per-project scoping. Hook uses `PROJECT_PATH` derived from project-relative offset. Each subproject gets its own labeled hook block (`# >>> aspens doc-sync hook (label) >>>`) with a unique function name (`__aspens_doc_sync_<slug>`). Multiple subprojects can coexist in one post-commit hook. Hook skips aspens-only commits scoped to the project prefix.
 - **Force writes:** doc-sync always calls `writeSkillFiles` with `force: true`.
 
 ## Critical Rules
@@ -57,9 +58,10 @@ You are working on **doc-sync**, the incremental skill update command (`aspens d
 - The command exits early with `CliError` if the source target's skills directory doesn't exist.
 - `checkMissingHooks()` in `bin/cli.js` only checks for Claude skills (not Codex — Codex doesn't use hooks).
 - `dedupeFiles()` ensures no duplicate paths when publishing across multiple targets.
+- **Git operations use `gitRoot`** — diffs, logs, and changed files are fetched from git root, not `repoPath`. File paths are then scoped via `projectPrefix`.
 
 ## References
 - **Patterns:** `src/lib/skill-reader.js` — `GENERIC_PATH_SEGMENTS`, `fileMatchesActivation()`, `getActivationBlock()`
 
 ---
-**Last Updated:** 2026-04-07
+**Last Updated:** 2026-04-08

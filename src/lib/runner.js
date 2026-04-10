@@ -7,6 +7,7 @@ import { tmpdir } from 'os';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = join(__dirname, '..', 'prompts');
 const PARTIALS_DIR = join(PROMPTS_DIR, 'partials');
+let codexExecCapabilities = null;
 
 // Default paths that parseFileOutput is allowed to write to
 const DEFAULT_ALLOWED_DIR_PREFIXES = ['.claude/'];
@@ -25,6 +26,28 @@ function checkClaude() {
       'Or use --runner api (coming soon) to use the API directly.'
     );
   }
+}
+
+function getCodexExecCapabilities() {
+  if (codexExecCapabilities) return codexExecCapabilities;
+
+  try {
+    const help = execSync('codex exec --help', {
+      stdio: 'pipe',
+      timeout: 5000,
+      encoding: 'utf8',
+    });
+
+    codexExecCapabilities = {
+      supportsAskForApproval: help.includes('--ask-for-approval'),
+    };
+  } catch {
+    codexExecCapabilities = {
+      supportsAskForApproval: false,
+    };
+  }
+
+  return codexExecCapabilities;
 }
 
 /**
@@ -145,16 +168,18 @@ export function runLLM(prompt, options = {}, backendId = 'claude') {
  */
 export function runCodex(prompt, options = {}) {
   const { timeout = 300000, verbose = false, onActivity = null, model = null, cwd = null } = options;
+  const capabilities = getCodexExecCapabilities();
 
   const args = [
     'exec',
     '--json',
     '--sandbox',
     'read-only',
-    '--ask-for-approval',
-    'never',
     '--ephemeral',
   ];
+  if (capabilities.supportsAskForApproval) {
+    args.push('--ask-for-approval', 'never');
+  }
   if (model) args.push('--model', model);
   if (cwd) args.push('--cd', cwd);
   // Pass prompt via stdin (using '-' placeholder) to avoid shell arg length limits

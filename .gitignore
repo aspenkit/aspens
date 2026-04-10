@@ -12,3 +12,4 @@ dist/
 .claude/graph.json
 .claude/graph-index.json
 .claude/code-map.md
+dev/

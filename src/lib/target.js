@@ -118,6 +118,25 @@ export function getAllowedPaths(targets) {
   };
 }
 
+export function mergeConfiguredTargets(existingTargets = [], nextTargets = []) {
+  const validIds = new Set(Object.keys(TARGETS));
+  const merged = [];
+
+  for (const target of existingTargets) {
+    if (validIds.has(target) && !merged.includes(target)) {
+      merged.push(target);
+    }
+  }
+
+  for (const target of nextTargets) {
+    if (validIds.has(target) && !merged.includes(target)) {
+      merged.push(target);
+    }
+  }
+
+  return merged;
+}
+
 /**
  * Shorthand — returns path info for a target.
  * @param {string} targetId
@@ -149,10 +168,43 @@ export function readConfig(repoPath) {
   }
 }
 
+function isValidSaveTokensConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
+  const {
+    enabled,
+    warnAtTokens,
+    compactAtTokens,
+    saveHandoff,
+    sessionRotation,
+    claude,
+    codex,
+  } = config;
+
+  if (typeof enabled !== 'boolean') return false;
+  if (!Number.isInteger(warnAtTokens) || warnAtTokens <= 0) return false;
+  if (!Number.isInteger(compactAtTokens) || compactAtTokens <= 0) return false;
+  // Allow either threshold to be MAX_SAFE_INTEGER (disabled sentinel)
+  if (warnAtTokens !== Number.MAX_SAFE_INTEGER && compactAtTokens !== Number.MAX_SAFE_INTEGER && compactAtTokens <= warnAtTokens) return false;
+  if (typeof saveHandoff !== 'boolean') return false;
+  if (typeof sessionRotation !== 'boolean') return false;
+  if (claude !== undefined) {
+    if (!claude || typeof claude !== 'object' || Array.isArray(claude)) return false;
+    if (claude.enabled !== undefined && typeof claude.enabled !== 'boolean') return false;
+    if (claude.mode !== undefined && !['automatic', 'manual'].includes(claude.mode)) return false;
+  }
+  if (codex !== undefined) {
+    if (!codex || typeof codex !== 'object' || Array.isArray(codex)) return false;
+    if (codex.enabled !== undefined && typeof codex.enabled !== 'boolean') return false;
+    if (codex.mode !== undefined && !['automatic', 'manual'].includes(codex.mode)) return false;
+  }
+
+  return true;
+}
+
 function isValidConfig(config) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
 
-  const { targets, backend, version } = config;
+  const { targets, backend, version, saveTokens } = config;
 
   if (!Array.isArray(targets) || targets.length === 0) return false;
   if (!targets.every(target => typeof target === 'string' && Object.prototype.hasOwnProperty.call(TARGETS, target))) {
@@ -162,6 +214,7 @@ function isValidConfig(config) {
     return false;
   }
   if (version !== undefined && typeof version !== 'string') return false;
+  if (saveTokens !== undefined && !isValidSaveTokensConfig(saveTokens)) return false;
 
   return true;
 }
@@ -173,11 +226,18 @@ function isValidConfig(config) {
  */
 export function writeConfig(repoPath, config) {
   const configPath = join(repoPath, CONFIG_FILE);
+  const existing = readConfig(repoPath);
   const data = {
-    targets: config.targets,
-    backend: config.backend || null,
+    targets: config.targets || existing?.targets,
+    backend: config.backend ?? existing?.backend ?? null,
     version: '1.0',
   };
+  // Preserve feature config by default. Commands that intentionally remove
+  // save-tokens must pass saveTokens: null.
+  const saveTokens = config.saveTokens === undefined ? existing?.saveTokens : config.saveTokens;
+  if (saveTokens !== undefined && saveTokens !== null) {
+    data.saveTokens = saveTokens;
+  }
   writeFileSync(configPath, JSON.stringify(data, null, 2) + '\n');
 }
 

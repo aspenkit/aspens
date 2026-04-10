@@ -1,29 +1,33 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { existsSync, readFileSync, rmSync, mkdirSync, writeFileSync, statSync } from 'fs';
 import { join } from 'path';
+import { execFileSync } from 'child_process';
 import { installGitHook, removeGitHook } from '../src/lib/git-hook.js';
 
 const TEST_DIR = join(import.meta.dirname, 'tmp-hook');
 const HOOKS_DIR = join(TEST_DIR, '.git', 'hooks');
 const HOOK_PATH = join(HOOKS_DIR, 'post-commit');
+const SUBPROJECT_DIR = join(TEST_DIR, 'backend');
 
 beforeEach(() => {
-  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
-  mkdirSync(HOOKS_DIR, { recursive: true });
+  if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true, force: true });
+  mkdirSync(TEST_DIR, { recursive: true });
+  execFileSync('git', ['init'], { cwd: TEST_DIR, stdio: 'pipe' });
+  mkdirSync(SUBPROJECT_DIR, { recursive: true });
 });
 
 afterAll(() => {
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
 });
 
-describe('installGitHook', () => {
+describe.sequential('installGitHook', () => {
   it('creates post-commit hook with shebang and markers', () => {
     installGitHook(TEST_DIR);
     const content = readFileSync(HOOK_PATH, 'utf8');
     expect(content).toContain('#!/bin/sh');
-    expect(content).toContain('# >>> aspens doc-sync hook (do not edit) >>>');
-    expect(content).toContain('__aspens_doc_sync()');
-    expect(content).toContain('# <<< aspens doc-sync hook <<<');
+    expect(content).toContain('# >>> aspens doc-sync hook (.) (do not edit) >>>');
+    expect(content).toContain('__aspens_doc_sync_root()');
+    expect(content).toContain('# <<< aspens doc-sync hook (.) <<<');
   });
 
   it('makes hook executable', () => {
@@ -63,9 +67,51 @@ describe('installGitHook', () => {
     // Only one shebang
     expect(content.match(/^#!\/bin\/sh/gm)).toHaveLength(1);
   });
+
+  it('upgrades old unlabeled aspens hook block instead of appending a duplicate', () => {
+    writeFileSync(HOOK_PATH, [
+      '#!/bin/sh',
+      '# >>> aspens doc-sync hook (do not edit) >>>',
+      'npx aspens doc sync --commits 1',
+      '# <<< aspens doc-sync hook <<<',
+      '',
+    ].join('\n'), 'utf8');
+
+    installGitHook(TEST_DIR);
+
+    const content = readFileSync(HOOK_PATH, 'utf8');
+    expect(content).toContain('# >>> aspens doc-sync hook (.) (do not edit) >>>');
+    expect(content).not.toContain('# >>> aspens doc-sync hook (do not edit) >>>');
+    expect(content.match(/aspens doc-sync hook/g)).toHaveLength(2);
+  });
+
+  it('ignores generated directory-scoped AGENTS.md files', () => {
+    installGitHook(TEST_DIR);
+    const content = readFileSync(HOOK_PATH, 'utf8');
+
+    expect(content).toContain("grep -v '^.*\\/AGENTS\\.md$'");
+  });
+
+  it('installs subproject hooks at the git root and syncs the subproject path', () => {
+    installGitHook(SUBPROJECT_DIR);
+    const content = readFileSync(HOOK_PATH, 'utf8');
+    expect(content).toContain('# >>> aspens doc-sync hook (backend) (do not edit) >>>');
+    expect(content).toContain('PROJECT_PATH="${REPO_ROOT}/backend"');
+    expect(content).toContain('doc sync --commits 1 "$PROJECT_PATH"');
+  });
+
+  it('supports installing hooks for multiple subprojects', () => {
+    installGitHook(SUBPROJECT_DIR);
+    const frontendDir = join(TEST_DIR, 'frontend');
+    mkdirSync(frontendDir, { recursive: true });
+    installGitHook(frontendDir);
+    const content = readFileSync(HOOK_PATH, 'utf8');
+    expect(content).toContain('# >>> aspens doc-sync hook (backend) (do not edit) >>>');
+    expect(content).toContain('# >>> aspens doc-sync hook (frontend) (do not edit) >>>');
+  });
 });
 
-describe('removeGitHook', () => {
+describe.sequential('removeGitHook', () => {
   it('removes hook file when it only contains aspens block', () => {
     installGitHook(TEST_DIR);
     expect(existsSync(HOOK_PATH)).toBe(true);
@@ -101,5 +147,16 @@ describe('removeGitHook', () => {
     // Should not delete — warns about legacy format
     removeGitHook(TEST_DIR);
     expect(existsSync(HOOK_PATH)).toBe(true);
+  });
+
+  it('removes only the matching subproject hook block', () => {
+    installGitHook(SUBPROJECT_DIR);
+    const frontendDir = join(TEST_DIR, 'frontend');
+    mkdirSync(frontendDir, { recursive: true });
+    installGitHook(frontendDir);
+    removeGitHook(SUBPROJECT_DIR);
+    const content = readFileSync(HOOK_PATH, 'utf8');
+    expect(content).not.toContain('# >>> aspens doc-sync hook (backend) (do not edit) >>>');
+    expect(content).toContain('# >>> aspens doc-sync hook (frontend) (do not edit) >>>');
   });
 });

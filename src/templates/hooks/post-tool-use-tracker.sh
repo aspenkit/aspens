@@ -12,8 +12,22 @@ if ! command -v jq &> /dev/null; then
     exit 0
 fi
 
-# Exit early if CLAUDE_PROJECT_DIR is not set
-if [[ -z "$CLAUDE_PROJECT_DIR" ]]; then
+get_script_dir() {
+    local source="${BASH_SOURCE[0]}"
+    while [ -h "$source" ]; do
+        local dir
+        dir="$(cd -P "$(dirname "$source")" && pwd)" || return 1
+        source="$(readlink "$source")"
+        [[ $source != /* ]] && source="$dir/$source"
+    done
+    cd -P "$(dirname "$source")" && pwd
+}
+
+SCRIPT_DIR="$(get_script_dir)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Exit early if neither CLAUDE_PROJECT_DIR nor PROJECT_DIR is set
+if [[ -z "$CLAUDE_PROJECT_DIR" ]] && [[ -z "$PROJECT_DIR" ]]; then
     exit 0
 fi
 
@@ -38,13 +52,13 @@ if [[ "$file_path" =~ \.(md|markdown)$ ]]; then
 fi
 
 # Create cache directory in project
-cache_dir="$CLAUDE_PROJECT_DIR/.claude/tsc-cache/${session_id:-default}"
+cache_dir="$PROJECT_DIR/.claude/tsc-cache/${session_id:-default}"
 mkdir -p "$cache_dir"
 
 # Function to detect repo from file path
 detect_repo() {
     local file="$1"
-    local project_root="$CLAUDE_PROJECT_DIR"
+    local project_root="$PROJECT_DIR"
 
     # Remove project root from path
     local relative_path="${file#$project_root/}"
@@ -100,7 +114,7 @@ detect_repo() {
 # Function to get build command for repo
 get_build_command() {
     local repo="$1"
-    local project_root="$CLAUDE_PROJECT_DIR"
+    local project_root="$PROJECT_DIR"
 
     # Map special repo names to actual paths
     local repo_path
@@ -142,7 +156,7 @@ get_build_command() {
 # Function to get TSC command for repo
 get_tsc_command() {
     local repo="$1"
-    local project_root="$CLAUDE_PROJECT_DIR"
+    local project_root="$PROJECT_DIR"
 
     # Map special repo names to actual paths
     local repo_path
@@ -215,24 +229,24 @@ detect_skill_domain() {
 
     # -----------------------------------------------
     # Add your domain-specific patterns here.
+    # Uses independent if statements (not elif) so a single
+    # file can activate multiple skills (e.g. shared files).
+    #
     # Examples (uncomment and customize):
     #
-    # Frontend domain patterns:
     # if [[ "$file" =~ /courses/ ]] || [[ "$file" =~ useCourse ]]; then
-    #     detected_skills="frontend/courses"
-    # elif [[ "$file" =~ /dashboard/ ]] || [[ "$file" =~ useDashboard ]]; then
-    #     detected_skills="frontend/dashboard"
+    #     detected_skills="$detected_skills frontend/courses"
     # fi
-    #
-    # Backend domain patterns:
+    # if [[ "$file" =~ /dashboard/ ]] || [[ "$file" =~ useDashboard ]]; then
+    #     detected_skills="$detected_skills frontend/dashboard"
+    # fi
     # if [[ "$file" =~ /payments/ ]] || [[ "$file" =~ payment.*\.py ]]; then
-    #     detected_skills="backend/payments"
-    # elif [[ "$file" =~ /auth/ ]] || [[ "$file" =~ auth.*\.py ]]; then
-    #     detected_skills="backend/auth"
+    #     detected_skills="$detected_skills backend/payments"
     # fi
     # -----------------------------------------------
 
-    echo "$detected_skills"
+    # Deduplicate and trim
+    echo "$detected_skills" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ *//;s/ *$//'
 }
 # END detect_skill_domain
 
@@ -253,45 +267,25 @@ add_skill_to_session() {
         return
     fi
 
-    # Create or update session file
+    # Create or update session file (jq required — checked at script entry)
     if [[ -f "$session_file" ]]; then
-        # Check if jq is available
-        if command -v jq &> /dev/null; then
-            # Add skill to array, keeping unique values
-            jq --arg skill "$skill" --arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-                '.active_skills = ((.active_skills + [$skill]) | unique) | .last_updated = $time' \
-                "$session_file" > "${session_file}.tmp" 2>/dev/null && \
-                mv "${session_file}.tmp" "$session_file"
-        else
-            # Fallback: simple append check without jq
-            if ! grep -q "\"$skill\"" "$session_file" 2>/dev/null; then
-                # Read existing skills from file, append new one, rewrite
-                local existing_skills=""
-                if [[ -f "$session_file" ]]; then
-                    # Extract skills array content: strip brackets, quotes, whitespace
-                    existing_skills=$(grep -o '"active_skills":\[[^]]*\]' "$session_file" 2>/dev/null | sed 's/"active_skills":\[//;s/\]//;s/"//g;s/ //g')
-                fi
-                # Build new skills list
-                local new_skills=""
-                if [[ -n "$existing_skills" ]]; then
-                    new_skills="\"$(echo "$existing_skills" | sed 's/,/","/g')\",\"$skill\""
-                else
-                    new_skills="\"$skill\""
-                fi
-                echo "{\"repo\":\"$repo\",\"active_skills\":[$new_skills],\"last_updated\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$session_file"
-            fi
-        fi
+        jq --arg skill "$skill" --arg time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '.active_skills = ((.active_skills + [$skill]) | unique) | .last_updated = $time' \
+            "$session_file" > "${session_file}.tmp" 2>/dev/null && \
+            mv "${session_file}.tmp" "$session_file"
     else
         # Create new session file
         echo "{\"repo\":\"$repo\",\"active_skills\":[\"$skill\"],\"last_updated\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$session_file"
     fi
 }
 
-# Track skill domain for session-sticky behavior
-skill_domain=$(detect_skill_domain "$file_path")
-if [[ -n "$skill_domain" ]]; then
-    session_file=$(get_session_file "$CLAUDE_PROJECT_DIR")
-    add_skill_to_session "$skill_domain" "$session_file" "$repo"
+# Track skill domain(s) for session-sticky behavior
+skill_domains=$(detect_skill_domain "$file_path")
+if [[ -n "$skill_domains" ]]; then
+    session_file=$(get_session_file "$PROJECT_DIR")
+    for skill in $skill_domains; do
+        add_skill_to_session "$skill" "$session_file" "$repo"
+    done
 fi
 
 # Exit cleanly

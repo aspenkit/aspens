@@ -1,5 +1,5 @@
-import { resolve, join, dirname } from 'path';
-import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync } from 'fs';
+import { resolve, join, dirname, relative } from 'path';
+import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
@@ -11,10 +11,12 @@ import { persistGraphArtifacts } from '../lib/graph-persistence.js';
 import { installGitHook } from '../lib/git-hook.js';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
-import { TARGETS, resolveTarget, getAllowedPaths, writeConfig } from '../lib/target.js';
+import { TARGETS, resolveTarget, getAllowedPaths, writeConfig, loadConfig, mergeConfiguredTargets } from '../lib/target.js';
 import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
-import { transformForTarget, validateTransformedFiles } from '../lib/target-transform.js';
+import { transformForTarget, validateTransformedFiles, ensureRootKeyFilesSection } from '../lib/target-transform.js';
 import { findSkillFiles } from '../lib/skill-reader.js';
+import { getGitRoot } from '../lib/git-helpers.js';
+import { installSaveTokensRecommended } from './save-tokens.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -115,11 +117,86 @@ function trackUsage(usage, promptLength) {
   }
 }
 
+function validateGeneratedChunk(files, repoPath) {
+  if (files.length === 0) return files;
+
+  let validation = { valid: true, issues: [] };
+  try {
+    validation = validateSkillFiles(files, repoPath);
+  } catch (err) {
+    p.log.warn(`Validation failed: ${err.message}`);
+    return files;
+  }
+
+  const truncated = validation.issues.filter(issue => issue.issue === 'truncated').map(issue => issue.file);
+  if (truncated.length > 0) {
+    p.log.warn(`Removed ${truncated.length} truncated file(s) from this chunk.`);
+    files = files.filter(file => !truncated.includes(file.path));
+  }
+
+  return files;
+}
+
+function buildOutputFilesForTargets(canonicalFiles, targets, scan, graphSerialized) {
+  let outputFiles = [...canonicalFiles];
+  const nonClaudeTargets = targets.filter(target => target.id !== 'claude');
+
+  if (nonClaudeTargets.length > 0) {
+    for (const target of nonClaudeTargets) {
+      const transformed = transformForTarget(canonicalFiles, TARGETS.claude, target, {
+        scanResult: scan,
+        graphSerialized,
+      });
+
+      const transformValidation = validateTransformedFiles(transformed);
+      if (!transformValidation.valid) {
+        p.log.warn(`Transform issues for ${target.label}:`);
+        for (const issue of transformValidation.issues) {
+          console.log(pc.dim('  ') + pc.yellow('!') + ' ' + issue);
+        }
+      }
+
+      const validTransformed = transformValidation.valid
+        ? transformed
+        : transformed.filter(file => validateTransformedFiles([file]).valid);
+
+      outputFiles = [...outputFiles, ...validTransformed];
+    }
+
+    if (!targets.some(target => target.id === 'claude')) {
+      outputFiles = outputFiles.filter(file => !canonicalFiles.includes(file));
+    }
+  }
+
+  return outputFiles;
+}
+
+function writeIncrementalOutputs(repoPath, files, shouldForce, writeState) {
+  const changedFiles = files.filter(file => writeState.contentsByPath.get(file.path) !== file.content);
+  if (changedFiles.length === 0) return;
+
+  const directWriteFiles = changedFiles.filter(file => !(file.path.endsWith('/AGENTS.md') && file.path !== 'AGENTS.md'));
+  const dirScopedFiles = changedFiles.filter(file => file.path.endsWith('/AGENTS.md') && file.path !== 'AGENTS.md');
+  const results = [
+    ...writeSkillFiles(repoPath, directWriteFiles, { force: shouldForce }),
+    ...writeTransformedFiles(repoPath, dirScopedFiles, { force: shouldForce }),
+  ];
+
+  for (const file of changedFiles) {
+    writeState.contentsByPath.set(file.path, file.content);
+  }
+  for (const result of results) {
+    writeState.resultsByPath.set(result.path, result);
+  }
+}
+
 export async function docInitCommand(path, options) {
   const repoPath = resolve(path);
   _repoPath = repoPath;
   const verbose = !!options.verbose;
   const model = options.model || null;
+  const recommended = !!options.recommended;
+  const { config: existingConfig } = loadConfig(repoPath, { persist: false });
 
   // --hooks-only: skip skill generation, just install/update hooks
   if (options.hooksOnly) {
@@ -161,9 +238,25 @@ export async function docInitCommand(path, options) {
 
   // --- Step 1: Backend selection (which AI generates) ---
   let backendResult;
+  let recommendedTargetIds = null;
+  let recommendedBackendId = null;
+  if (recommended && !options.target) {
+    const { config } = loadConfig(repoPath, { persist: false });
+    if (config?.targets?.length) {
+      recommendedTargetIds = config.targets;
+    }
+    if (config?.backend) {
+      recommendedBackendId = config.backend;
+    }
+  }
+
   if (options.backend) {
     backendResult = resolveBackend({ backendFlag: options.backend, available });
-  } else if (available.claude && available.codex) {
+  } else if (recommended && recommendedBackendId) {
+    backendResult = resolveBackend({ backendFlag: recommendedBackendId, available });
+  } else if (recommended && recommendedTargetIds?.length === 1) {
+    backendResult = resolveBackend({ targetId: recommendedTargetIds[0], available });
+  } else if (available.claude && available.codex && !recommended) {
     const backendChoice = await p.select({
       message: 'Which AI should generate the docs?',
       options: [
@@ -185,6 +278,10 @@ export async function docInitCommand(path, options) {
   let targetIds;
   if (options.target) {
     targetIds = options.target === 'all' ? ['claude', 'codex'] : [options.target];
+  } else if (recommendedTargetIds?.length) {
+    targetIds = recommendedTargetIds;
+  } else if (recommended) {
+    targetIds = [backend.id];
   } else if (available.claude && available.codex) {
     const selected = await p.multiselect({
       message: 'Generate docs for which coding agents?',
@@ -205,9 +302,23 @@ export async function docInitCommand(path, options) {
   const primaryTarget = targets[0];
   _primaryTarget = primaryTarget;
   _allowedPaths = null; // canonical generation uses defaults
+  const persistedTargets = mergeConfiguredTargets(existingConfig?.targets, targetIds);
+
+  // Persist the selected target/backend up front so a failed generation run
+  // still updates repo config to reflect the user's explicit choice.
+  if (!options.dryRun) {
+    writeConfig(repoPath, {
+      targets: persistedTargets,
+      backend: backend.id,
+      saveTokens: existingConfig?.saveTokens,
+    });
+  }
 
   console.log(pc.dim(`  Target: ${targets.map(t => t.label).join(' + ')}`));
   console.log(pc.dim(`  Backend: ${backend.label}`));
+  if (recommended) {
+    console.log(pc.dim('  Mode: ') + 'recommended defaults');
+  }
   console.log();
 
   // Step 1: Scan
@@ -266,14 +377,18 @@ export async function docInitCommand(path, options) {
   _reuseSourceTarget = chooseReuseSourceTarget(targets, hasClaudeDocs, hasCodexDocs);
   let skipDiscovery = false;
   if (hasExistingDocs && !isBaseOnly && !isDomainsOnly && options.strategy !== 'rewrite') {
-    const existingSource = hasClaudeDocs && hasCodexDocs ? 'Claude + Codex'
-      : hasClaudeDocs ? 'Claude' : 'Codex';
-    const reuse = await p.confirm({
-      message: `Existing ${existingSource} docs found. Skip discovery and reuse existing domains?`,
-      initialValue: true,
-    });
-    if (p.isCancel(reuse)) { p.cancel('Aborted'); return; }
-    skipDiscovery = reuse;
+    if (recommended) {
+      skipDiscovery = true;
+    } else {
+      const existingSource = hasClaudeDocs && hasCodexDocs ? 'Claude + Codex'
+        : hasClaudeDocs ? 'Claude' : 'Codex';
+      const reuse = await p.confirm({
+        message: `Existing ${existingSource} docs found. Skip discovery and reuse existing domains?`,
+        initialValue: true,
+      });
+      if (p.isCancel(reuse)) { p.cancel('Aborted'); return; }
+      skipDiscovery = reuse;
+    }
   }
   if (repoGraph && repoGraph.stats.totalFiles > 0 && !isBaseOnly && !isDomainsOnly && !skipDiscovery) {
     console.log(pc.dim('  Running 2 discovery agents in parallel...'));
@@ -394,6 +509,8 @@ export async function docInitCommand(path, options) {
     if (!['improve', 'rewrite', 'skip-existing', 'fresh'].includes(existingDocsStrategy)) {
       throw new CliError(`Unknown strategy: ${options.strategy}. Use: improve, rewrite, or skip`);
     }
+  } else if (recommended && hasExistingDocs) {
+    existingDocsStrategy = 'improve';
   } else if ((scan.hasClaudeConfig || scan.hasClaudeMd || scan.hasAgentsMd) && !options.force && !isDomainsOnly) {
     // Detect what actually exists per-target
     const hasClaudeDocs = scan.hasClaudeConfig || scan.hasClaudeMd;
@@ -463,6 +580,10 @@ export async function docInitCommand(path, options) {
   } else if (effectiveDomains.length === 0) {
     p.log.info(`No domains detected — generating ${baseArtifactLabel()} only.`);
     mode = 'base-only';
+  } else if (recommended) {
+    const isLarge = scan.size && (scan.size.category === 'large' || scan.size.category === 'very-large');
+    mode = isLarge || effectiveDomains.length > 6 ? 'chunked' : 'all-at-once';
+    p.log.info(`Recommended mode: ${mode === 'chunked' ? 'one domain at a time' : 'all at once'}.`);
   } else {
     // Smart defaults based on repo size
     const isLarge = scan.size && (scan.size.category === 'large' || scan.size.category === 'very-large');
@@ -514,6 +635,11 @@ export async function docInitCommand(path, options) {
 
   // Step 5: Generate skills
   let allFiles = [];
+  const shouldForce = options.force || existingDocsStrategy === 'improve' || existingDocsStrategy === 'rewrite';
+  const shouldWriteIncrementally = mode === 'chunked' && !options.dryRun;
+  const incrementalWriteState = shouldWriteIncrementally
+    ? { contentsByPath: new Map(), resultsByPath: new Map() }
+    : null;
   const reuseExistingCanonical = (
     existingDocsStrategy === 'improve' &&
     _reuseSourceTarget?.id === 'claude'
@@ -522,11 +648,30 @@ export async function docInitCommand(path, options) {
     p.log.info(pc.dim(`Using existing ${_reuseSourceTarget.label} docs as improvement context.`));
   }
 
+  if (shouldWriteIncrementally) {
+    console.log();
+    const allowIncrementalWrite = await p.confirm({
+      message: 'Allow aspens to write generated files incrementally during chunked generation? This includes skills, repo docs, and supported hook/config updates.',
+      initialValue: true,
+    });
+
+    if (p.isCancel(allowIncrementalWrite) || !allowIncrementalWrite) {
+      p.cancel('Aborted');
+      return;
+    }
+  }
+
   if (mode === 'all-at-once') {
     allFiles = await generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, !!options.mode);
   } else {
     const domainsOnly = isDomainsOnly; // retrying specific domains — skip base + CLAUDE.md
-    allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, domainsOnly);
+    allFiles = await generateChunked(repoPath, scan, repoGraph, selectedDomains, mode === 'base-only', timeoutMs, existingDocsStrategy, verbose, model, discoveryFindings, domainsOnly, {
+      writeIncrementally: shouldWriteIncrementally,
+      targets,
+      graphSerialized,
+      shouldForce,
+      writeState: incrementalWriteState,
+    });
   }
 
   if (allFiles.length === 0) {
@@ -539,27 +684,29 @@ export async function docInitCommand(path, options) {
 
   // Step 6: Validate generated files
   let validation = { valid: true, issues: [] };
-  try {
-    validation = validateSkillFiles(allFiles, repoPath);
-  } catch (err) {
-    p.log.warn(`Validation failed: ${err.message}`);
-  }
-
-  if (!validation.valid) {
-    console.log();
-    p.log.warn(`Found ${validation.issues.length} issue(s) in generated skills:`);
-    for (const issue of validation.issues) {
-      const icon = issue.issue === 'bad-path' ? pc.yellow('?') : pc.red('!');
-      console.log(pc.dim('  ') + `${icon} ${pc.dim(issue.file)} — ${issue.detail}`);
+  if (!shouldWriteIncrementally) {
+    try {
+      validation = validateSkillFiles(allFiles, repoPath);
+    } catch (err) {
+      p.log.warn(`Validation failed: ${err.message}`);
     }
 
-    // Filter out truncated files — they'd be useless
-    const truncated = validation.issues.filter(i => i.issue === 'truncated').map(i => i.file);
-    if (truncated.length > 0) {
-      allFiles = allFiles.filter(f => !truncated.includes(f.path));
-      p.log.warn(`Removed ${truncated.length} truncated file(s). Re-run to regenerate them.`);
+    if (!validation.valid) {
+      console.log();
+      p.log.warn(`Found ${validation.issues.length} issue(s) in generated skills:`);
+      for (const issue of validation.issues) {
+        const icon = issue.issue === 'bad-path' ? pc.yellow('?') : pc.red('!');
+        console.log(pc.dim('  ') + `${icon} ${pc.dim(issue.file)} — ${issue.detail}`);
+      }
+
+      // Filter out truncated files — they'd be useless
+      const truncated = validation.issues.filter(i => i.issue === 'truncated').map(i => i.file);
+      if (truncated.length > 0) {
+        allFiles = allFiles.filter(f => !truncated.includes(f.path));
+        p.log.warn(`Removed ${truncated.length} truncated file(s). Re-run to regenerate them.`);
+      }
+      console.log();
     }
-    console.log();
   }
 
   // Step 6.5: Transform canonical output for each target
@@ -568,89 +715,61 @@ export async function docInitCommand(path, options) {
   // For non-Claude targets: transform canonical → target format.
   // For --target all: keep canonical + add transformed for each non-Claude target.
   const canonicalFiles = [...allFiles]; // preserve originals
-  const nonClaudeTargets = targets.filter(t => t.id !== 'claude');
-
-  if (nonClaudeTargets.length > 0) {
-    for (const target of nonClaudeTargets) {
-      const transformSpinner = p.spinner();
-      transformSpinner.start(`Transforming output for ${target.label}...`);
-
-      const transformed = transformForTarget(canonicalFiles, TARGETS.claude, target, {
-        scanResult: scan,
-        graphSerialized,
-      });
-
-      const transformValidation = validateTransformedFiles(transformed);
-      if (!transformValidation.valid) {
-        p.log.warn(`Transform issues for ${target.label}:`);
-        for (const issue of transformValidation.issues) {
-          console.log(pc.dim('  ') + pc.yellow('!') + ' ' + issue);
-        }
-      }
-
-      const validTransformed = transformValidation.valid
-        ? transformed
-        : transformed.filter(f => validateTransformedFiles([f]).valid);
-
-      allFiles = [...allFiles, ...validTransformed];
-      transformSpinner.stop(`Transformed ${validTransformed.length} files for ${target.label}`);
-    }
-
-    // If no Claude target requested, remove the canonical Claude files from output
-    if (!targets.some(t => t.id === 'claude')) {
-      allFiles = allFiles.filter(f => !canonicalFiles.includes(f));
-    }
+  if (!shouldWriteIncrementally) {
+    allFiles = buildOutputFilesForTargets(canonicalFiles, targets, scan, graphSerialized);
   }
 
-  // Step 7: Show what will be written
-  const shouldForce = options.force || existingDocsStrategy === 'improve' || existingDocsStrategy === 'rewrite';
-  console.log();
-  p.log.info('Files to write:');
-  for (const file of allFiles) {
-    const hasIssues = validation.issues?.some(i => i.file === file.path) ?? false;
-    const willOverwrite = existsSync(join(repoPath, file.path));
-    const willWrite = shouldForce || !willOverwrite || hasIssues;
-    const icon = hasIssues ? pc.yellow('~') : willWrite && willOverwrite ? pc.yellow('~') : willWrite ? pc.green('+') : pc.dim('-');
-    console.log(pc.dim('  ') + icon + ' ' + file.path);
-  }
-  console.log();
-
-  // Dry run
-  if (options.dryRun) {
-    p.log.info('Dry run — no files written. Preview:');
+  let results = [];
+  if (!shouldWriteIncrementally) {
+    // Step 7: Show what will be written
+    console.log();
+    p.log.info('Files to write:');
     for (const file of allFiles) {
-      console.log(pc.bold(`\n--- ${file.path} ---`));
-      console.log(pc.dim(file.content));
+      const hasIssues = validation.issues?.some(i => i.file === file.path) ?? false;
+      const willOverwrite = existsSync(join(repoPath, file.path));
+      const willWrite = shouldForce || !willOverwrite || hasIssues;
+      const icon = hasIssues ? pc.yellow('~') : willWrite && willOverwrite ? pc.yellow('~') : willWrite ? pc.green('+') : pc.dim('-');
+      console.log(pc.dim('  ') + icon + ' ' + file.path);
     }
-    showTokenSummary(startTime);
-    p.outro('Dry run complete');
-    return;
+    console.log();
+
+    // Dry run
+    if (options.dryRun) {
+      p.log.info('Dry run — no files written. Preview:');
+      for (const file of allFiles) {
+        console.log(pc.bold(`\n--- ${file.path} ---`));
+        console.log(pc.dim(file.content));
+      }
+      showTokenSummary(startTime);
+      p.outro('Dry run complete');
+      return;
+    }
+
+    // Confirm
+    const proceed = await p.confirm({
+      message: `Write ${allFiles.length} files to ${repoPath}?`,
+      initialValue: true,
+    });
+
+    if (p.isCancel(proceed) || !proceed) {
+      p.cancel('Aborted');
+      return;
+    }
+
+    // Step 8: Write files
+    const writeSpinner = p.spinner();
+    writeSpinner.start('Writing files...');
+    const directWriteFiles = allFiles.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
+    const dirScopedFiles = allFiles.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
+
+    results = [
+      ...writeSkillFiles(repoPath, directWriteFiles, { force: shouldForce }),
+      ...writeTransformedFiles(repoPath, dirScopedFiles, { force: shouldForce }),
+    ];
+    writeSpinner.stop('Done');
+  } else {
+    results = [...incrementalWriteState.resultsByPath.values()];
   }
-
-  // Confirm
-  const proceed = await p.confirm({
-    message: `Write ${allFiles.length} files to ${repoPath}?`,
-    initialValue: true,
-  });
-
-  if (p.isCancel(proceed) || !proceed) {
-    p.cancel('Aborted');
-    return;
-  }
-
-  // Step 8: Write files
-  // Split: Claude-target files use writeSkillFiles (standard paths),
-  // directory-scoped files (e.g., src/billing/AGENTS.md) use writeTransformedFiles (warn-and-skip)
-  const writeSpinner = p.spinner();
-  writeSpinner.start('Writing files...');
-  const directWriteFiles = allFiles.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
-  const dirScopedFiles = allFiles.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
-
-  const results = [
-    ...writeSkillFiles(repoPath, directWriteFiles, { force: shouldForce }),
-    ...writeTransformedFiles(repoPath, dirScopedFiles, { force: shouldForce }),
-  ];
-  writeSpinner.stop('Done');
 
   // Summary
   console.log();
@@ -673,16 +792,52 @@ export async function docInitCommand(path, options) {
     await installHooks(repoPath, options);
   }
 
+  const recommendedSummaryLines = [];
+  let nextSaveTokensConfig = existingConfig?.saveTokens;
+  if (recommended && !options.dryRun) {
+    if (hasHookTarget) {
+      if (options.hooks !== false) {
+        nextSaveTokensConfig = installSaveTokensRecommended(repoPath, existingConfig, targets, recommendedSummaryLines);
+      }
+      installRecommendedClaudeAgents(repoPath, recommendedSummaryLines);
+    }
+
+    const gitRoot = getGitRoot(repoPath);
+    if (gitRoot && options.hook !== false) {
+      const hookPath = join(gitRoot, '.git', 'hooks', 'post-commit');
+      const hookInstalled = existsSync(hookPath) &&
+        readFileSync(hookPath, 'utf8').includes(`aspens doc-sync hook (${toPosixRelative(gitRoot, repoPath) || '.'})`);
+      if (!hookInstalled) {
+        installGitHook(repoPath);
+      }
+    }
+  }
+
+  if (recommendedSummaryLines.length > 0) {
+    console.log();
+    console.log(pc.dim('  Recommended setup:'));
+    for (const line of recommendedSummaryLines) {
+      console.log(`  ${line}`);
+    }
+  }
+
   // Step 10: Persist target config
-  writeConfig(repoPath, { targets: targetIds, backend: backend.id });
+  writeConfig(repoPath, { targets: persistedTargets, backend: backend.id, saveTokens: nextSaveTokensConfig });
+
+  console.log(pc.dim('  Verification: ') + [
+    `${targets.map(t => t.label).join(' + ')} configured`,
+    `${effectiveDomains.length} domain${effectiveDomains.length === 1 ? '' : 's'} analyzed`,
+    hasHookTarget && options.hooks !== false ? 'hooks updated where supported' : 'no hook changes',
+  ].join(' | '));
 
   showTokenSummary(startTime);
 
   // Offer auto-sync git hook (works for all targets — runs `aspens doc sync` on commit)
-  if (options.hook !== false && !options.dryRun && existsSync(join(repoPath, '.git'))) {
-    const hookPath = join(repoPath, '.git', 'hooks', 'post-commit');
+  const gitRoot = getGitRoot(repoPath);
+  if (!recommended && options.hook !== false && !options.dryRun && gitRoot) {
+    const hookPath = join(gitRoot, '.git', 'hooks', 'post-commit');
     const hookInstalled = existsSync(hookPath) &&
-      readFileSync(hookPath, 'utf8').includes('aspens doc');
+      readFileSync(hookPath, 'utf8').includes(`aspens doc-sync hook (${toPosixRelative(gitRoot, repoPath) || '.'})`);
     if (!hookInstalled) {
       console.log();
       const wantHook = await p.confirm({
@@ -701,6 +856,45 @@ export async function docInitCommand(path, options) {
     (overwritten ? `, ${pc.yellow(`${overwritten} overwritten`)}` : '') +
     (skipped ? `, ${pc.dim(`${skipped} skipped`)}` : '')
   );
+}
+
+function installRecommendedClaudeAgents(repoPath, summaryLines) {
+  const agentsSourceDir = join(TEMPLATES_DIR, 'agents');
+  const agentsTargetDir = join(repoPath, '.claude', 'agents');
+  if (!existsSync(agentsSourceDir)) return;
+  mkdirSync(agentsTargetDir, { recursive: true });
+
+  for (const filename of readdirSync(agentsSourceDir).filter(name => name.endsWith('.md')).sort()) {
+    const source = join(agentsSourceDir, filename);
+    const target = join(agentsTargetDir, filename);
+    if (existsSync(target)) {
+      summaryLines.push(`${pc.dim('-')} .claude/agents/${filename} (already exists)`);
+      continue;
+    }
+    copyFileSync(source, target);
+    summaryLines.push(`${pc.green('+')} .claude/agents/${filename}`);
+  }
+
+  ensureRecommendedAgentGitignore(repoPath, summaryLines);
+}
+
+function ensureRecommendedAgentGitignore(repoPath, summaryLines) {
+  const gitignorePath = join(repoPath, '.gitignore');
+  const entry = 'dev/';
+  if (existsSync(gitignorePath)) {
+    const content = readFileSync(gitignorePath, 'utf8');
+    if (/^dev\/$/m.test(content)) return;
+    writeFileSync(gitignorePath, content.trimEnd() + `\n${entry}\n`, 'utf8');
+  } else {
+    writeFileSync(gitignorePath, `${entry}\n`, 'utf8');
+  }
+  summaryLines.push(`${pc.green('+')} .gitignore (dev/)`);
+}
+
+function toPosixRelative(from, to) {
+  const rel = relative(from, to);
+  if (!rel || rel === '.') return '';
+  return rel.split('\\').join('/');
 }
 
 function showTokenSummary(startTime) {
@@ -814,8 +1008,9 @@ async function installHooks(repoPath, options) {
     // 9d: Merge settings.json
     let templateSettings;
     try {
-      templateSettings = JSON.parse(
-        readFileSync(join(TEMPLATES_DIR, 'settings', 'settings.json'), 'utf8')
+      templateSettings = createHookSettings(
+        repoPath,
+        JSON.parse(readFileSync(join(TEMPLATES_DIR, 'settings', 'settings.json'), 'utf8'))
       );
     } catch (err) {
       hookSpinner.stop(pc.yellow('Hook installation incomplete'));
@@ -869,6 +1064,10 @@ async function installHooks(repoPath, options) {
   }
 }
 
+function createHookSettings(repoPath, templateSettings) {
+  return JSON.parse(JSON.stringify(templateSettings));
+}
+
 // --- Generation modes ---
 
 function buildScanSummary(scan) {
@@ -920,6 +1119,20 @@ function buildGraphContext(graph) {
     }
     sections.push('');
   }
+
+  return sections.join('\n');
+}
+
+function buildRootInstructionsGraphContext(graph) {
+  if (!graph?.hubs?.length) return '';
+
+  const sections = ['## Key Files To Surface In Root Context', ''];
+  sections.push('Add a concise `## Key Files` section to the root instructions file and mention these hub files explicitly:');
+  for (const hub of graph.hubs.slice(0, 5)) {
+    const fileInfo = graph.files?.[hub.path];
+    sections.push(`- \`${hub.path}\` — ${hub.fanIn} dependents${fileInfo?.lines ? `, ${fileInfo.lines} lines` : ''}`);
+  }
+  sections.push('');
 
   return sections.join('\n');
 }
@@ -1261,9 +1474,16 @@ async function generateAllAtOnce(repoPath, scan, repoGraph, selectedDomains, tim
   }
 }
 
-async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, timeoutMs, strategy, verbose, model, findings, domainsOnly = false) {
+async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, timeoutMs, strategy, verbose, model, findings, domainsOnly = false, incrementalOptions = {}) {
   const allFiles = [];
   const skippedDomains = [];
+  const {
+    writeIncrementally = false,
+    targets = [],
+    graphSerialized = null,
+    shouldForce = false,
+    writeState = null,
+  } = incrementalOptions;
   const today = new Date().toISOString().split('T')[0];
   const scanSummary = buildScanSummary(scan);
   const graphContext = buildGraphContext(repoGraph);
@@ -1320,8 +1540,17 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       baseSpinner.stop(pc.yellow(`${baseLabel} — failed after retries`));
       p.log.warn(`Could not generate ${baseLabel}. Try again with: aspens doc init --strategy rewrite --mode base-only`);
     } else {
+      files = validateGeneratedChunk(files, repoPath);
       allFiles.push(...files);
       baseSkillContent = files.find(f => f.path.includes('/base/'))?.content;
+      if (writeIncrementally && files.length > 0) {
+        writeIncrementalOutputs(
+          repoPath,
+          buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized),
+          shouldForce,
+          writeState
+        );
+      }
       baseSpinner.stop(pc.green(`${baseLabel} generated`));
     }
   } catch (err) {
@@ -1393,8 +1622,19 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       const succeeded = [];
       for (const result of results) {
         if (result.success && result.files.length > 0) {
-          allFiles.push(...result.files);
-          succeeded.push(result.domain);
+          const validFiles = validateGeneratedChunk(result.files, repoPath);
+          if (validFiles.length > 0) {
+            allFiles.push(...validFiles);
+            if (writeIncrementally) {
+              writeIncrementalOutputs(
+                repoPath,
+                buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized),
+                shouldForce,
+                writeState
+              );
+            }
+            succeeded.push(result.domain);
+          }
         } else if (!result.success) {
           skippedDomains.push(result.domain);
         }
@@ -1439,8 +1679,9 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       });
     }
 
+    const rootGraphContext = buildRootInstructionsGraphContext(repoGraph);
     const claudeMdPrompt = loadPrompt('doc-init-claudemd', CANONICAL_VARS) +
-      `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${existingClaudeMdSection}`;
+      `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${rootGraphContext ? `\n\n${rootGraphContext}` : ''}${existingClaudeMdSection}`;
 
     try {
       let { text, usage } = await runLLM(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner), _backendId);
@@ -1462,7 +1703,19 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
         claudeMdSpinner.stop(pc.yellow(`${instructionsArtifactLabel()} — failed after retries`));
         p.log.warn(`Could not generate ${instructionsArtifactLabel()}. Try: aspens doc init --strategy rewrite --mode base-only`);
       } else {
+        files = files.map(file => file.path === 'CLAUDE.md'
+          ? { ...file, content: ensureRootKeyFilesSection(file.content, repoGraph) }
+          : file);
+        files = validateGeneratedChunk(files, repoPath);
         allFiles.push(...files);
+        if (writeIncrementally && files.length > 0) {
+          writeIncrementalOutputs(
+            repoPath,
+            buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized),
+            shouldForce,
+            writeState
+          );
+        }
         claudeMdSpinner.stop(pc.green(`${instructionsArtifactLabel()} generated`));
       }
     } catch (err) {

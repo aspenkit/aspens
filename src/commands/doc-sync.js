@@ -12,7 +12,7 @@ import { buildDomainContext, buildBaseContext } from '../lib/context-builder.js'
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
 import { installGitHook, removeGitHook } from '../lib/git-hook.js';
-import { isGitRepo, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
+import { isGitRepo, getGitRoot, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
 import { TARGETS, getAllowedPaths, loadConfig } from '../lib/target.js';
 import { getSelectedFilesDiff, buildPrioritizedDiff, truncate } from '../lib/diff-helpers.js';
 import { projectCodexDomainDocs, transformForTarget } from '../lib/target-transform.js';
@@ -83,6 +83,8 @@ function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, g
 
 export async function docSyncCommand(path, options) {
   const repoPath = resolve(path);
+  const gitRoot = getGitRoot(repoPath);
+  const projectPrefix = toGitRelative(gitRoot, repoPath);
   const verbose = !!options.verbose;
   const commits = typeof options.commits === 'number' ? options.commits : 1;
 
@@ -114,7 +116,7 @@ export async function docSyncCommand(path, options) {
   p.intro(pc.cyan('aspens doc sync'));
 
   // Step 1: Check prerequisites
-  if (!isGitRepo(repoPath)) {
+  if (!gitRoot || !isGitRepo(repoPath)) {
     throw new CliError('Not a git repository. doc sync requires git history.');
   }
 
@@ -126,20 +128,20 @@ export async function docSyncCommand(path, options) {
   const diffSpinner = p.spinner();
   diffSpinner.start(`Reading last ${commits} commit(s)...`);
 
-  const { diff, actualCommits } = getGitDiff(repoPath, commits);
+  const { actualCommits } = getGitDiff(gitRoot, commits);
   if (actualCommits < commits) {
     diffSpinner.message(`Only ${actualCommits} commit(s) available (requested ${commits})`);
   }
-  const commitLog = getGitLog(repoPath, actualCommits);
+  const commitLog = getGitLog(gitRoot, actualCommits);
+  const changedFiles = scopeProjectFiles(getChangedFiles(gitRoot, actualCommits), projectPrefix);
+  diffSpinner.stop(`${changedFiles.length} files changed`);
 
-  if (!diff.trim()) {
-    diffSpinner.stop('No changes found');
+  if (changedFiles.length === 0) {
     p.outro('Nothing to sync');
     return;
   }
 
-  const changedFiles = getChangedFiles(repoPath, actualCommits);
-  diffSpinner.stop(`${changedFiles.length} files changed`);
+  const diff = getSelectedFilesDiff(gitRoot, changedFiles.map(file => withProjectPrefix(file, projectPrefix)), actualCommits);
 
   // Show what changed
   console.log();
@@ -231,7 +233,7 @@ export async function docSyncCommand(path, options) {
   // Build diff from selected files only, or use full prioritized diff
   let activeDiff;
   if (selectedFiles.length < changedFiles.length) {
-    activeDiff = getSelectedFilesDiff(repoPath, selectedFiles, actualCommits);
+    activeDiff = getSelectedFilesDiff(gitRoot, selectedFiles.map(file => withProjectPrefix(file, projectPrefix)), actualCommits);
     if (activeDiff.includes('(diff truncated')) {
       p.log.warn('Selected files still exceed 80k — diff truncated. Claude will use Read tool for the rest.');
     }
@@ -365,6 +367,25 @@ ${truncate(instructionsContent, 5000)}
 
   console.log();
   p.outro(`${results.length} file(s) updated`);
+}
+
+function toGitRelative(gitRoot, repoPath) {
+  if (!gitRoot) return '';
+  const rel = relative(gitRoot, repoPath);
+  if (!rel || rel === '.') return '';
+  return rel.split('\\').join('/');
+}
+
+function withProjectPrefix(file, projectPrefix) {
+  return projectPrefix ? `${projectPrefix}/${file}` : file;
+}
+
+function scopeProjectFiles(files, projectPrefix) {
+  if (!projectPrefix) return files;
+  const prefix = `${projectPrefix}/`;
+  return files
+    .filter(file => file.startsWith(prefix))
+    .map(file => file.slice(prefix.length));
 }
 
 // --- Skill mapping ---
