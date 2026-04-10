@@ -251,7 +251,7 @@ export function recommendActions(target) {
   if (
     target.status.instructions === 'healthy' &&
     target.status.domains === 'healthy' &&
-    target.status.hooks !== 'missing' &&
+    (target.status.hooks === 'healthy' || target.status.hooks === 'n/a') &&
     target.hubCoverage?.total > 0 &&
     target.hubCoverage.mentioned < target.hubCoverage.total
   ) {
@@ -279,7 +279,12 @@ export function summarizeReport(targets, sourceState) {
       : partialTargets.length > 0 ? 'partial coverage'
       : 'healthy',
     changedFiles: Math.max(...targets.map(target => target.drift.changedCount), 0),
-    affectedTargets: targets.filter(target => target.drift.changedCount > 0 || target.status.domains !== 'healthy' || target.status.instructions !== 'healthy').length,
+    affectedTargets: targets.filter(target =>
+      target.drift.changedCount > 0 ||
+      target.status.domains !== 'healthy' ||
+      target.status.instructions !== 'healthy' ||
+      (target.status.hooks !== 'healthy' && target.status.hooks !== 'n/a')
+    ).length,
     actions,
     averageHealth: targets.length > 0
       ? Math.round(targets.reduce((sum, target) => sum + target.health, 0) / targets.length)
@@ -749,8 +754,7 @@ function collectSourceState(repoPath) {
   const files = [];
   let newestSourceMtime = 0;
 
-  function walk(dir, depth) {
-    if (depth > 5) return;
+  function walk(dir) {
     let entries = [];
     try {
       entries = readdirSync(dir);
@@ -779,7 +783,7 @@ function collectSourceState(repoPath) {
       }
 
       if (stat.isDirectory()) {
-        walk(full, depth + 1);
+        walk(full);
         continue;
       }
 
@@ -793,7 +797,7 @@ function collectSourceState(repoPath) {
     }
   }
 
-  walk(repoPath, 0);
+  walk(repoPath);
   files.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return {
     newestSourceMtime,

@@ -105,7 +105,7 @@ export function saveHandoff(projectDir, input = {}, reason = 'limit') {
   const snapshot = sessionTokenSnapshot(projectDir, input);
   const tokenCount = Number.isInteger(snapshot.tokens) ? snapshot.tokens : null;
   const tokenLabel = tokenCount === null ? 'unknown' : `~${tokenCount.toLocaleString()}`;
-  const facts = extractSessionFacts(input);
+  const facts = extractSessionFacts(projectDir, input);
 
   const lines = [
     '# Claude save-tokens handoff',
@@ -295,7 +295,7 @@ const MAX_TASK_CHARS = 500;
 const MAX_PROMPT_CHARS = 200;
 const MAX_RECENT_PROMPTS = 3;
 
-function extractSessionFacts(input) {
+function extractSessionFacts(projectDir, input) {
   const facts = {
     originalTask: '',
     recentPrompts: [],
@@ -305,7 +305,11 @@ function extractSessionFacts(input) {
   };
 
   const transcriptPath = input.transcript_path || input.transcriptPath || '';
-  if (!transcriptPath || !existsSync(transcriptPath)) {
+  const resolvedTranscriptPath = transcriptPath ? resolve(projectDir, transcriptPath) : '';
+  const transcriptRelPath = resolvedTranscriptPath ? relative(projectDir, resolvedTranscriptPath) : '';
+  const transcriptInsideProject = transcriptRelPath === '' || (!transcriptRelPath.startsWith('..') && !transcriptRelPath.startsWith('/') && !transcriptRelPath.includes('..\\'));
+
+  if (!resolvedTranscriptPath || !transcriptInsideProject || !existsSync(resolvedTranscriptPath)) {
     // Fallback: use prompt field as task summary when no transcript available
     const prompt = input.prompt || input.user_prompt || input.message || '';
     if (prompt) {
@@ -317,7 +321,7 @@ function extractSessionFacts(input) {
   }
 
   try {
-    const content = readFileSync(transcriptPath, 'utf8');
+    const content = readFileSync(resolvedTranscriptPath, 'utf8');
     const lines = content.split('\n').filter(Boolean);
 
     const userMessages = [];

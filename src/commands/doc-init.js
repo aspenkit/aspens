@@ -239,15 +239,21 @@ export async function docInitCommand(path, options) {
   // --- Step 1: Backend selection (which AI generates) ---
   let backendResult;
   let recommendedTargetIds = null;
+  let recommendedBackendId = null;
   if (recommended && !options.target) {
     const { config } = loadConfig(repoPath, { persist: false });
     if (config?.targets?.length) {
       recommendedTargetIds = config.targets;
     }
+    if (config?.backend) {
+      recommendedBackendId = config.backend;
+    }
   }
 
   if (options.backend) {
     backendResult = resolveBackend({ backendFlag: options.backend, available });
+  } else if (recommended && recommendedBackendId) {
+    backendResult = resolveBackend({ backendFlag: recommendedBackendId, available });
   } else if (recommended && recommendedTargetIds?.length === 1) {
     backendResult = resolveBackend({ targetId: recommendedTargetIds[0], available });
   } else if (available.claude && available.codex && !recommended) {

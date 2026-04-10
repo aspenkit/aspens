@@ -128,7 +128,9 @@ export function installSaveTokensRecommended(repoPath, existingConfig, targets, 
   }
 
   summaryLines.push(`${pc.green('+')} .aspens/sessions/.gitignore`);
-  summaryLines.push(`${hadReadme ? pc.yellow('~') : pc.green('+')} .aspens/sessions/README.md`);
+  summaryLines.push(hadReadme
+    ? `${pc.dim('-')} .aspens/sessions/README.md (already exists)`
+    : `${pc.green('+')} .aspens/sessions/README.md`);
 
   const hasClaudeTarget = targets.some(target => target.id === 'claude');
   if (hasClaudeTarget) {
@@ -189,6 +191,10 @@ function installClaudeSaveTokens(repoPath, summaryLines) {
 
   const settingsPath = join(repoPath, '.claude', 'settings.json');
   const existingSettings = readJsonFile(settingsPath, summaryLines, '.claude/settings.json');
+  if (existsSync(settingsPath) && existingSettings === null) {
+    p.log.error(`Invalid JSON in ${settingsPath}. Fix or restore the file before running aspens save-tokens.`);
+    process.exit(1);
+  }
   const statusLineInstalled = canInstallSaveTokensStatusLine(existingSettings);
 
   if (existingSettings && !existsSync(settingsPath + '.bak')) {

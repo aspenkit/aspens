@@ -1,6 +1,6 @@
 {
   "name": "aspens",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Keep coding-agent context accurate as your codebase changes",
   "type": "module",
   "bin": {

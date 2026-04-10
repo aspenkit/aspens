@@ -74,7 +74,7 @@ export function buildSaveTokensReadme() {
 export function buildSaveTokensRecommendations(config = DEFAULT_SAVE_TOKENS_CONFIG) {
   return [
     `Claude warnings at ${formatCompactLabel(config.warnAtTokens)} and ${formatCompactLabel(config.compactAtTokens)} tokens`,
-    'Automatic handoff saves before compacting and at the 200k warning',
+    `Automatic handoff saves before compacting and at the ${formatCompactLabel(config.compactAtTokens)} warning`,
   ];
 }
 

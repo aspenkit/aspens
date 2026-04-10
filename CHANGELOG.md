@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-10
+
+### Added
+- **`aspens doc impact`** — new context-health command that reports freshness, coverage, drift, hook status, save-tokens health, and recommended repair actions
+- **Save-tokens setup** — installable session-optimization settings, prompt guards, precompact handoffs, statusline telemetry, and handoff commands for supported environments
+- **Bundled agents and commands** — expanded agent library plus handoff/resume command templates for installed Claude workflows
+
+### Changed
+- **Chunked generation durability** — `doc init --mode chunked` now asks for write approval up front and writes generated files incrementally so successful chunks survive later failures
+- **Target persistence** — `doc init` now saves the selected target/backend earlier so an interrupted run still updates `.aspens.json`
+- **README positioning** — tightened the README around stale agent context, scoped skills, and the one-command setup flow
+- **Package metadata** — npm description and upgrade messaging now align with the current product focus on keeping coding-agent context accurate
+
+### Fixed
+- **Codex CLI compatibility** — `runCodex()` now detects whether the installed Codex CLI supports `--ask-for-approval` instead of assuming an older flag contract
+- **Subdirectory monorepo support** — improved handling for subdirectory projects across repo config and impact flows
+- **Hook/runtime reliability** — follow-up fixes for hook execution errors, save-tokens plumbing, and generated skill/template consistency
+
 ## [0.6.0] - 2026-04-07
 
 ### Changed

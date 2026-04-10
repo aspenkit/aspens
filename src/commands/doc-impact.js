@@ -4,6 +4,7 @@ import * as p from '@clack/prompts';
 import { analyzeImpact, summarizeValueComparison } from '../lib/impact.js';
 import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
 import { loadPrompt, runLLM } from '../lib/runner.js';
+import { CliError } from '../lib/errors.js';
 import { docInitCommand } from './doc-init.js';
 import { docSyncCommand } from './doc-sync.js';
 
@@ -14,9 +15,16 @@ export async function docImpactCommand(path, options) {
 
   const spinner = p.spinner();
   spinner.start('Inspecting repo context coverage...');
-  const report = await analyzeImpact(repoPath, options);
-  const comparison = summarizeValueComparison(report.targets);
-  spinner.stop(pc.green('Impact report ready'));
+  let report;
+  let comparison;
+  try {
+    report = await analyzeImpact(repoPath, options);
+    comparison = summarizeValueComparison(report.targets);
+    spinner.stop(pc.green('Impact report ready'));
+  } catch (err) {
+    spinner.stop(pc.red('Impact analysis failed'));
+    throw new CliError(`Failed to analyze impact for ${repoPath}. Try re-running with --no-graph if the repo is unusual.`, { cause: err });
+  }
 
   console.log();
   console.log(pc.dim('  Repo: ') + pc.bold(report.scan.name));
@@ -163,7 +171,7 @@ export async function docImpactCommand(path, options) {
   console.log();
   const applyPlan = buildApplyPlan(report.targets);
 
-  if (applyPlan.length > 0) {
+  if (applyPlan.length > 0 && options.apply) {
     const confirmApply = await p.confirm({
       message: buildApplyConfirmationMessage(),
       initialValue: true,
@@ -175,6 +183,8 @@ export async function docImpactCommand(path, options) {
         await applyRecommendedAction(repoPath, item.action, options, item.target);
       }
     }
+  } else if (applyPlan.length > 0) {
+    p.log.info(`Suggested fixes available. Re-run with ${pc.cyan('aspens doc impact --apply')} to apply: ${applyPlan.map(item => `\`${item.action}\``).join(' • ')}`);
   }
 
   if (report.summary.actions.length === 0) {
