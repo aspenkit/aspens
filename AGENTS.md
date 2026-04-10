@@ -14,7 +14,7 @@
 | src | 44 | `src/commands/doc-init.js`, `src/lib/runner.js`, `src/lib/target.js` |
 
 **High-churn hotspots:**
-- `src/commands/doc-init.js` - 32 changes
+- `src/commands/doc-init.js` - 33 changes
 - `src/commands/doc-sync.js` - 20 changes
-- `src/lib/runner.js` - 16 changes
+- `src/lib/runner.js` - 17 changes
 
