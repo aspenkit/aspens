@@ -105,8 +105,7 @@ export function saveHandoff(projectDir, input = {}, reason = 'limit') {
   const snapshot = sessionTokenSnapshot(projectDir, input);
   const tokenCount = Number.isInteger(snapshot.tokens) ? snapshot.tokens : null;
   const tokenLabel = tokenCount === null ? 'unknown' : `~${tokenCount.toLocaleString()}`;
-  const prompt = extractPrompt(input);
-  const transcriptExcerpt = readTranscriptExcerpt(input, projectDir);
+  const facts = extractSessionFacts(input);
 
   const lines = [
     '# Claude save-tokens handoff',
@@ -119,26 +118,47 @@ export function saveHandoff(projectDir, input = {}, reason = 'limit') {
   if (input.cwd) {
     lines.push(`- Working directory: ${input.cwd}`);
   }
+  if (facts.branch) {
+    lines.push(`- Branch: ${facts.branch}`);
+  }
 
   lines.push('');
-
-  if (prompt) {
-    lines.push('## Latest prompt (quoted user input)');
-    lines.push('');
-    lines.push('```text');
-    lines.push(prompt);
-    lines.push('```');
-    lines.push('');
+  lines.push('## Task summary');
+  lines.push('');
+  if (facts.originalTask) {
+    lines.push(facts.originalTask);
+  } else {
+    lines.push('(no task captured)');
   }
 
-  if (transcriptExcerpt) {
-    lines.push('## Recent transcript excerpt');
-    lines.push('');
-    lines.push('```text');
-    lines.push(transcriptExcerpt);
-    lines.push('```');
-    lines.push('');
+  lines.push('');
+  lines.push('## Files modified');
+  lines.push('');
+  if (facts.filesModified.length > 0) {
+    for (const f of facts.filesModified) lines.push(`- ${f}`);
+  } else {
+    lines.push('(none detected)');
   }
+
+  lines.push('');
+  lines.push('## Git commits');
+  lines.push('');
+  if (facts.gitCommits.length > 0) {
+    for (const c of facts.gitCommits) lines.push(`- ${c}`);
+  } else {
+    lines.push('(none)');
+  }
+
+  if (facts.recentPrompts.length > 0) {
+    lines.push('');
+    lines.push('## Recent prompts');
+    lines.push('');
+    for (const p of facts.recentPrompts) {
+      lines.push(`- ${p}`);
+    }
+  }
+
+  lines.push('');
 
   writeFileSync(handoffPath, lines.join('\n'), 'utf8');
   writeLatestIndex(projectDir, relativePath, now.toISOString(), reason, tokenCount);
@@ -225,11 +245,10 @@ export function runPromptGuard() {
     }
     lines.push('');
     lines.push('IMPORTANT — you must tell the user:');
-    lines.push('1. Run /save-handoff to save a rich handoff summary');
-    lines.push('2. Start a fresh Claude session');
-    lines.push('3. Run /resume-handoff-latest to continue');
+    lines.push('1. Start a fresh Claude session');
+    lines.push('2. Run /resume-handoff-latest to continue');
     lines.push('');
-    lines.push('Alternative: continue here, or run /compact to compact this session.');
+    lines.push('Or run /save-handoff first for a richer summary with current state and next steps.');
 
     // stdout → injected into Claude's context as a system message
     console.log(lines.join('\n'));
@@ -272,33 +291,103 @@ function writeLatestIndex(projectDir, relativePath, savedAt, reason, tokens) {
   writeFileSync(indexPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
 }
 
-function extractPrompt(input) {
-  return input.prompt || input.user_prompt || input.message || '';
-}
+const MAX_TASK_CHARS = 500;
+const MAX_PROMPT_CHARS = 200;
+const MAX_RECENT_PROMPTS = 3;
 
-function readTranscriptExcerpt(input, projectDir) {
+function extractSessionFacts(input) {
+  const facts = {
+    originalTask: '',
+    recentPrompts: [],
+    filesModified: [],
+    gitCommits: [],
+    branch: '',
+  };
+
   const transcriptPath = input.transcript_path || input.transcriptPath || '';
-  if (!transcriptPath) return '';
-
-  const safeTranscriptPath = safeProjectFilePath(projectDir, transcriptPath);
-  if (!safeTranscriptPath || !existsSync(safeTranscriptPath)) return '';
+  if (!transcriptPath || !existsSync(transcriptPath)) {
+    // Fallback: use prompt field as task summary when no transcript available
+    const prompt = input.prompt || input.user_prompt || input.message || '';
+    if (prompt) {
+      facts.originalTask = prompt.length > MAX_TASK_CHARS
+        ? prompt.slice(0, MAX_TASK_CHARS) + '...'
+        : prompt;
+    }
+    return facts;
+  }
 
   try {
-    const content = readFileSync(safeTranscriptPath, 'utf8');
-    return content.slice(-4000);
-  } catch {
-    return '';
-  }
-}
+    const content = readFileSync(transcriptPath, 'utf8');
+    const lines = content.split('\n').filter(Boolean);
 
-function safeProjectFilePath(projectDir, filePath) {
-  const projectRoot = resolve(projectDir);
-  const candidate = resolve(filePath);
-  const rel = relative(projectRoot, candidate);
-  if (rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && !rel.includes('..\\'))) {
-    return candidate;
+    const userMessages = [];
+    const editedFiles = new Set();
+    const commits = [];
+
+    for (const line of lines) {
+      let record;
+      try { record = JSON.parse(line); } catch { continue; }
+
+      // Extract branch from user records
+      if (record.type === 'user' && record.gitBranch && !facts.branch) {
+        facts.branch = record.gitBranch;
+      }
+
+      // Extract user messages
+      if (record.type === 'user' && record.message?.content) {
+        const text = typeof record.message.content === 'string'
+          ? record.message.content
+          : record.message.content
+              .filter(b => b.type === 'text')
+              .map(b => b.text)
+              .join('\n');
+        if (text.trim()) userMessages.push(text.trim());
+      }
+
+      // Extract files modified from tool_use blocks in assistant messages
+      if (record.type === 'assistant' && Array.isArray(record.message?.content)) {
+        for (const block of record.message.content) {
+          if (block.type !== 'tool_use') continue;
+          if ((block.name === 'Edit' || block.name === 'Write') && block.input?.file_path) {
+            editedFiles.add(block.input.file_path);
+          }
+        }
+      }
+
+      // Extract git commits from Bash tool calls
+      if (record.type === 'assistant' && Array.isArray(record.message?.content)) {
+        for (const block of record.message.content) {
+          if (block.type !== 'tool_use' || block.name !== 'Bash') continue;
+          const cmd = block.input?.command || '';
+          if (/git\s+commit/.test(cmd)) {
+            const msgMatch = cmd.match(/-m\s+["']([^"']+)["']/);
+            commits.push(msgMatch ? msgMatch[1] : '(commit)');
+          }
+        }
+      }
+    }
+
+    // First user message = original task
+    if (userMessages.length > 0) {
+      const task = userMessages[0];
+      facts.originalTask = task.length > MAX_TASK_CHARS
+        ? task.slice(0, MAX_TASK_CHARS) + '...'
+        : task;
+    }
+
+    // Last N user messages as recent prompts (skip the first one since it's the task)
+    const recent = userMessages.slice(-MAX_RECENT_PROMPTS);
+    facts.recentPrompts = recent.map(p =>
+      p.length > MAX_PROMPT_CHARS ? p.slice(0, MAX_PROMPT_CHARS) + '...' : p
+    );
+
+    facts.filesModified = [...editedFiles];
+    facts.gitCommits = commits;
+  } catch {
+    // If transcript parsing fails, return empty facts
   }
-  return null;
+
+  return facts;
 }
 
 function sumInputContextTokens(currentUsage) {

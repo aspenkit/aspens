@@ -88,37 +88,45 @@ describe('save-tokens hook telemetry', () => {
 
     const content = readFileSync(join(TEST_DIR, handoffPath), 'utf8');
     expect(content).toContain('- Session tokens: unknown (missing-claude-statusline)');
-    expect(content).toContain('```text\ncontinue the checkout task\n```');
-    expect(content).toContain('continue the checkout task');
+    expect(content).toContain('## Task summary');
+    expect(content).toContain('## Files modified');
+    expect(content).toContain('## Git commits');
   });
 
-  it('ignores transcript paths outside the project directory', () => {
-    const sessionsDir = join(TEST_DIR, '.aspens', 'sessions');
-    mkdirSync(sessionsDir, { recursive: true });
-    const externalTranscript = join(EXTERNAL_DIR, 'external-transcript.jsonl');
-    writeFileSync(externalTranscript, 'SECRET_TRANSCRIPT\n', 'utf8');
-
-    const handoffPath = saveHandoff(TEST_DIR, {
-      prompt: 'continue',
-      transcript_path: externalTranscript,
-    }, 'precompact');
-
-    const content = readFileSync(join(TEST_DIR, handoffPath), 'utf8');
-    expect(content).not.toContain('SECRET_TRANSCRIPT');
-    expect(content).not.toContain('## Recent transcript excerpt');
-  });
-
-  it('includes transcript excerpts from inside the project directory', () => {
+  it('extracts session facts from JSONL transcript', () => {
     const transcriptPath = join(TEST_DIR, 'transcript.jsonl');
-    writeFileSync(transcriptPath, 'SAFE_TRANSCRIPT\n', 'utf8');
+    const jsonlLines = [
+      JSON.stringify({ type: 'user', gitBranch: 'feat/handoff', message: { role: 'user', content: 'Fix the login bug in auth.js' } }),
+      JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [
+        { type: 'tool_use', name: 'Edit', input: { file_path: 'src/auth.js' } },
+        { type: 'tool_use', name: 'Bash', input: { command: 'git commit -m "fix login bug"' } },
+      ] } }),
+      JSON.stringify({ type: 'user', message: { role: 'user', content: 'Now add tests' } }),
+    ];
+    writeFileSync(transcriptPath, jsonlLines.join('\n') + '\n', 'utf8');
 
     const handoffPath = saveHandoff(TEST_DIR, {
-      prompt: 'continue',
       transcript_path: transcriptPath,
     }, 'precompact');
 
     const content = readFileSync(join(TEST_DIR, handoffPath), 'utf8');
-    expect(content).toContain('SAFE_TRANSCRIPT');
+    expect(content).toContain('## Task summary');
+    expect(content).toContain('Fix the login bug in auth.js');
+    expect(content).toContain('## Files modified');
+    expect(content).toContain('src/auth.js');
+    expect(content).toContain('## Git commits');
+    expect(content).toContain('fix login bug');
+    expect(content).toContain('feat/handoff');
+  });
+
+  it('handles missing or invalid transcript gracefully', () => {
+    const handoffPath = saveHandoff(TEST_DIR, {
+      transcript_path: '/nonexistent/path.jsonl',
+    }, 'precompact');
+
+    const content = readFileSync(join(TEST_DIR, handoffPath), 'utf8');
+    expect(content).toContain('## Task summary');
+    expect(content).toContain('(no task captured)');
   });
 
   it('finds the newest handoff and ignores README markdown', () => {

@@ -14,23 +14,25 @@ Write a structured handoff file to `.aspens/sessions/` so a future Claude sessio
 
 - Saved: <ISO timestamp>
 - Reason: user-requested
+- Session tokens: <estimate if known, else "unknown">
 - Working directory: <cwd>
+- Branch: <current git branch>
 
 ## Task summary
 
 <1-3 sentences: what you were working on and why>
 
+## Files modified
+
+<List files you created, modified, or deleted — one per line, bulleted>
+
+## Git commits
+
+<List commits made this session, or "(none)">
+
 ## Current state
 
 <What's done, what's in progress, what's blocked>
-
-## Files touched
-
-<List of files created, modified, or deleted in this session>
-
-## Risks and open questions
-
-<Anything the next session should watch out for>
 
 ## Next steps
 
