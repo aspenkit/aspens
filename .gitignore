@@ -13,3 +13,6 @@ dist/
 .claude/graph-index.json
 .claude/code-map.md
 dev/
+
+# aspens graph artifacts (generated — do not commit)
+.claude/atlas.md
