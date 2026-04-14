@@ -709,6 +709,10 @@ export async function docInitCommand(path, options) {
       const claudeMdIdx = allFiles.findIndex(f => f.path === 'CLAUDE.md');
       if (claudeMdIdx !== -1) {
         allFiles[claudeMdIdx].content = allFiles[claudeMdIdx].content.trimEnd() + '\n\n' + atlasSection + '\n';
+        // In incremental mode, CLAUDE.md was already written — re-write with atlas appended
+        if (shouldWriteIncrementally) {
+          writeFileSync(join(repoPath, 'CLAUDE.md'), allFiles[claudeMdIdx].content);
+        }
       }
     } catch { /* atlas generation failed — non-fatal */ }
   }
