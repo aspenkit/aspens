@@ -4,7 +4,7 @@
     "agent-customization": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
@@ -12,25 +12,8 @@
         "src/prompts/customize-agents.md"
       ],
       "promptTriggers": {
-        "keywords": [
-          "agent",
-          "customization",
-          "agent customization",
-          "llm-powered",
-          "injection",
-          "project",
-          "context",
-          "installed",
-          "commands",
-          "customize",
-          "prompts",
-          "customize-agents"
-        ],
-        "intentPatterns": [
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*agent customization",
-          "agent customization.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*agent.*customization"
-        ]
+        "keywords": [],
+        "intentPatterns": []
       }
     },
     "base": {
@@ -41,20 +24,14 @@
       "alwaysActivate": true,
       "filePatterns": [],
       "promptTriggers": {
-        "keywords": [
-          "core",
-          "conventions",
-          "tech",
-          "stack",
-          "project"
-        ],
+        "keywords": [],
         "intentPatterns": []
       }
     },
     "claude-runner": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
@@ -66,33 +43,14 @@
         "tests/*extract*"
       ],
       "promptTriggers": {
-        "keywords": [
-          "claude",
-          "runner",
-          "claude runner",
-          "claude/codex",
-          "execution",
-          "layer",
-          "prompt",
-          "loading",
-          "skill-writer",
-          "skill-reader",
-          "timeout",
-          "prompts",
-          "tests",
-          "extract"
-        ],
-        "intentPatterns": [
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*claude runner",
-          "claude runner.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*claude.*runner"
-        ]
+        "keywords": [],
+        "intentPatterns": []
       }
     },
     "codex-support": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
@@ -111,21 +69,9 @@
           "AGENTS.md",
           "directory-scoped",
           "transform",
-          "multi-target",
-          "support",
-          "codex support",
-          "output",
-          "system",
-          "abstraction",
-          "target-transform",
-          "tests",
-          "target.test",
-          "target-transform.test",
-          "backend.test"
+          "multi-target"
         ],
         "intentPatterns": [
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*codex support",
-          "codex support.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*codex.*support"
         ]
       }
@@ -133,7 +79,7 @@
     "doc-impact": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
@@ -152,20 +98,7 @@
           "health score",
           "context health",
           "hook health",
-          "usefulness",
-          "doc",
-          "doc impact",
-          "context",
-          "health",
-          "analysis",
-          "domain",
-          "commands",
-          "doc-impact",
-          "prompts",
-          "impact-analyze",
-          "tests",
-          "impact.test",
-          "doc-impact.test"
+          "usefulness"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*health score",
@@ -180,7 +113,7 @@
     "doc-sync": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
@@ -196,23 +129,9 @@
           "doc-sync",
           "refresh",
           "sync",
-          "git-hook",
-          "doc",
-          "doc sync",
-          "incremental",
-          "skill",
-          "updater",
-          "maps",
-          "diffs",
-          "commands",
-          "prompts",
-          "doc-sync-refresh",
-          "git-helpers",
-          "diff-helpers"
+          "git-hook"
         ],
         "intentPatterns": [
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*doc sync",
-          "doc sync.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*doc.*sync"
         ]
       }
@@ -220,17 +139,19 @@
     "import-graph": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
         "src/lib/graph-builder.js",
         "src/lib/graph-persistence.js",
+        "src/lib/atlas.js",
         "src/commands/doc-graph.js",
         "src/templates/hooks/graph-context-prompt.mjs",
         "src/templates/hooks/graph-context-prompt.sh",
         "tests/graph-builder.test.js",
-        "tests/graph-persistence.test.js"
+        "tests/graph-persistence.test.js",
+        "tests/atlas.test.js"
       ],
       "promptTriggers": {
         "keywords": [
@@ -242,20 +163,7 @@
           "code-map",
           "graph-index",
           "subgraph",
-          "import",
-          "static",
-          "analysis",
-          "builds",
-          "graph-builder",
-          "graph-persistence",
-          "commands",
-          "doc-graph",
-          "templates",
-          "hooks",
-          "graph-context-prompt",
-          "tests",
-          "graph-builder.test",
-          "graph-persistence.test"
+          "atlas"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import graph",
@@ -269,7 +177,7 @@
     "repo-scanning": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
@@ -284,25 +192,11 @@
           "detectFrameworks",
           "detectDomains",
           "detectEntryPoints",
-          "health check",
-          "repo",
-          "scanning",
-          "repo scanning",
-          "deterministic",
-          "analysis",
-          "language/framework",
-          "detection",
-          "scanner",
-          "commands",
-          "scan",
-          "tests",
-          "scanner.test"
+          "health check"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*health check",
           "health check.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*repo scanning",
-          "repo scanning.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*repo.*scanning"
         ]
       }
@@ -310,7 +204,7 @@
     "save-tokens": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
@@ -330,36 +224,21 @@
           "prompt-guard",
           "precompact",
           "session rotation",
-          "token warning",
-          "save",
-          "tokens",
-          "save tokens",
-          "token-saving",
-          "session",
-          "automation",
-          "prompt",
-          "commands",
-          "templates",
-          "hooks",
-          "save-handoff",
-          "resume-handoff",
-          "tests",
-          "save-tokens.test"
+          "token warning"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*session rotation",
           "session rotation.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*token warning",
           "token warning.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*save tokens",
-          "save tokens.*(create|update|fix|add|modify|change|debug|refactor|implement|build)"
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*save.*tokens"
         ]
       }
     },
     "skill-generation": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
@@ -377,21 +256,7 @@
           "generate skills",
           "discovery agents",
           "chunked generation",
-          "recommended",
-          "skill",
-          "generation",
-          "skill generation",
-          "llm-powered",
-          "pipeline",
-          "claude",
-          "code",
-          "commands",
-          "runner",
-          "skill-writer",
-          "skill-reader",
-          "git-hook",
-          "timeout",
-          "prompts"
+          "recommended"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*generate skills",
@@ -406,7 +271,7 @@
     "template-library": {
       "type": "domain",
       "enforcement": "suggest",
-      "priority": "high",
+      "priority": "medium",
       "scope": "all",
       "alwaysActivate": false,
       "filePatterns": [
@@ -419,16 +284,7 @@
           "add agent",
           "add command",
           "add hook",
-          "add skill",
-          "library",
-          "template library",
-          "bundled",
-          "agents",
-          "commands",
-          "hooks",
-          "settings",
-          "add",
-          "templates"
+          "add skill"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*add agent",

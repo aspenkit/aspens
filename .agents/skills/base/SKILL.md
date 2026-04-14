@@ -31,7 +31,8 @@ CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules 
 
 - `src/lib/scanner.js` — Deterministic repo scanner (languages, frameworks, domains, structure)
 - `src/lib/graph-builder.js` — Static import analysis via es-module-lexer (hub files, clusters, priority)
-- `src/lib/graph-persistence.js` — Graph serialization, subgraph extraction, code-map + index generation
+- `src/lib/graph-persistence.js` — Graph serialization, subgraph extraction, code-map, atlas, index generation
+- `src/lib/atlas.js` — Compact Project Atlas markdown from serialized graph data (hubs, clusters, hotspots)
 - `src/lib/runner.js` — Claude/Codex CLI wrapper (`runClaude` for stream-json, `runCodex` for Codex JSONL)
 - `src/lib/context-builder.js` — Assembles repo files into prompt-friendly context
 - `src/lib/skill-writer.js` — Writes skill files and directory-scoped files, generates skill-rules.json, merges settings
@@ -70,4 +71,4 @@ CLI entry (`bin/cli.js`) → command handlers (`src/commands/`) → lib modules 
 - `tests/` — Vitest test files
 
 ---
-**Last Updated:** 2026-04-09
+**Last Updated:** 2026-04-14
