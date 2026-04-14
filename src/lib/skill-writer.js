@@ -94,9 +94,7 @@ export function extractRulesFromSkills(skillsDir) {
     const explicitKeywords = parseKeywords(skill.content);
     const isBase = name === 'base';
 
-    // Derive additional keywords
-    const derivedKeywords = deriveKeywords(name, description, patterns);
-    const allKeywords = dedupeStrings([...explicitKeywords, ...derivedKeywords]);
+    const allKeywords = dedupeStrings(explicitKeywords);
 
     // Generate intent patterns from keyword pairs
     const intentPatterns = generateIntentPatterns(allKeywords, name);
@@ -118,7 +116,7 @@ export function extractRulesFromSkills(skillsDir) {
       skills[name] = {
         type: 'domain',
         enforcement: 'suggest',
-        priority: 'high',
+        priority: 'medium',
         scope: 'all',
         alwaysActivate: false,
         filePatterns: patterns,
@@ -379,46 +377,6 @@ function dedupeAspensHookEntries(entries) {
 }
 
 /**
- * Derive keywords from skill name, description first sentence, and directory names in file patterns.
- */
-function deriveKeywords(name, description, filePatterns) {
-  const keywords = [];
-
-  // From skill name: split on hyphens
-  if (name && name !== 'base') {
-    const parts = name.split('-').filter(p => p.length > 2);
-    keywords.push(...parts);
-    // Also add the full name with spaces
-    if (parts.length > 1) {
-      keywords.push(parts.join(' '));
-    }
-  }
-
-  // From description: first sentence
-  if (description) {
-    const firstSentence = description.split(/[.!?\n]/)[0].trim();
-    if (firstSentence) {
-      // Extract meaningful words (3+ chars, not common stop words)
-      const words = firstSentence
-        .toLowerCase()
-        .split(/\s+/)
-        .filter(w => w.length > 3 && !STOP_WORDS.has(w));
-      keywords.push(...words.slice(0, 5));
-    }
-  }
-
-  // From file patterns: extract directory names
-  if (filePatterns && Array.isArray(filePatterns)) {
-    for (const pattern of filePatterns) {
-      const dirs = extractDistinctiveParts(pattern);
-      keywords.push(...dirs);
-    }
-  }
-
-  return dedupeStrings(keywords);
-}
-
-/**
  * Generate intent patterns from keywords.
  * Produces regex patterns matching common action + keyword combinations.
  */
@@ -486,20 +444,6 @@ function globToBashPattern(glob) {
   return null;
 }
 
-/**
- * Extract distinctive path parts from a file pattern (for keyword derivation).
- */
-function extractDistinctiveParts(pattern) {
-  if (!pattern) return [];
-  const parts = pattern
-    .replace(/\*\*/g, '')
-    .replace(/\*/g, '')
-    .split('/')
-    .map(p => p.replace(/\.[^.]+$/, '')) // remove extensions
-    .filter(p => p.length > 2 && !GENERIC_DIRS.has(p));
-  return parts;
-}
-
 function generateEmptyDetectFunction() {
   return `# BEGIN detect_skill_domain
 detect_skill_domain() {
@@ -545,12 +489,3 @@ const GENERIC_DIRS = new Set([
   'types', 'public', 'assets', 'styles', 'scripts',
 ]);
 
-const STOP_WORDS = new Set([
-  'that', 'this', 'with', 'from', 'into', 'which', 'when', 'where',
-  'what', 'they', 'them', 'then', 'than', 'have', 'been', 'will',
-  'would', 'could', 'should', 'does', 'each', 'every', 'both',
-  'through', 'during', 'before', 'after', 'above', 'below',
-  'between', 'about', 'under', 'over', 'such', 'here', 'there',
-  'these', 'those', 'other', 'some', 'most', 'very', 'also',
-  'just', 'only', 'more', 'well', 'back', 'down', 'still',
-]);
