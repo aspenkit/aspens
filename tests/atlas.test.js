@@ -199,3 +199,72 @@ describe('generateAtlas', () => {
     expect(atlas).not.toContain('**tests**');
   });
 });
+
+// ---------------------------------------------------------------------------
+// generateAtlas edge cases
+// ---------------------------------------------------------------------------
+describe('generateAtlas edge cases', () => {
+  it('handles empty graph', () => {
+    const emptyGraph = {
+      files: {},
+      hubs: [],
+      clusters: [],
+      hotspots: [],
+      meta: { totalFiles: 0, totalEdges: 0, generatedAt: '2026-04-14T12:00:00.000Z' },
+    };
+    const atlas = generateAtlas(emptyGraph);
+
+    expect(atlas).toContain('## Project Atlas');
+    expect(atlas).toContain('0 files');
+  });
+
+  it('handles graph with no hubs', () => {
+    const graph = makeGraph({ hubs: [] });
+    const atlas = generateAtlas(graph);
+
+    expect(atlas).not.toContain('Hub files');
+    expect(atlas).toContain('Domains');
+  });
+
+  it('handles graph with no clusters', () => {
+    const graph = makeGraph({ clusters: [] });
+    const atlas = generateAtlas(graph);
+
+    expect(atlas).not.toContain('Domains');
+  });
+
+  it('does not link skills to non-matching clusters', () => {
+    const graph = makeGraph();
+    const skills = [
+      { name: 'auth', path: '.claude/skills/auth/skill.md', description: 'Auth utilities' },
+    ];
+    const atlas = generateAtlas(graph, { skills });
+
+    expect(atlas).not.toContain('[skill]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateAtlas with skills
+// ---------------------------------------------------------------------------
+describe('generateAtlas with skills', () => {
+  it('links skills to matching clusters', () => {
+    const graph = makeGraph();
+    const skills = [
+      { name: 'lib', path: '.claude/skills/lib/skill.md', description: 'Library utilities' },
+    ];
+    const atlas = generateAtlas(graph, { skills });
+
+    expect(atlas).toContain('[skill](.claude/skills/lib/skill.md)');
+  });
+
+  it('does not link skills to non-matching clusters', () => {
+    const graph = makeGraph();
+    const skills = [
+      { name: 'auth', path: '.claude/skills/auth/skill.md', description: 'Auth utilities' },
+    ];
+    const atlas = generateAtlas(graph, { skills });
+
+    expect(atlas).not.toContain('[skill]');
+  });
+});
