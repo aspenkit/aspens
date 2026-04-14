@@ -165,6 +165,7 @@ doc
   .option('--no-graph', 'Skip import graph analysis')
   .option('--target <target>', 'Output target: claude, codex, all')
   .option('--backend <backend>', 'Generation backend: claude, codex (default: matches target)')
+  .option('--skills', 'Generate LLM-powered domain skills (default: atlas only)')
   .action(docInitCommand);
 
 doc

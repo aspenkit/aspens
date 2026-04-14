@@ -682,6 +682,37 @@ export async function docInitCommand(path, options) {
     throw new CliError('No skill files generated.', { logged: true });
   }
 
+  // Append atlas to CLAUDE.md if graph data available
+  if (graphSerialized) {
+    try {
+      const { generateAtlas } = await import('../lib/atlas.js');
+
+      // Gather skill metadata if skills exist
+      let skillMeta = [];
+      const claudeSkillsDir = join(repoPath, '.claude', 'skills');
+      if (existsSync(claudeSkillsDir)) {
+        try {
+          const skills = findSkillFiles(claudeSkillsDir);
+          skillMeta = skills
+            .filter(s => s.frontmatter?.name !== 'base') // base is always loaded, no need to link
+            .map(s => ({
+              name: s.frontmatter?.name || s.name,
+              path: s.path.startsWith(repoPath) ? s.path.slice(repoPath.length + 1) : s.path,
+              description: s.frontmatter?.description || '',
+            }));
+        } catch { /* skills dir exists but can't be read — fine */ }
+      }
+
+      const atlasSection = generateAtlas(graphSerialized, { skills: skillMeta });
+
+      // Find CLAUDE.md in allFiles and append atlas
+      const claudeMdIdx = allFiles.findIndex(f => f.path === 'CLAUDE.md');
+      if (claudeMdIdx !== -1) {
+        allFiles[claudeMdIdx].content = allFiles[claudeMdIdx].content.trimEnd() + '\n\n' + atlasSection + '\n';
+      }
+    } catch { /* atlas generation failed — non-fatal */ }
+  }
+
   // Step 6: Validate generated files
   let validation = { valid: true, issues: [] };
   if (!shouldWriteIncrementally) {
@@ -957,9 +988,13 @@ async function installHooks(repoPath, options) {
       mkdirSync(hooksDir, { recursive: true });
     }
 
+    // Only install skill-activation hooks if skill-rules.json exists
+    const hasSkillRules = existsSync(join(skillsDir, 'skill-rules.json'));
     const hookFiles = [
-      { src: 'hooks/skill-activation-prompt.sh', dest: 'skill-activation-prompt.sh', chmod: true },
-      { src: 'hooks/skill-activation-prompt.mjs', dest: 'skill-activation-prompt.mjs', chmod: false },
+      ...(hasSkillRules ? [
+        { src: 'hooks/skill-activation-prompt.sh', dest: 'skill-activation-prompt.sh', chmod: true },
+        { src: 'hooks/skill-activation-prompt.mjs', dest: 'skill-activation-prompt.mjs', chmod: false },
+      ] : []),
       { src: 'hooks/graph-context-prompt.sh', dest: 'graph-context-prompt.sh', chmod: true },
       { src: 'hooks/graph-context-prompt.mjs', dest: 'graph-context-prompt.mjs', chmod: false },
     ];
