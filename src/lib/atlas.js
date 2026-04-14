@@ -56,7 +56,7 @@ export function generateAtlas(graph, options = {}) {
           return pb - pa;
         })
         .slice(0, 3)
-        .map(f => `\`${shortPath(f).split('/').pop()}\``);
+        .map(f => `\`${shortPath(f)}\``);
 
       let line = `- **${cluster.label}** (${cluster.size} files): ${sortedFiles.join(', ')}`;
 

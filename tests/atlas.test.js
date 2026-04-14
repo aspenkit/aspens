@@ -120,12 +120,15 @@ describe('generateAtlas', () => {
     expect(atlas).toContain('scanRepo');
   });
 
-  it('includes domain clusters', () => {
+  it('includes domain clusters with short paths', () => {
     const graph = makeGraph();
     const atlas = generateAtlas(graph);
 
     expect(atlas).toContain('**lib**');
     expect(atlas).toContain('**commands**');
+    // Domains use 2-segment short paths (e.g. "lib/runner.js" not just "runner.js")
+    expect(atlas).toContain('lib/runner.js');
+    expect(atlas).toContain('commands/doc-init.js');
   });
 
   it('includes hotspots', () => {
