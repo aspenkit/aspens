@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
+import { generateAtlas } from './atlas.js';
 
 const GRAPH_PATH = '.claude/graph.json';
 const GRAPH_VERSION = '1.0';
@@ -429,6 +430,23 @@ export function writeCodeMap(repoPath, serializedGraph) {
 }
 
 // ---------------------------------------------------------------------------
+// Atlas generation — compact project overview for LLM context
+// ---------------------------------------------------------------------------
+
+const ATLAS_PATH = '.claude/atlas.md';
+
+/**
+ * Write atlas.md to .claude/atlas.md.
+ */
+export function writeAtlas(repoPath, serializedGraph, options = {}) {
+  const content = generateAtlas(serializedGraph, options);
+  const dir = join(repoPath, '.claude');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(repoPath, ATLAS_PATH), content);
+  return content;
+}
+
+// ---------------------------------------------------------------------------
 // Graph index — tiny pre-computed lookup for fast hook matching
 // ---------------------------------------------------------------------------
 
@@ -504,6 +522,7 @@ export function persistGraphArtifacts(repoPath, rawGraph, options = {}) {
 
   saveGraph(repoPath, serialized);
   writeCodeMap(repoPath, serialized);
+  writeAtlas(repoPath, serialized, { skills: options.skills || [] });
   const index = generateGraphIndex(serialized);
   saveGraphIndex(repoPath, index);
   ensureGraphGitignore(repoPath);
@@ -521,6 +540,7 @@ function ensureGraphGitignore(repoPath) {
     '.claude/graph.json',
     '.claude/graph-index.json',
     '.claude/code-map.md',
+    '.claude/atlas.md',
   ];
 
   let existing = '';

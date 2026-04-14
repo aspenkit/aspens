@@ -11,10 +11,12 @@ import {
   formatNavigationContext,
   generateCodeMap,
   writeCodeMap,
+  writeAtlas,
   generateGraphIndex,
   saveGraphIndex,
   persistGraphArtifacts,
 } from '../src/lib/graph-persistence.js';
+import { generateAtlas } from '../src/lib/atlas.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, 'fixtures', 'graph-persistence');
@@ -468,10 +470,36 @@ describe('saveGraphIndex', () => {
 });
 
 // ---------------------------------------------------------------------------
+// atlas integration
+// ---------------------------------------------------------------------------
+describe('atlas integration', () => {
+  it('generateAtlas produces output from serializeGraph data', () => {
+    const graph = serializeGraph(makeRawGraph(), FIXTURES_DIR);
+    const atlas = generateAtlas(graph);
+    expect(atlas).toContain('## Project Atlas');
+    expect(atlas).toContain('src/lib/scanner.js');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writeAtlas
+// ---------------------------------------------------------------------------
+describe('writeAtlas', () => {
+  it('writes atlas.md to .claude directory', () => {
+    const testDir = join(FIXTURES_DIR, 'atlas-write-test');
+    mkdirSync(join(testDir, '.claude'), { recursive: true });
+    const graph = serializeGraph(makeRawGraph(), testDir);
+    writeAtlas(testDir, graph);
+    const written = readFileSync(join(testDir, '.claude', 'atlas.md'), 'utf8');
+    expect(written).toContain('## Project Atlas');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // persistGraphArtifacts
 // ---------------------------------------------------------------------------
 describe('persistGraphArtifacts', () => {
-  it('writes graph.json, code-map.md, and index in one call', () => {
+  it('writes graph.json, code-map.md, atlas.md, and index in one call', () => {
     const dir = join(FIXTURES_DIR, 'persist-all');
     mkdirSync(dir, { recursive: true });
 
@@ -481,5 +509,6 @@ describe('persistGraphArtifacts', () => {
     expect(existsSync(join(dir, '.claude', 'graph.json'))).toBe(true);
     expect(existsSync(join(dir, '.claude', 'graph-index.json'))).toBe(true);
     expect(existsSync(join(dir, '.claude', 'code-map.md'))).toBe(true);
+    expect(existsSync(join(dir, '.claude', 'atlas.md'))).toBe(true);
   });
 });
