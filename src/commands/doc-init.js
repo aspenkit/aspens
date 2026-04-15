@@ -1,4 +1,4 @@
-import { resolve, join, dirname, relative } from 'path';
+import { resolve, join, dirname } from 'path';
 import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
@@ -8,15 +8,12 @@ import { buildRepoGraph } from '../lib/graph-builder.js';
 import { runLLM, loadPrompt, parseFileOutput, validateSkillFiles } from '../lib/runner.js';
 import { writeSkillFiles, writeTransformedFiles, extractRulesFromSkills, generateDomainPatterns, mergeSettings } from '../lib/skill-writer.js';
 import { persistGraphArtifacts } from '../lib/graph-persistence.js';
-import { installGitHook } from '../lib/git-hook.js';
 import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
 import { TARGETS, resolveTarget, getAllowedPaths, writeConfig, loadConfig, mergeConfiguredTargets } from '../lib/target.js';
 import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
-import { transformForTarget, validateTransformedFiles, ensureRootKeyFilesSection } from '../lib/target-transform.js';
+import { transformForTarget, validateTransformedFiles } from '../lib/target-transform.js';
 import { findSkillFiles } from '../lib/skill-reader.js';
-import { getGitRoot } from '../lib/git-helpers.js';
-import { installSaveTokensRecommended } from './save-tokens.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = join(__dirname, '..', 'templates');
@@ -286,7 +283,7 @@ export async function docInitCommand(path, options) {
     const selected = await p.multiselect({
       message: 'Generate docs for which coding agents?',
       options: [
-        { value: 'claude', label: 'Claude Code', hint: 'CLAUDE.md + .claude/skills/ + hooks' },
+        { value: 'claude', label: 'Claude Code', hint: 'CLAUDE.md + .claude/skills/' },
         { value: 'codex', label: 'Codex CLI', hint: 'AGENTS.md + .agents/skills/' },
       ],
       initialValues: [backend.id], // pre-select matching target
@@ -368,7 +365,7 @@ export async function docInitCommand(path, options) {
   let discoveredDomains = [];
   let reusedDomains = [];
 
-  const isBaseOnly = options.mode === 'base-only';
+  const isBaseOnly = options.mode === 'base-only' || !options.skills;
   const isDomainsOnly = options.mode === 'chunked' && extraDomains && extraDomains.length > 0;
   // When existing docs are found, ask whether to run discovery or reuse existing domains
   const hasClaudeDocs = scan.hasClaudeConfig || scan.hasClaudeMd;
@@ -558,8 +555,15 @@ export async function docInitCommand(path, options) {
   let mode = 'all-at-once';
   let selectedDomains = effectiveDomains;
 
+  // Without --skills, skip domain selection and force base-only mode
+  if (!options.skills && !options.mode) {
+    mode = 'base-only';
+    selectedDomains = [];
+    if (effectiveDomains.length > 0) {
+      p.log.info(pc.dim(`${effectiveDomains.length} domains detected — pass ${pc.bold('--skills')} to generate domain skills.`));
+    }
   // --mode flag skips interactive prompt (for CI / scripted use)
-  if (options.mode) {
+  } else if (options.mode) {
     const modeMap = { 'all': 'all-at-once', 'chunked': 'chunked', 'base-only': 'base-only' };
     mode = modeMap[options.mode] || options.mode;
     if (!['all-at-once', 'chunked', 'base-only'].includes(mode)) {
@@ -820,70 +824,15 @@ export async function docInitCommand(path, options) {
     console.log(`  ${icon} ${result.path}${status}`);
   }
 
-  // Step 9: Generate skill-rules.json + install hooks (unless --no-hooks)
-  // Only for targets that support hooks (Claude)
-  const hasHookTarget = targets.some(t => t.supportsHooks);
-  if (options.hooks !== false && hasHookTarget) {
-    await installHooks(repoPath, options);
-  }
-
-  const recommendedSummaryLines = [];
-  let nextSaveTokensConfig = existingConfig?.saveTokens;
-  if (recommended && !options.dryRun) {
-    if (hasHookTarget) {
-      if (options.hooks !== false) {
-        nextSaveTokensConfig = installSaveTokensRecommended(repoPath, existingConfig, targets, recommendedSummaryLines);
-      }
-      installRecommendedClaudeAgents(repoPath, recommendedSummaryLines);
-    }
-
-    const gitRoot = getGitRoot(repoPath);
-    if (gitRoot && options.hook !== false) {
-      const hookPath = join(gitRoot, '.git', 'hooks', 'post-commit');
-      const hookInstalled = existsSync(hookPath) &&
-        readFileSync(hookPath, 'utf8').includes(`aspens doc-sync hook (${toPosixRelative(gitRoot, repoPath) || '.'})`);
-      if (!hookInstalled) {
-        installGitHook(repoPath);
-      }
-    }
-  }
-
-  if (recommendedSummaryLines.length > 0) {
-    console.log();
-    console.log(pc.dim('  Recommended setup:'));
-    for (const line of recommendedSummaryLines) {
-      console.log(`  ${line}`);
-    }
-  }
-
-  // Step 10: Persist target config
-  writeConfig(repoPath, { targets: persistedTargets, backend: backend.id, saveTokens: nextSaveTokensConfig });
+  // Step 9: Persist target config
+  writeConfig(repoPath, { targets: persistedTargets, backend: backend.id, saveTokens: existingConfig?.saveTokens });
 
   console.log(pc.dim('  Verification: ') + [
     `${targets.map(t => t.label).join(' + ')} configured`,
     `${effectiveDomains.length} domain${effectiveDomains.length === 1 ? '' : 's'} analyzed`,
-    hasHookTarget && options.hooks !== false ? 'hooks updated where supported' : 'no hook changes',
   ].join(' | '));
 
   showTokenSummary(startTime);
-
-  // Offer auto-sync git hook (works for all targets — runs `aspens doc sync` on commit)
-  const gitRoot = getGitRoot(repoPath);
-  if (!recommended && options.hook !== false && !options.dryRun && gitRoot) {
-    const hookPath = join(gitRoot, '.git', 'hooks', 'post-commit');
-    const hookInstalled = existsSync(hookPath) &&
-      readFileSync(hookPath, 'utf8').includes(`aspens doc-sync hook (${toPosixRelative(gitRoot, repoPath) || '.'})`);
-    if (!hookInstalled) {
-      console.log();
-      const wantHook = await p.confirm({
-        message: 'Install post-commit hook to keep docs in sync automatically?',
-        initialValue: true,
-      });
-      if (!p.isCancel(wantHook) && wantHook) {
-        installGitHook(repoPath);
-      }
-    }
-  }
 
   console.log();
   p.outro(
@@ -893,44 +842,6 @@ export async function docInitCommand(path, options) {
   );
 }
 
-function installRecommendedClaudeAgents(repoPath, summaryLines) {
-  const agentsSourceDir = join(TEMPLATES_DIR, 'agents');
-  const agentsTargetDir = join(repoPath, '.claude', 'agents');
-  if (!existsSync(agentsSourceDir)) return;
-  mkdirSync(agentsTargetDir, { recursive: true });
-
-  for (const filename of readdirSync(agentsSourceDir).filter(name => name.endsWith('.md')).sort()) {
-    const source = join(agentsSourceDir, filename);
-    const target = join(agentsTargetDir, filename);
-    if (existsSync(target)) {
-      summaryLines.push(`${pc.dim('-')} .claude/agents/${filename} (already exists)`);
-      continue;
-    }
-    copyFileSync(source, target);
-    summaryLines.push(`${pc.green('+')} .claude/agents/${filename}`);
-  }
-
-  ensureRecommendedAgentGitignore(repoPath, summaryLines);
-}
-
-function ensureRecommendedAgentGitignore(repoPath, summaryLines) {
-  const gitignorePath = join(repoPath, '.gitignore');
-  const entry = 'dev/';
-  if (existsSync(gitignorePath)) {
-    const content = readFileSync(gitignorePath, 'utf8');
-    if (/^dev\/$/m.test(content)) return;
-    writeFileSync(gitignorePath, content.trimEnd() + `\n${entry}\n`, 'utf8');
-  } else {
-    writeFileSync(gitignorePath, `${entry}\n`, 'utf8');
-  }
-  summaryLines.push(`${pc.green('+')} .gitignore (dev/)`);
-}
-
-function toPosixRelative(from, to) {
-  const rel = relative(from, to);
-  if (!rel || rel === '.') return '';
-  return rel.split('\\').join('/');
-}
 
 function showTokenSummary(startTime) {
   if (tokenTracker.calls > 0) {
@@ -967,24 +878,25 @@ async function installHooks(repoPath, options) {
   }
 
   const hookSpinner = p.spinner();
-  hookSpinner.start('Installing skill activation hooks...');
+  hookSpinner.start('Installing hooks...');
 
   try {
-    // 9a: Generate skill-rules.json
-    const rules = extractRulesFromSkills(skillsDir);
-    const skillCount = Object.keys(rules.skills).length;
+    // 9a: Generate skill-rules.json (only when --skills was passed)
+    let rules = null;
+    let skillCount = 0;
+    if (options.skills) {
+      rules = extractRulesFromSkills(skillsDir);
+      skillCount = Object.keys(rules.skills).length;
 
-    if (skillCount === 0) {
-      hookSpinner.stop(pc.dim('No skills found — skipping hooks'));
-      return;
-    }
+      if (skillCount > 0) {
+        const rulesPath = join(skillsDir, 'skill-rules.json');
 
-    const rulesPath = join(skillsDir, 'skill-rules.json');
-
-    if (!options.dryRun) {
-      writeFileSync(rulesPath, JSON.stringify(rules, null, 2) + '\n');
-    } else {
-      p.log.info(pc.dim(`[dry-run] Would write ${rulesPath} (${skillCount} skills)`));
+        if (!options.dryRun) {
+          writeFileSync(rulesPath, JSON.stringify(rules, null, 2) + '\n');
+        } else {
+          p.log.info(pc.dim(`[dry-run] Would write ${rulesPath} (${skillCount} skills)`));
+        }
+      }
     }
 
     // 9b: Copy hook files
@@ -993,7 +905,7 @@ async function installHooks(repoPath, options) {
     }
 
     // Only install skill-activation hooks if skill-rules.json exists
-    const hasSkillRules = existsSync(join(skillsDir, 'skill-rules.json'));
+    const hasSkillRules = options.skills && skillCount > 0;
     const hookFiles = [
       ...(hasSkillRules ? [
         { src: 'hooks/skill-activation-prompt.sh', dest: 'skill-activation-prompt.sh', chmod: true },
@@ -1018,29 +930,31 @@ async function installHooks(repoPath, options) {
       }
     }
 
-    // 9c: Generate post-tool-use-tracker with domain patterns
-    const trackerSrc = join(TEMPLATES_DIR, 'hooks', 'post-tool-use-tracker.sh');
-    const trackerDest = join(hooksDir, 'post-tool-use-tracker.sh');
-    if (existsSync(trackerSrc)) {
-      let trackerContent = readFileSync(trackerSrc, 'utf8');
+    // 9c: Generate post-tool-use-tracker with domain patterns (only when skills are generated)
+    if (rules && skillCount > 0) {
+      const trackerSrc = join(TEMPLATES_DIR, 'hooks', 'post-tool-use-tracker.sh');
+      const trackerDest = join(hooksDir, 'post-tool-use-tracker.sh');
+      if (existsSync(trackerSrc)) {
+        let trackerContent = readFileSync(trackerSrc, 'utf8');
 
-      // Inject generated domain patterns into detect_skill_domain()
-      const domainPatterns = generateDomainPatterns(rules);
-      // Replace using BEGIN/END markers (preferred), fall back to regex
-      const markerRegex = /# BEGIN detect_skill_domain[\s\S]*?# END detect_skill_domain/;
-      if (markerRegex.test(trackerContent)) {
-        trackerContent = trackerContent.replace(markerRegex, domainPatterns.trim());
-      } else {
-        // Fallback for templates without markers
-        const stubRegex = /detect_skill_domain\(\)\s*\{[\s\S]*?\n\}/;
-        if (stubRegex.test(trackerContent)) {
-          trackerContent = trackerContent.replace(stubRegex, domainPatterns.trim());
+        // Inject generated domain patterns into detect_skill_domain()
+        const domainPatterns = generateDomainPatterns(rules);
+        // Replace using BEGIN/END markers (preferred), fall back to regex
+        const markerRegex = /# BEGIN detect_skill_domain[\s\S]*?# END detect_skill_domain/;
+        if (markerRegex.test(trackerContent)) {
+          trackerContent = trackerContent.replace(markerRegex, domainPatterns.trim());
+        } else {
+          // Fallback for templates without markers
+          const stubRegex = /detect_skill_domain\(\)\s*\{[\s\S]*?\n\}/;
+          if (stubRegex.test(trackerContent)) {
+            trackerContent = trackerContent.replace(stubRegex, domainPatterns.trim());
+          }
         }
-      }
 
-      if (!options.dryRun) {
-        writeFileSync(trackerDest, trackerContent);
-        chmodSync(trackerDest, 0o755);
+        if (!options.dryRun) {
+          writeFileSync(trackerDest, trackerContent);
+          chmodSync(trackerDest, 0o755);
+        }
       }
     }
 
@@ -1051,6 +965,10 @@ async function installHooks(repoPath, options) {
         repoPath,
         JSON.parse(readFileSync(join(TEMPLATES_DIR, 'settings', 'settings.json'), 'utf8'))
       );
+      // Without --skills, strip PostToolUse tracker (no skill domains to track)
+      if (!options.skills && templateSettings.hooks?.PostToolUse) {
+        delete templateSettings.hooks.PostToolUse;
+      }
     } catch (err) {
       hookSpinner.stop(pc.yellow('Hook installation incomplete'));
       p.log.warn(`Could not read template settings: ${err.message}`);
@@ -1077,19 +995,27 @@ async function installHooks(repoPath, options) {
       writeFileSync(settingsPath, JSON.stringify(merged, null, 2) + '\n');
     }
 
-    hookSpinner.stop(pc.green(`Hooks installed (${skillCount} skills in rules)`));
+    const hookLabel = skillCount > 0
+      ? pc.green(`Hooks installed (${skillCount} skills in rules)`)
+      : pc.green('Hooks installed (graph context)');
+    hookSpinner.stop(hookLabel);
 
     // Show what was done
     console.log();
-    const items = [
-      `${pc.green('+')} .claude/skills/skill-rules.json ${pc.dim(`(${skillCount} skills)`)}`,
-      `${pc.green('+')} .claude/hooks/skill-activation-prompt.sh`,
-      `${pc.green('+')} .claude/hooks/skill-activation-prompt.mjs`,
+    const items = [];
+    if (skillCount > 0) {
+      items.push(
+        `${pc.green('+')} .claude/skills/skill-rules.json ${pc.dim(`(${skillCount} skills)`)}`,
+        `${pc.green('+')} .claude/hooks/skill-activation-prompt.sh`,
+        `${pc.green('+')} .claude/hooks/skill-activation-prompt.mjs`,
+        `${pc.green('+')} .claude/hooks/post-tool-use-tracker.sh ${pc.dim('(with domain patterns)')}`,
+      );
+    }
+    items.push(
       `${pc.green('+')} .claude/hooks/graph-context-prompt.sh`,
       `${pc.green('+')} .claude/hooks/graph-context-prompt.mjs`,
-      `${pc.green('+')} .claude/hooks/post-tool-use-tracker.sh ${pc.dim('(with domain patterns)')}`,
       `${existingSettings ? pc.yellow('~') : pc.green('+')} .claude/settings.json ${pc.dim(existingSettings ? '(merged)' : '(created)')}`,
-    ];
+    );
     for (const item of items) {
       console.log(`  ${item}`);
     }
@@ -1158,20 +1084,6 @@ function buildGraphContext(graph) {
     }
     sections.push('');
   }
-
-  return sections.join('\n');
-}
-
-function buildRootInstructionsGraphContext(graph) {
-  if (!graph?.hubs?.length) return '';
-
-  const sections = ['## Key Files To Surface In Root Context', ''];
-  sections.push('Add a concise `## Key Files` section to the root instructions file and mention these hub files explicitly:');
-  for (const hub of graph.hubs.slice(0, 5)) {
-    const fileInfo = graph.files?.[hub.path];
-    sections.push(`- \`${hub.path}\` — ${hub.fanIn} dependents${fileInfo?.lines ? `, ${fileInfo.lines} lines` : ''}`);
-  }
-  sections.push('');
 
   return sections.join('\n');
 }
@@ -1718,9 +1630,8 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       });
     }
 
-    const rootGraphContext = buildRootInstructionsGraphContext(repoGraph);
     const claudeMdPrompt = loadPrompt('doc-init-claudemd', CANONICAL_VARS) +
-      `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${rootGraphContext ? `\n\n${rootGraphContext}` : ''}${existingClaudeMdSection}`;
+      `\n\n---\n\nRepository path: ${repoPath}\n\n## Scan Results\nRepo: ${scan.name} (${scan.repoType})\nLanguages: ${scan.languages.join(', ')}\nFrameworks: ${scan.frameworks.join(', ')}\nEntry points: ${scan.entryPoints.join(', ')}\n\n## Generated Skills\n${skillSummaries}${existingClaudeMdSection}`;
 
     try {
       let { text, usage } = await runLLM(claudeMdPrompt, makeClaudeOptions(timeoutMs, verbose, model, claudeMdSpinner), _backendId);
@@ -1742,9 +1653,6 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
         claudeMdSpinner.stop(pc.yellow(`${instructionsArtifactLabel()} — failed after retries`));
         p.log.warn(`Could not generate ${instructionsArtifactLabel()}. Try: aspens doc init --strategy rewrite --mode base-only`);
       } else {
-        files = files.map(file => file.path === 'CLAUDE.md'
-          ? { ...file, content: ensureRootKeyFilesSection(file.content, repoGraph) }
-          : file);
         files = validateGeneratedChunk(files, repoPath);
         allFiles.push(...files);
         if (writeIncrementally && files.length > 0) {

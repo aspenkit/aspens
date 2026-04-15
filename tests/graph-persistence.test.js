@@ -499,7 +499,7 @@ describe('writeAtlas', () => {
 // persistGraphArtifacts
 // ---------------------------------------------------------------------------
 describe('persistGraphArtifacts', () => {
-  it('writes graph.json, code-map.md, atlas.md, and index in one call', () => {
+  it('writes only graph.json (no code-map, atlas, or index)', () => {
     const dir = join(FIXTURES_DIR, 'persist-all');
     mkdirSync(dir, { recursive: true });
 
@@ -507,8 +507,8 @@ describe('persistGraphArtifacts', () => {
     persistGraphArtifacts(dir, raw);
 
     expect(existsSync(join(dir, '.claude', 'graph.json'))).toBe(true);
-    expect(existsSync(join(dir, '.claude', 'graph-index.json'))).toBe(true);
-    expect(existsSync(join(dir, '.claude', 'code-map.md'))).toBe(true);
-    expect(existsSync(join(dir, '.claude', 'atlas.md'))).toBe(true);
+    expect(existsSync(join(dir, '.claude', 'graph-index.json'))).toBe(false);
+    expect(existsSync(join(dir, '.claude', 'code-map.md'))).toBe(false);
+    expect(existsSync(join(dir, '.claude', 'atlas.md'))).toBe(false);
   });
 });

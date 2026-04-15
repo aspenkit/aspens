@@ -45,6 +45,7 @@ export function serializeGraph(rawGraph, repoPath) {
       churn: info.churn,
       priority: Math.round(info.priority * 10) / 10,
       cluster: fileToCluster[path] || null,
+      ...(info.definitions?.length > 0 ? { definitions: info.definitions } : {}),
     };
   }
 
@@ -521,10 +522,6 @@ export function persistGraphArtifacts(repoPath, rawGraph, options = {}) {
   }
 
   saveGraph(repoPath, serialized);
-  writeCodeMap(repoPath, serialized);
-  writeAtlas(repoPath, serialized, { skills: options.skills || [] });
-  const index = generateGraphIndex(serialized);
-  saveGraphIndex(repoPath, index);
   ensureGraphGitignore(repoPath);
   return serialized;
 }
@@ -538,9 +535,6 @@ function ensureGraphGitignore(repoPath) {
   const gitignorePath = join(repoPath, '.gitignore');
   const entries = [
     '.claude/graph.json',
-    '.claude/graph-index.json',
-    '.claude/code-map.md',
-    '.claude/atlas.md',
   ];
 
   let existing = '';

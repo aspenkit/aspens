@@ -36,8 +36,19 @@ export function generateAtlas(graph, options = {}) {
   if (hubs.length > 0) {
     lines.push('**Hub files:**');
     for (const hub of hubs) {
-      const exports = (hub.exports || []).slice(0, 5).join(', ');
-      lines.push(`- \`${hub.path}\` — ${hub.fanIn} dependents | ${exports}`);
+      // Use es-module-lexer exports if available, fall back to symbol definitions
+      let symbolNames = (hub.exports || []).slice(0, 5);
+      if (symbolNames.length === 0) {
+        const fileDefs = graph.files?.[hub.path]?.definitions;
+        if (fileDefs && fileDefs.length > 0) {
+          symbolNames = fileDefs
+            .filter(d => d.type === 'function' || d.type === 'type' || d.type === 'class')
+            .slice(0, 5)
+            .map(d => d.name);
+        }
+      }
+      const symbolStr = symbolNames.join(', ');
+      lines.push(`- \`${hub.path}\` — ${hub.fanIn} dependents${symbolStr ? ' | ' + symbolStr : ''}`);
     }
     lines.push('');
   }
