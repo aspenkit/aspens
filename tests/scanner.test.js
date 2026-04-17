@@ -205,6 +205,52 @@ describe('scanRepo', () => {
       expect(scan.domains.some(d => d.name === 'auth')).toBe(true);
     });
 
+    it('detects domains from C# source files', () => {
+      const dir = createFixture('csharp-project', {
+        'MyApp.csproj': '<Project Sdk="Microsoft.NET.Sdk"></Project>',
+        'Controllers/UsersController.cs': 'public class UsersController {}',
+        'Controllers/OrdersController.cs': 'public class OrdersController {}',
+        'Services/PaymentService.cs': 'public class PaymentService {}',
+      });
+      const scan = scanRepo(dir);
+      expect(scan.languages).toContain('csharp');
+      expect(scan.domains.some(d => d.name === 'controllers')).toBe(true);
+      expect(scan.domains.some(d => d.name === 'services')).toBe(true);
+    });
+
+    it('detects domains from Java, Swift, PHP, Elixir, Kotlin source files', () => {
+      const dir = createFixture('multi-lang-project', {
+        'services/UserService.java': 'public class UserService {}',
+        'views/HomeView.swift': 'struct HomeView {}',
+        'handlers/webhook.php': '<?php class Webhook {}',
+        'workers/processor.ex': 'defmodule Processor do end',
+        'ui/MainActivity.kt': 'class MainActivity {}',
+      });
+      const scan = scanRepo(dir);
+      const names = scan.domains.map(d => d.name);
+      expect(names).toContain('services');
+      expect(names).toContain('views');
+      expect(names).toContain('handlers');
+      expect(names).toContain('workers');
+      expect(names).toContain('ui');
+    });
+
+    it('skips bin, obj, and target build output directories', () => {
+      const dir = createFixture('build-output-project', {
+        'MyApp.csproj': '<Project></Project>',
+        'bin/Debug/MyApp.cs': '// compiled artifact',
+        'obj/project.assets.cs': '// intermediate',
+        'target/classes/Foo.java': '// build output',
+        'Services/Real.cs': 'public class Real {}',
+      });
+      const scan = scanRepo(dir);
+      const names = scan.domains.map(d => d.name);
+      expect(names).not.toContain('bin');
+      expect(names).not.toContain('obj');
+      expect(names).not.toContain('target');
+      expect(names).toContain('services');
+    });
+
     it('returns empty domains for featureless project', () => {
       const dir = createFixture('minimal-project', {
         'package.json': '{}',
