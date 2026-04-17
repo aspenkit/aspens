@@ -218,8 +218,12 @@ describe('scanRepo', () => {
       expect(scan.domains.some(d => d.name === 'services')).toBe(true);
     });
 
-    it('detects domains from Java, Swift, PHP, Elixir, Kotlin source files', () => {
+    it('detects domains and languages from Java, Swift, PHP, Elixir, Kotlin source files', () => {
       const dir = createFixture('multi-lang-project', {
+        'pom.xml': '<project></project>',
+        'Package.swift': '// swift-tools-version:5.0',
+        'composer.json': '{}',
+        'mix.exs': 'defmodule App.MixProject do end',
         'services/UserService.java': 'public class UserService {}',
         'views/HomeView.swift': 'struct HomeView {}',
         'handlers/webhook.php': '<?php class Webhook {}',
@@ -227,6 +231,10 @@ describe('scanRepo', () => {
         'ui/MainActivity.kt': 'class MainActivity {}',
       });
       const scan = scanRepo(dir);
+      expect(scan.languages).toContain('java');
+      expect(scan.languages).toContain('swift');
+      expect(scan.languages).toContain('php');
+      expect(scan.languages).toContain('elixir');
       const names = scan.domains.map(d => d.name);
       expect(names).toContain('services');
       expect(names).toContain('views');

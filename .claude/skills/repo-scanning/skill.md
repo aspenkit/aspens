@@ -46,4 +46,4 @@ You are working on **aspens' repo scanning system** — a fully deterministic an
 - **No guidelines directory** — `.claude/guidelines/` does not exist yet for this domain
 
 ---
-**Last Updated:** 2026-04-17
+**Last Updated:** 2026-04-16

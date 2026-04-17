@@ -1,5 +1,6 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, basename, extname, relative } from 'path';
+import { SOURCE_EXTS } from './source-exts.js';
 
 /**
  * Scan a repository and return its tech stack, structure, and domains.
@@ -632,12 +633,3 @@ function findSourceRoot(repoPath) {
   return repoPath;
 }
 
-const SOURCE_EXTS = new Set([
-  '.py', '.ts', '.js', '.tsx', '.jsx', '.mjs', '.cjs',
-  '.rb', '.go', '.rs',
-  '.java', '.kt', '.kts',
-  '.cs', '.fs', '.fsx',
-  '.swift',
-  '.php',
-  '.ex', '.exs',
-]);

@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, extname, relative } from 'path';
 import { execSync } from 'child_process';
+import { SOURCE_EXTS } from './source-exts.js';
 
 /**
  * Build context string from a repo scan result.
@@ -185,8 +186,6 @@ function listDirRecursive(dirPath, maxDepth, currentDepth = 0, prefix = '') {
     return null;
   }
 }
-
-const SOURCE_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.py', '.go', '.rs', '.rb', '.java', '.kt', '.swift', '.php', '.ex', '.exs']);
 
 function listSourceFiles(dirPath) {
   try {
