@@ -5,12 +5,14 @@ import { buildRepoGraph } from './graph-builder.js';
 import { loadConfig, TARGETS } from './target.js';
 import { findSkillFiles } from './skill-reader.js';
 import { getGitRoot } from './git-helpers.js';
+import { SOURCE_EXTS as SCANNER_SOURCE_EXTS } from './source-exts.js';
 
+// Freshness analysis scans a broader set than scanner domain detection —
+// includes ecosystem extensions (.scala/.clj/.elm/.vue/.svelte) that scanner
+// doesn't yet detect as languages but which still signal source-file edits.
 const SOURCE_EXTS = new Set([
-  '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
-  '.py', '.rb', '.go', '.rs', '.java', '.cs',
-  '.php', '.swift', '.kt', '.kts', '.scala',
-  '.clj', '.ex', '.exs', '.elm', '.vue', '.svelte',
+  ...SCANNER_SOURCE_EXTS,
+  '.scala', '.clj', '.elm', '.vue', '.svelte',
 ]);
 
 const LOW_SIGNAL_DOMAIN_NAMES = new Set([

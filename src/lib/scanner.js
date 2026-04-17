@@ -1,5 +1,6 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, basename, extname, relative } from 'path';
+import { SOURCE_EXTS } from './source-exts.js';
 
 /**
  * Scan a repository and return its tech stack, structure, and domains.
@@ -82,7 +83,8 @@ function estimateRepoSize(repoPath) {
     for (const entry of entries) {
       if (entry.startsWith('.') || entry === 'node_modules' || entry === '__pycache__' ||
           entry === 'dist' || entry === 'build' || entry === '.next' || entry === 'vendor' ||
-          entry === '.git' || entry === 'coverage') continue;
+          entry === '.git' || entry === 'coverage' || entry === 'bin' || entry === 'obj' ||
+          entry === 'target') continue;
 
       const full = join(dir, entry);
       try {
@@ -317,7 +319,7 @@ function detectStructure(repoPath) {
 
 // Always skip — purely structural, build output, dependencies, IDE
 const SKIP_DIR_NAMES = new Set([
-  'src', 'app', 'bin', 'cmd', 'pkg', 'internal', 'vendor',
+  'src', 'app', 'bin', 'obj', 'cmd', 'pkg', 'internal', 'vendor',
   'dist', 'build', 'out', 'output', 'target', 'coverage',
   'node_modules', '__pycache__', '.next', '.nuxt', '.cache',
   '.github', '.vscode', '.idea', '.git',
@@ -631,4 +633,3 @@ function findSourceRoot(repoPath) {
   return repoPath;
 }
 
-const SOURCE_EXTS = new Set(['.py', '.ts', '.js', '.tsx', '.jsx', '.rb', '.go', '.rs']);
