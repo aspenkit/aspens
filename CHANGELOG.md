@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-04-16
+
+### Fixed
+- **Nested-project source root detection** — for layouts like `.NET`'s `~/apps/MyApp/MyApp/MyApp.csproj` (where the outer dir holds `README`/`.git`/`CLAUDE.md` and a single inner dir holds the `.csproj`), `findSourceRoot()` now promotes the inner dir as the source root. Subdirectories like `Controllers/` and `Services/` surface as first-class domains instead of being rolled up under a single wrapper domain. Triggered only when the repo root has exactly one non-skip child directory containing a project manifest (`.csproj`, `.sln`, `pom.xml`, `go.mod`, `package.json`, `pyproject.toml`, etc.).
+- **`scan` pretty-printer shows domains for non-JS/TS/Python projects** — the `Domains` section was hidden whenever the import graph returned 0 clusters, which always happened for C#/Java/Swift/PHP/Elixir repos. The pretty-printer now falls back to scanner's filesystem domains under a `Domains (by filesystem)` heading when the graph has no clusters.
+
 ## [0.7.1] - 2026-04-16
 
 ### Fixed

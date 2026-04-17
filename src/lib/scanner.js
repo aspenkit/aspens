@@ -331,6 +331,13 @@ function detectDomains(repoPath) {
   const domains = [];
   const sourceRoot = findSourceRoot(repoPath);
 
+  // If source root is a direct child of repo root (nested-project promotion),
+  // skip that child when scanning repo root to avoid double-counting its contents
+  // as a wrapper domain alongside its own subdirectory domains.
+  const nestedChild = sourceRoot && sourceRoot !== repoPath
+    ? basename(sourceRoot)
+    : null;
+
   // Scan directories under source root AND at repo root
   const scanRoots = new Set();
   if (sourceRoot) scanRoots.add(sourceRoot);
@@ -344,6 +351,7 @@ function detectDomains(repoPath) {
       const name = entry.toLowerCase();
       if (name.startsWith('.')) continue;
       if (SKIP_DIR_NAMES.has(name)) continue;
+      if (root === repoPath && entry === nestedChild) continue;
 
       const full = join(root, entry);
       const relDir = relative(repoPath, full);
@@ -625,11 +633,42 @@ function globRecursive(dirPath, ext, maxDepth, currentDepth = 0) {
   return false;
 }
 
+const PROJECT_MANIFESTS = new Set([
+  '.csproj', '.fsproj', '.vbproj', '.sln',
+  'package.json', 'pyproject.toml', 'setup.py', 'Pipfile',
+  'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle', 'build.gradle.kts',
+  'Gemfile', 'composer.json', 'mix.exs', 'Package.swift',
+]);
+
+function hasProjectManifest(dirPath) {
+  for (const entry of listDir(dirPath)) {
+    if (PROJECT_MANIFESTS.has(entry)) return true;
+    const ext = extname(entry);
+    if (ext && PROJECT_MANIFESTS.has(ext)) return true;
+  }
+  return false;
+}
+
 function findSourceRoot(repoPath) {
   for (const candidate of ['src', 'app', 'lib', 'server', 'pages']) {
     const full = join(repoPath, candidate);
     if (isDir(full)) return full;
   }
+
+  // Nested-project layout (e.g. .NET convention `~/apps/MyApp/MyApp/MyApp.csproj`):
+  // if the repo root has exactly one non-skip subdirectory and that subdirectory
+  // contains a project manifest, promote it as the source root.
+  const childDirs = listDir(repoPath).filter(entry => {
+    const name = entry.toLowerCase();
+    if (name.startsWith('.')) return false;
+    if (SKIP_DIR_NAMES.has(name)) return false;
+    return isDir(join(repoPath, entry));
+  });
+  if (childDirs.length === 1) {
+    const nested = join(repoPath, childDirs[0]);
+    if (hasProjectManifest(nested)) return nested;
+  }
+
   return repoPath;
 }
 

@@ -120,6 +120,22 @@ export async function scanCommand(path, options) {
         }
       }
       console.log();
+    } else if (result.domains && result.domains.length > 0) {
+      // No graph-derived domains (e.g. C#/Java/Swift — graph-builder parses
+      // JS/TS/Python only). Fall back to scanner's filesystem domains so
+      // users don't see an empty section for non-JS projects.
+      console.log(pc.bold('  Domains') + pc.dim(' (by filesystem)'));
+      for (const domain of result.domains) {
+        const dir = domain.directories && domain.directories[0] ? `${domain.directories[0]}/` : '';
+        const count = domain.sourceFileCount ?? (domain.modules ? domain.modules.length : 0);
+        console.log(pc.dim('    ') + pc.green(domain.name) + pc.dim(` (${dir})`) + pc.dim(` \u2014 ${pc.cyan(String(count))} files`));
+        if (domain.modules && domain.modules.length > 0) {
+          const mods = domain.modules.slice(0, 8);
+          const extra = domain.modules.length > 8 ? `, +${domain.modules.length - 8} more` : '';
+          console.log(pc.dim('      ') + mods.join(', ') + pc.dim(extra));
+        }
+      }
+      console.log();
     }
 
     // Coupling section
