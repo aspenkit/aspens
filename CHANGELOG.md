@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-16
+
+### Fixed
+- **Domain discovery for C#, Java, Kotlin, Swift, PHP, Elixir, F#** — scanner's `SOURCE_EXTS` only recognized JS/TS/Python/Ruby/Go/Rust files, so `doc init` reported zero domains for projects in other languages even when language detection itself succeeded. Added `.cs`, `.java`, `.kt`, `.kts`, `.swift`, `.php`, `.ex`, `.exs`, `.fs`, `.fsx`, `.mjs`, and `.cjs` to the source-extension set.
+- **Build-output skipping** — repo-size estimation and domain detection now skip `bin/`, `obj/`, and `target/` directories, preventing .NET / Java / Rust build artifacts from polluting module lists or line counts.
+
+### Known Limitations
+- Import graph, hub files, and cluster detection remain JS/TS/Python-only — `doc init` on C#/Java/Swift/PHP/Elixir/Kotlin/Rust/Go/Ruby projects will generate skills and domains but produce a minimal atlas. Full multi-language import parsing is tracked for a future release.
+
 ## [0.7.0] - 2026-04-10
 
 ### Added
