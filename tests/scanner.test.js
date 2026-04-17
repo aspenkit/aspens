@@ -259,6 +259,31 @@ describe('scanRepo', () => {
       expect(names).toContain('services');
     });
 
+    it('promotes nested project directory as source root (e.g. .NET MyApp/MyApp/ layout)', () => {
+      const dir = createFixture('nested-csharp-project', {
+        'README.md': '# outer',
+        'myapp/MyApp.csproj': '<Project></Project>',
+        'myapp/Controllers/UsersController.cs': 'public class UsersController {}',
+        'myapp/Services/PaymentService.cs': 'public class PaymentService {}',
+      });
+      const scan = scanRepo(dir);
+      const names = scan.domains.map(d => d.name);
+      expect(names).toContain('controllers');
+      expect(names).toContain('services');
+      expect(names).not.toContain('myapp');
+    });
+
+    it('does not promote when repo root has multiple non-skip child dirs', () => {
+      const dir = createFixture('multi-child-project', {
+        'frontend/app.js': '',
+        'backend/server.js': '',
+      });
+      const scan = scanRepo(dir);
+      const names = scan.domains.map(d => d.name);
+      expect(names).toContain('frontend');
+      expect(names).toContain('backend');
+    });
+
     it('returns empty domains for featureless project', () => {
       const dir = createFixture('minimal-project', {
         'package.json': '{}',
