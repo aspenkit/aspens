@@ -7,7 +7,7 @@
 **Your CLAUDE.md stopped working. Here's why.**
 
 [![npm version](https://img.shields.io/npm/v/aspens.svg)](https://www.npmjs.com/package/aspens)
-[![npm downloads](https://img.shields.io/npm/dm/aspens.svg)](https://www.npmjs.com/package/aspens)
+[![npm downloads](https://img.shields.io/npm/dt/aspens.svg)](https://www.npmjs.com/package/aspens)
 [![GitHub stars](https://img.shields.io/github/stars/aspenkit/aspens)](https://github.com/aspenkit/aspens)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
