@@ -7,7 +7,7 @@
 **Your CLAUDE.md stopped working. Here's why.**
 
 [![npm version](https://img.shields.io/npm/v/aspens.svg)](https://www.npmjs.com/package/aspens)
-[![npm downloads](https://img.shields.io/npm/dm/aspens.svg)](https://www.npmjs.com/package/aspens)
+[![npm downloads](https://img.shields.io/npm/dy/aspens.svg)](https://www.npmjs.com/package/aspens)
 [![GitHub stars](https://img.shields.io/github/stars/aspenkit/aspens)](https://github.com/aspenkit/aspens)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -19,14 +19,28 @@ aspens replaces the monolith with scoped skill files (~35 lines each) generated 
 
 Works with Claude Code, Codex, or both.
 
+## Install
+
 ```bash
-npx aspens doc init --recommended
+npm install -g aspens
 ```
 
-Then verify what it generated:
+Then in your project:
 
 ```bash
-npx aspens doc impact
+aspens doc init --recommended
+```
+
+Verify what it generated:
+
+```bash
+aspens doc impact
+```
+
+Or run without installing:
+
+```bash
+npx aspens doc init --recommended
 ```
 
 ![aspens demo](demo/demo-full.gif)

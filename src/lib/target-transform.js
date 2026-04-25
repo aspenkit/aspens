@@ -6,6 +6,7 @@
  */
 
 import { join } from 'path';
+import { existsSync, readFileSync } from 'fs';
 
 export function transformForTarget(files, sourceTarget, destTarget, context) {
   if (sourceTarget.id === destTarget.id) return files;
@@ -44,11 +45,19 @@ function remapCentralizedPath(filePath, sourceTarget, destTarget) {
 function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
   const scanResult = context?.scanResult;
   const graphSerialized = context?.graphSerialized;
+  const repoPath = context?.repoPath;
   const result = [];
 
   const baseSkillPrefix = sourceTarget.skillsDir + '/base/';
   const baseSkill = files.find(file => file.path.startsWith(baseSkillPrefix));
-  const instructionsFile = files.find(file => file.path === sourceTarget.instructionsFile);
+  let instructionsFile = files.find(file => file.path === sourceTarget.instructionsFile);
+
+  if (!instructionsFile && repoPath && sourceTarget.instructionsFile) {
+    const diskPath = join(repoPath, sourceTarget.instructionsFile);
+    if (existsSync(diskPath)) {
+      instructionsFile = { path: sourceTarget.instructionsFile, content: readFileSync(diskPath, 'utf8') };
+    }
+  }
   const domainSkills = files.filter(file =>
     file !== baseSkill &&
     file !== instructionsFile &&

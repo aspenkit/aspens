@@ -1,6 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.3] - 2026-04-25
+
+### Fixed
+- **`doc sync` crash on unstructured LLM response** — when the LLM responds with explanatory text instead of `<file>` tags, `doc sync` now treats it as "no updates needed" instead of throwing. Also tightened the prompt to request an empty response when nothing needs updating.
+- **Codex `AGENTS.md` missing most content** — the codex transform produced only hub files and domain clusters (~17 lines) instead of the full instructions derived from `CLAUDE.md`. The transform now loads `CLAUDE.md` from disk when it's not in the canonical files (e.g., during `doc init --strategy skip-existing` or incremental `doc sync`).
+
 
 ## [0.7.2] - 2026-04-16
 
