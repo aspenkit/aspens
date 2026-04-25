@@ -13,10 +13,10 @@
 
 | Domain | Files | Top entries |
 |--------|-------|-------------|
-| src | 44 | `src/commands/doc-init.js`, `src/lib/runner.js`, `src/lib/target.js` |
+| src | 45 | `src/commands/doc-init.js`, `src/lib/runner.js`, `src/lib/target.js` |
 
 **High-churn hotspots:**
-- `src/commands/doc-init.js` - 34 changes
-- `src/commands/doc-sync.js` - 20 changes
+- `src/commands/doc-init.js` - 35 changes
+- `src/commands/doc-sync.js` - 21 changes
 - `src/lib/runner.js` - 17 changes
 
