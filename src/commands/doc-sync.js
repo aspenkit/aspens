@@ -62,7 +62,7 @@ function chooseSyncSourceTarget(repoPath, targets) {
   return targets[0] || TARGETS.claude;
 }
 
-function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized = null) {
+function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized = null, repoPath = null) {
   const published = [];
 
   for (const target of publishTargets) {
@@ -74,6 +74,7 @@ function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, g
     const transformed = transformForTarget(baseFiles, sourceTarget, target, {
       scanResult: scan,
       graphSerialized,
+      repoPath,
     });
     published.push(...transformed);
   }
@@ -308,12 +309,12 @@ ${truncate(instructionsContent, 5000)}
 
   // Step 6: Parse output
   const baseFiles = parseOutput(result.text, allowedPaths);
-  const hasFileTags = /<file\s+path=/i.test(result.text);
-  if (baseFiles.length === 0 && result.text.trim().length > 0 && !hasFileTags) {
-    syncSpinner.stop(pc.red('Unparseable response'));
-    throw new CliError('LLM returned content without <file path="..."> tags. Aborting instead of treating it as "no updates needed".');
+  if (baseFiles.length === 0 && result.text.trim().length > 0 && !/<file\s+path=/i.test(result.text)) {
+    if (verbose) {
+      p.log.warn('LLM responded without <file> tags — treating as no updates needed.');
+    }
   }
-  const files = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized);
+  const files = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized, repoPath);
 
   if (files.length === 0) {
     syncSpinner.stop('No updates needed');
@@ -646,7 +647,7 @@ async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets 
     return;
   }
 
-  const filesToWrite = publishFilesForTargets(allUpdatedFiles, sourceTarget, publishTargets, scan, graphSerialized);
+  const filesToWrite = publishFilesForTargets(allUpdatedFiles, sourceTarget, publishTargets, scan, graphSerialized, repoPath);
   const directWriteFiles = filesToWrite.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
   const dirScopedFiles = filesToWrite.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
   const results = [

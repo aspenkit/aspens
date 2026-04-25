@@ -137,7 +137,7 @@ function validateGeneratedChunk(files, repoPath) {
   return files;
 }
 
-function buildOutputFilesForTargets(canonicalFiles, targets, scan, graphSerialized) {
+function buildOutputFilesForTargets(canonicalFiles, targets, scan, graphSerialized, repoPath) {
   let outputFiles = [...canonicalFiles];
   const nonClaudeTargets = targets.filter(target => target.id !== 'claude');
 
@@ -146,6 +146,7 @@ function buildOutputFilesForTargets(canonicalFiles, targets, scan, graphSerializ
       const transformed = transformForTarget(canonicalFiles, TARGETS.claude, target, {
         scanResult: scan,
         graphSerialized,
+        repoPath,
       });
 
       const transformValidation = validateTransformedFiles(transformed);
@@ -716,7 +717,7 @@ export async function docInitCommand(path, options) {
   // For --target all: keep canonical + add transformed for each non-Claude target.
   const canonicalFiles = [...allFiles]; // preserve originals
   if (!shouldWriteIncrementally) {
-    allFiles = buildOutputFilesForTargets(canonicalFiles, targets, scan, graphSerialized);
+    allFiles = buildOutputFilesForTargets(canonicalFiles, targets, scan, graphSerialized, repoPath);
   }
 
   let results = [];
@@ -1546,7 +1547,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
       if (writeIncrementally && files.length > 0) {
         writeIncrementalOutputs(
           repoPath,
-          buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized),
+          buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized, repoPath),
           shouldForce,
           writeState
         );
@@ -1628,7 +1629,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
             if (writeIncrementally) {
               writeIncrementalOutputs(
                 repoPath,
-                buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized),
+                buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized, repoPath),
                 shouldForce,
                 writeState
               );
@@ -1711,7 +1712,7 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
         if (writeIncrementally && files.length > 0) {
           writeIncrementalOutputs(
             repoPath,
-            buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized),
+            buildOutputFilesForTargets(allFiles, targets, scan, graphSerialized, repoPath),
             shouldForce,
             writeState
           );

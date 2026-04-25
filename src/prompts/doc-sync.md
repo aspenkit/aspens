@@ -22,7 +22,7 @@ Return ONLY the files that need updating, wrapped in XML tags:
 - Only output files that actually changed. If a skill doesn't need updates, don't include it.
 - Output the COMPLETE file content, not a diff or patch. The file will be written as-is.
 - Use `<file path="...">` and `</file>` tags exactly as shown.
-- If nothing needs updating (cosmetic changes, test-only changes, docs-only changes), output nothing.
+- If nothing needs updating (cosmetic changes, test-only changes, docs-only changes), output an empty response — no text at all, not even an explanation.
 
 ## Rules
 
