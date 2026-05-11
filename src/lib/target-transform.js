@@ -270,7 +270,7 @@ function buildSkillRefs(baseSkill, domainSkills, destTarget, hasArchitectureSkil
   }
 
   for (const skill of domainSkills) {
-    const domainName = extractDomainName(skill.path, { skillsDir: '.claude/skills' });
+    const domainName = extractDomainFromAnyPath(skill.path);
     if (!domainName) continue;
     const description = extractFrontmatterField(skill.content, 'description');
     const suffix = description ? ' — ' + description : '';
@@ -512,6 +512,15 @@ function extractDomainName(skillPath, target) {
   if (!skillPath.startsWith(prefix)) return null;
   const rest = skillPath.slice(prefix.length);
   return rest.split('/')[0];
+}
+
+// Source-skillsDir-agnostic version. Skill files always live at
+// `<skillsDir>/<domainName>/<filename>` so the domain name is the
+// second-to-last path segment regardless of whether the source is
+// Claude (`.claude/skills/...`) or Codex (`.agents/skills/...`).
+function extractDomainFromAnyPath(skillPath) {
+  const parts = skillPath.split('/').filter(Boolean);
+  return parts.length >= 2 ? parts[parts.length - 2] : null;
 }
 
 function resolveDomainDirectory(domainName, scanResult) {

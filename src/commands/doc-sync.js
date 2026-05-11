@@ -15,7 +15,7 @@ import { installGitHook, removeGitHook } from '../lib/git-hook.js';
 import { isGitRepo, getGitRoot, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
 import { TARGETS, getAllowedPaths, loadConfig } from '../lib/target.js';
 import { getSelectedFilesDiff, buildPrioritizedDiff, truncate } from '../lib/diff-helpers.js';
-import { projectCodexDomainDocs, transformForTarget, assertTargetParity } from '../lib/target-transform.js';
+import { projectCodexDomainDocs, transformForTarget, assertTargetParity, syncSkillsSection, syncBehaviorSection } from '../lib/target-transform.js';
 import { isNoOpDiff } from '../lib/diff-classifier.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
@@ -697,6 +697,29 @@ async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets 
       }
     } catch (err) {
       claudeSpinner.stop(pc.red(`${instrFile} — failed: `) + err.message);
+    }
+  }
+
+  // Step 5b: Deterministically (re)inject `## Skills` and `## Behavior`, even
+  // when the LLM didn't propose an update — guarantees drift repair every sync.
+  if (existsSync(instrPath)) {
+    const pending = allUpdatedFiles.find(f => f.path === instrFile);
+    const startContent = pending ? pending.content : readFileSync(instrPath, 'utf8');
+    const baseSkillForList = existingSkills.find(s => s.name === 'base') || null;
+    const domainSkillsForList = existingSkills.filter(s => s.name !== 'base');
+
+    let updated = syncSkillsSection(
+      startContent,
+      baseSkillForList,
+      domainSkillsForList,
+      sourceTarget,
+      false
+    );
+    updated = syncBehaviorSection(updated);
+
+    if (updated !== startContent) {
+      if (pending) pending.content = updated;
+      else allUpdatedFiles.push({ path: instrFile, content: updated });
     }
   }
 

@@ -252,6 +252,17 @@ describe('syncSkillsSection', () => {
     expect(out).toContain('.agents/skills/auth/SKILL.md');
     expect(out).toContain('.agents/skills/architecture/SKILL.md');
   });
+
+  it('extracts domain names when source skill paths use the Codex skillsDir', () => {
+    const codexBase = { path: '.agents/skills/base/SKILL.md', content: '---\nname: base\ndescription: Base\n---\n' };
+    const codexDomains = [
+      { path: '.agents/skills/auth/SKILL.md', content: '---\nname: auth\ndescription: Auth\n---\n' },
+      { path: '.agents/skills/billing/SKILL.md', content: '---\nname: billing\ndescription: Billing\n---\n' },
+    ];
+    const out = syncSkillsSection('# Project\n', codexBase, codexDomains, TARGETS.codex, false);
+    expect(out).toContain('.agents/skills/auth/SKILL.md');
+    expect(out).toContain('.agents/skills/billing/SKILL.md');
+  });
 });
 
 describe('syncBehaviorSection', () => {
