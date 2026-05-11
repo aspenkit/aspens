@@ -253,8 +253,9 @@ export async function docSyncCommand(path, options) {
     }
     // If a stale-format code-map is on disk (legacy `## Hub files` block),
     // force a graph rebuild so subsequent reads see the modern format.
-    await regenerateStaleCodeMap(repoPath, sourceTarget, scanRepo(repoPath));
-    const repairs = repairDeterministicSections(repoPath, sourceTarget, publishTargets, scanRepo(repoPath));
+    const noOpScan = scanRepo(repoPath);
+    await regenerateStaleCodeMap(repoPath, sourceTarget, noOpScan);
+    const repairs = repairDeterministicSections(repoPath, sourceTarget, publishTargets, noOpScan);
     if (repairs.length > 0) {
       console.log();
       for (const wr of repairs) console.log(`  ${pc.yellow('~')} ${wr.path} ${pc.dim('(deterministic section repair)')}`);

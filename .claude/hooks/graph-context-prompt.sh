@@ -33,7 +33,9 @@ get_script_dir() {
 }
 
 SCRIPT_DIR="$(get_script_dir)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 log_debug "SCRIPT_DIR=$SCRIPT_DIR"
+log_debug "ASPENS_PROJECT_DIR=$PROJECT_DIR"
 
 cd "$SCRIPT_DIR" || { echo "[Graph] Failed to cd to $SCRIPT_DIR" >&2; exit 0; }
 
@@ -50,7 +52,7 @@ STDOUT_FILE=$(mktemp)
 STDERR_FILE=$(mktemp)
 trap 'rm -f "$STDOUT_FILE" "$STDERR_FILE"' EXIT
 
-printf '%s' "$INPUT" | NODE_NO_WARNINGS=1 node graph-context-prompt.mjs \
+printf '%s' "$INPUT" | ASPENS_PROJECT_DIR="$PROJECT_DIR" NODE_NO_WARNINGS=1 node graph-context-prompt.mjs \
     >"$STDOUT_FILE" 2>"$STDERR_FILE"
 EXIT_CODE=$?
 
@@ -64,7 +66,7 @@ if [ $EXIT_CODE -ne 0 ]; then
     log_debug "ERROR: Hook failed with exit code $EXIT_CODE"
 fi
 
-GRAPH_LINE=$(grep -o '\[Graph\] .*' "$STDERR_FILE" | head -1)
+GRAPH_LINE=$(grep -o '\[Graph\] [^"]*' "$STDERR_FILE" | head -1)
 if [ -n "$GRAPH_LINE" ]; then
     echo "$GRAPH_LINE" >&2
 fi

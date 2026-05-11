@@ -563,6 +563,11 @@ function remapContentPaths(content, sourceTarget, destTarget) {
 }
 
 function sanitizeCodexInstructions(content) {
+  // Line-level drops are reserved for content that has no analogue in AGENTS.md
+  // (Claude Code hooks, skill-rules.json, customize-agents). Generic `CLAUDE.md`
+  // mentions are rewritten by the substitution pass below, not dropped — line-
+  // level filtering on `CLAUDE.md` deletes self-documenting context that the
+  // substitution would have handled correctly.
   const filteredLines = content
     .split('\n')
     .filter(line =>
@@ -572,8 +577,7 @@ function sanitizeCodexInstructions(content) {
       !/\.claude\/hooks/i.test(line) &&
       !/\.codex\/hooks/i.test(line) &&
       !/skill-rules\.json/i.test(line) &&
-      !/hook compatibility/i.test(line) &&
-      !/CLAUDE\.md/i.test(line)
+      !/hook compatibility/i.test(line)
     );
 
   return filteredLines

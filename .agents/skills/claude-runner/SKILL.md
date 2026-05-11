@@ -1,28 +1,29 @@
 ---
 name: claude-runner
 description: Claude/Codex CLI execution layer — prompt loading, stream-json parsing, file output extraction, path sanitization, skill file writing, and skill rule generation
----
-
-## Activation
-
-This skill triggers when editing claude-runner files:
-- `src/lib/runner.js`
-- `src/lib/skill-writer.js`
-- `src/lib/skill-reader.js`
-- `src/lib/timeout.js`
-- `src/prompts/**/*.md`
-- `tests/*extract*`, `tests/*parse*`, `tests/*prompt*`, `tests/*skill-writer*`, `tests/*skill-mapper*`, `tests/*timeout*`
-
+triggers:
+  files:
+    - src/lib/runner.js
+    - src/lib/timeout.js
+    - src/lib/skill-writer.js
+    - src/lib/skill-reader.js
+    - src/prompts/**/*.md
+  keywords:
+    - runClaude
+    - runCodex
+    - runLLM
+    - stream-json
+    - codex exec
+    - parseFileOutput
+    - sanitizePath
+    - loadPrompt
+    - writeSkillFiles
+    - skill-rules
+    - mergeSettings
+    - resolveTimeout
 ---
 
 You are working on the **CLI execution layer** — the bridge between assembled prompts and the `claude -p` / `codex exec` CLIs, plus skill file I/O.
-
-## Key Files
-- `src/lib/runner.js` — `runClaude()`, `runCodex()`, `runLLM()`, `loadPrompt()`, `parseFileOutput()`, `validateSkillFiles()`, `extractResultFromStream()` (exported); `extractResultFromCodexStream()`, `normalizeCodexItemType()`, `collectCodexText()`, `handleStreamEvent()`, `sanitizePath()`, `getCodexExecCapabilities()` (internal)
-- `src/lib/skill-writer.js` — `writeSkillFiles()`, `writeTransformedFiles()`, `extractRulesFromSkills()`, `generateDomainPatterns()`, `mergeSettings()`
-- `src/lib/skill-reader.js` — `findSkillFiles()`, `parseFrontmatter()`, `parseActivationPatterns()`, `parseKeywords()`, `fileMatchesActivation()`, `getActivationBlock()`, `GENERIC_PATH_SEGMENTS`
-- `src/lib/timeout.js` — `resolveTimeout()` — priority: `--timeout` flag > `ASPENS_TIMEOUT` env var > caller fallback
-- `src/prompts/` — Markdown prompt templates; `partials/` subdir holds `skill-format.md`, `guideline-format.md`, `examples.md`
 
 ## Key Concepts
 - **Stream-JSON protocol (Claude):** `runClaude()` always passes `--verbose --output-format stream-json`. Output is NDJSON: `type: 'result'` has final text + usage; `type: 'assistant'` has text/tool_use blocks; `type: 'user'` has tool_result blocks.
@@ -36,6 +37,7 @@ You are working on the **CLI execution layer** — the bridge between assembled 
 - **Validation:** `validateSkillFiles()` checks for truncation (XML tag collisions), missing frontmatter, missing sections, bad file path references.
 - **Skill rules generation:** `extractRulesFromSkills()` reads all skills via `skill-reader.js`, produces `skill-rules.json` (v2.0) with file patterns, keywords, and intent patterns.
 - **Domain patterns:** `generateDomainPatterns()` converts file patterns to bash `detect_skill_domain()` function using `BEGIN/END` markers.
+- **Trigger parsing precedence:** `parseTriggersFrontmatter(content)` returns `{ filePatterns, keywords, alwaysActivate }` parsed from a `triggers:` block in YAML frontmatter (supports block lists, inline arrays, and `alwaysActivate: true` for the base skill); returns `null` when no `triggers:` key exists. `parseActivationPatterns` and `parseKeywords` prefer this frontmatter when present and fall back to legacy `## Activation` / `Keywords:` line parsing for older skills.
 - **Settings merge:** `mergeSettings()` merges aspens hook config into existing `settings.json`. Detects aspens-managed hooks by `ASPENS_HOOK_MARKERS` (`skill-activation-prompt`, `graph-context-prompt`, `post-tool-use-tracker`, `save-tokens-statusline`, `save-tokens-prompt-guard`, `save-tokens-precompact`). Also handles `statusLine` merging — replaces existing statusLine only if the current one is aspens-managed (detected by `isAspensHook`), preserving user-custom statusLine configs. After merging hooks, `dedupeAspensHookEntries()` removes duplicate aspens-managed entries per event type.
 - **Directory-scoped writes:** `writeTransformedFiles()` handles files outside `.claude/` (e.g., `src/billing/AGENTS.md`) with explicit path allowlist — only `AGENTS.md`, `AGENTS.md` exact files and `.claude/`, `.agents/`, `.codex/` prefixes are permitted.
 - **`findSkillFiles` matching:** Only matches the exact `skillFilename` (e.g., `skill.md` or `SKILL.md`), not arbitrary `.md` files in the skills directory.
@@ -47,8 +49,9 @@ You are working on the **CLI execution layer** — the bridge between assembled 
 - **Path sanitization is non-negotiable** — `sanitizePath()` blocks `..` traversal, absolute paths, and any path not in the allowed set.
 - **Prompt partials resolve before variables** — `{{skill-format}}` resolves to `partials/skill-format.md` first. If no file, falls through to variable substitution.
 - **Timeout resolution:** `resolveTimeout(flagValue, fallbackSeconds)` — `--timeout` flag wins, then `ASPENS_TIMEOUT` env, then caller-provided fallback. Size-based defaults (small: 120s, medium: 300s, large: 600s, very-large: 900s) are set by command handlers, not runner.
+- **Disk writes are sanitized** — `writeSkillFiles` and `writeTransformedFiles` pass every payload through `sanitizePublishedContent` so forbidden blocks (`## Activation`, `## Key Files`, hub/cluster/hotspot tables outside `code-map.md`) cannot leak to disk even if an earlier stage missed them.
 - **`mergeSettings` preserves non-aspens hooks and statusLine** — identifies aspens hooks by `ASPENS_HOOK_MARKERS` (now includes save-tokens markers), replaces matching entries, preserves everything else. StatusLine only replaced if current one is aspens-managed. Post-merge deduplication ensures no duplicate aspens entries accumulate.
 - **Debug mode:** Set `ASPENS_DEBUG=1` to dump raw stream-json to `$TMPDIR/aspens-debug-stream.json` (Claude) or `$TMPDIR/aspens-debug-codex-stream.json` (Codex). Codex also logs exit code and output length to stderr.
 
 ---
-**Last Updated:** 2026-04-10
+**Last Updated:** 2026-05-11

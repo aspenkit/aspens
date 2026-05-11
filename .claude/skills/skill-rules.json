@@ -13,16 +13,18 @@
       ],
       "promptTriggers": {
         "keywords": [
+          "customize",
+          "agents",
+          "subagent",
+          "agent customization",
           "agent",
           "customization",
-          "agent customization",
           "llm-powered",
           "injection",
           "project",
           "context",
           "installed",
           "commands",
-          "customize",
           "prompts",
           "customize-agents"
         ],
@@ -59,14 +61,25 @@
       "alwaysActivate": false,
       "filePatterns": [
         "src/lib/runner.js",
+        "src/lib/timeout.js",
         "src/lib/skill-writer.js",
         "src/lib/skill-reader.js",
-        "src/lib/timeout.js",
-        "src/prompts/**/*.md",
-        "tests/*extract*"
+        "src/prompts/**/*.md"
       ],
       "promptTriggers": {
         "keywords": [
+          "runClaude",
+          "runCodex",
+          "runLLM",
+          "stream-json",
+          "codex exec",
+          "parseFileOutput",
+          "sanitizePath",
+          "loadPrompt",
+          "writeSkillFiles",
+          "skill-rules",
+          "mergeSettings",
+          "resolveTimeout",
           "claude",
           "runner",
           "claude runner",
@@ -75,17 +88,59 @@
           "layer",
           "prompt",
           "loading",
+          "timeout",
           "skill-writer",
           "skill-reader",
-          "timeout",
-          "prompts",
-          "tests",
-          "extract"
+          "prompts"
         ],
         "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*codex exec",
+          "codex exec.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*claude runner",
           "claude runner.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*claude.*runner"
+        ]
+      }
+    },
+    "cli-shell": {
+      "type": "domain",
+      "enforcement": "suggest",
+      "priority": "high",
+      "scope": "all",
+      "alwaysActivate": false,
+      "filePatterns": [
+        "bin/cli.js",
+        "src/index.js",
+        "src/lib/errors.js"
+      ],
+      "promptTriggers": {
+        "keywords": [
+          "CliError",
+          "commander",
+          "bin/cli.js",
+          "welcome",
+          "checkMissingHooks",
+          "parsePositiveInt",
+          "parseTimeout",
+          "SIGINT",
+          "SIGTERM",
+          "aspens public api",
+          "cli",
+          "shell",
+          "cli shell",
+          "top-level",
+          "wiring",
+          "screen",
+          "bin",
+          "index",
+          "errors"
+        ],
+        "intentPatterns": [
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*aspens public api",
+          "aspens public api.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*cli shell",
+          "cli shell.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*cli.*shell"
         ]
       }
     },
@@ -99,9 +154,8 @@
         "src/lib/target.js",
         "src/lib/target-transform.js",
         "src/lib/backend.js",
-        "tests/target.test.js",
-        "tests/target-transform.test.js",
-        "tests/backend.test.js"
+        "AGENTS.md",
+        ".aspens.json"
       ],
       "promptTriggers": {
         "keywords": [
@@ -109,19 +163,19 @@
           "target",
           "backend",
           "AGENTS.md",
-          "directory-scoped",
+          ".aspens.json",
+          "sanitize",
           "transform",
           "multi-target",
+          "parity",
           "support",
           "codex support",
           "output",
           "system",
           "abstraction",
           "target-transform",
-          "tests",
-          "target.test",
-          "target-transform.test",
-          "backend.test"
+          "AGENTS",
+          ".aspens"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*codex support",
@@ -185,35 +239,47 @@
       "alwaysActivate": false,
       "filePatterns": [
         "src/commands/doc-sync.js",
+        "src/lib/diff-classifier.js",
+        "src/lib/diff-helpers.js",
+        "src/lib/git-hook.js",
+        "src/lib/git-helpers.js",
         "src/prompts/doc-sync.md",
         "src/prompts/doc-sync-refresh.md",
-        "src/lib/git-helpers.js",
-        "src/lib/diff-helpers.js",
-        "src/lib/git-hook.js"
+        "src/prompts/partials/preservation-contract-refresh.md"
       ],
       "promptTriggers": {
         "keywords": [
+          "doc sync",
           "doc-sync",
           "refresh",
-          "sync",
-          "git-hook",
+          "post-commit hook",
+          "install-hook",
+          "diff classifier",
+          "changetype filter",
           "doc",
-          "doc sync",
+          "sync",
           "incremental",
           "skill",
           "updater",
           "maps",
           "diffs",
           "commands",
+          "diff-classifier",
+          "diff-helpers",
+          "git-hook",
+          "git-helpers",
           "prompts",
           "doc-sync-refresh",
-          "git-helpers",
-          "diff-helpers"
+          "partials",
+          "preservation-contract-refresh"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*doc sync",
           "doc sync.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*doc.*sync"
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*post-commit hook",
+          "post-commit hook.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
+          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*diff classifier",
+          "diff classifier.*(create|update|fix|add|modify|change|debug|refactor|implement|build)"
         ]
       }
     },
@@ -226,42 +292,40 @@
       "filePatterns": [
         "src/lib/graph-builder.js",
         "src/lib/graph-persistence.js",
+        "src/lib/parsers/**",
         "src/commands/doc-graph.js",
-        "src/templates/hooks/graph-context-prompt.mjs",
-        "src/templates/hooks/graph-context-prompt.sh",
-        "tests/graph-builder.test.js",
-        "tests/graph-persistence.test.js"
+        "src/templates/hooks/graph-context-prompt.mjs"
       ],
       "promptTriggers": {
         "keywords": [
           "graph",
-          "import graph",
-          "dependency",
-          "hub files",
-          "clustering",
+          "import-graph",
+          "hubs",
+          "clusters",
+          "hotspots",
           "code-map",
-          "graph-index",
+          "graph.json",
           "subgraph",
+          "priority",
+          "fanIn",
           "import",
+          "import graph",
           "static",
           "analysis",
           "builds",
+          "dependency",
           "graph-builder",
           "graph-persistence",
+          "parsers",
           "commands",
           "doc-graph",
           "templates",
           "hooks",
-          "graph-context-prompt",
-          "tests",
-          "graph-builder.test",
-          "graph-persistence.test"
+          "graph-context-prompt"
         ],
         "intentPatterns": [
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import graph",
           "import graph.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
-          "(create|update|fix|add|modify|change|debug|refactor|implement|build).*hub files",
-          "hub files.*(create|update|fix|add|modify|change|debug|refactor|implement|build)",
           "(create|update|fix|add|modify|change|debug|refactor|implement|build).*import.*graph"
         ]
       }
@@ -274,6 +338,11 @@
       "alwaysActivate": false,
       "filePatterns": [
         "src/lib/scanner.js",
+        "src/lib/source-exts.js",
+        "src/lib/path-resolver.js",
+        "src/lib/parsers/typescript.js",
+        "src/lib/parsers/python.js",
+        "src/lib/frameworks/nextjs.js",
         "src/commands/scan.js",
         "tests/scanner.test.js"
       ],
@@ -285,6 +354,8 @@
           "detectDomains",
           "detectEntryPoints",
           "health check",
+          "SOURCE_EXTS",
+          "SKIP_DIR_NAMES",
           "repo",
           "scanning",
           "repo scanning",
@@ -293,6 +364,13 @@
           "language/framework",
           "detection",
           "scanner",
+          "source-exts",
+          "path-resolver",
+          "parsers",
+          "typescript",
+          "python",
+          "frameworks",
+          "nextjs",
           "commands",
           "scan",
           "tests",
@@ -364,11 +442,7 @@
       "alwaysActivate": false,
       "filePatterns": [
         "src/commands/doc-init.js",
-        "src/lib/runner.js",
-        "src/lib/skill-writer.js",
-        "src/lib/skill-reader.js",
-        "src/lib/git-hook.js",
-        "src/lib/timeout.js",
+        "src/lib/context-builder.js",
         "src/prompts/**/*"
       ],
       "promptTriggers": {
@@ -386,11 +460,7 @@
           "claude",
           "code",
           "commands",
-          "runner",
-          "skill-writer",
-          "skill-reader",
-          "git-hook",
-          "timeout",
+          "context-builder",
           "prompts"
         ],
         "intentPatterns": [
@@ -411,6 +481,7 @@
       "alwaysActivate": false,
       "filePatterns": [
         "src/commands/add.js",
+        "src/prompts/add-skill.md",
         "src/templates/**/*"
       ],
       "promptTriggers": {
@@ -428,6 +499,8 @@
           "hooks",
           "settings",
           "add",
+          "prompts",
+          "add-skill",
           "templates"
         ],
         "intentPatterns": [

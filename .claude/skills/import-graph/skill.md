@@ -1,33 +1,30 @@
 ---
 name: import-graph
 description: Static import analysis that builds dependency graphs, domain clusters, hub files, git churn hotspots, and file priority rankings
----
-
-## Activation
-
-This skill triggers when editing import-graph-related files:
-- `src/lib/graph-builder.js`
-- `src/lib/graph-persistence.js`
-- `src/commands/doc-graph.js`
-- `src/templates/hooks/graph-context-prompt.mjs`
-- `src/templates/hooks/graph-context-prompt.sh`
-- `tests/graph-builder.test.js`
-- `tests/graph-persistence.test.js`
-
-Keywords: graph, import graph, dependency, hub files, clustering, code-map, graph-index, subgraph
-
+triggers:
+  files:
+    - src/lib/graph-builder.js
+    - src/lib/graph-persistence.js
+    - src/lib/parsers/**
+    - src/commands/doc-graph.js
+    - src/templates/hooks/graph-context-prompt.mjs
+  keywords:
+    - graph
+    - import-graph
+    - hubs
+    - clusters
+    - hotspots
+    - code-map
+    - graph.json
+    - subgraph
+    - priority
+    - fanIn
 ---
 
 You are working on the **import graph system** — static analysis that parses JS/TS and Python source files to produce dependency graphs, plus persistence/query layers for runtime use.
 
-## Key Files
-- `src/lib/graph-builder.js` — Core graph logic: walk, parse, metrics, ranking, clustering (690 lines)
-- `src/lib/graph-persistence.js` — Serialize, persist, load, subgraph extraction, code-map, graph-index
-- `src/commands/doc-graph.js` — Standalone `aspens doc graph` command
-- `src/lib/scanner.js` — Provides `detectEntryPoints()`, only internal dependency of graph-builder
-- `src/templates/hooks/graph-context-prompt.mjs` — Standalone hook mirroring `extractSubgraph` logic
-- `tests/graph-builder.test.js` — Graph builder tests using temp fixture directories
-- `tests/graph-persistence.test.js` — Persistence layer tests
+## Domain purpose
+The graph turns raw source into a queryable map of "what depends on what" so other aspens features (doc-init, doc-sync, doc-impact, the graph context hook) can rank files by importance, surface hubs, detect domain clusters, and inject just the relevant neighborhood into prompts. It is the substrate that makes context generation deterministic and code-aware rather than guess-based.
 
 ## Key Concepts
 **graph-builder.js** — `buildRepoGraph(repoPath, languages?)` runs a 9-step pipeline:
@@ -39,7 +36,8 @@ You are working on the **import graph system** — static analysis that parses J
 - `extractSubgraph(graph, filePaths)` returns 1-hop neighborhood of mentioned files + relevant hubs/hotspots/clusters
 - `formatNavigationContext(subgraph)` renders compact markdown (~50 line budget) for prompt injection
 - `extractFileReferences(prompt, graph)` tiered extraction: explicit paths → bare filenames → cluster keywords
-- `generateCodeMap()` / `writeCodeMap()` standalone overview for graph hook consumption
+- `generateCodeMap()` / `writeCodeMap()` standalone overview for graph hook consumption — emits a Domain clusters block (via `formatDomainClusters`) and framework entry points only; cross-domain coupling, hotspots, and the totals/date footer are intentionally omitted because they churn on every sync
+- `formatDomainClusters(clusters, files)` — exported helper that renders the canonical Domain clusters block: clusters are merged by label, single-file clusters dropped, files per cluster capped at 5 and sorted by `fanIn` desc then path asc for sync stability; no per-cluster `(N files)` counts
 - `generateGraphIndex()` / `saveGraphIndex()` tiny inverted index (export names → files, hub basenames, cluster labels)
 
 **doc-graph.js** — Target-aware: reads `.aspens.json` config, passes target to `persistGraphArtifacts()`. Shows different completion message for Codex target (artifacts not written).
@@ -53,9 +51,10 @@ You are working on the **import graph system** — static analysis that parses J
 - **Errors are swallowed, not thrown** in graph-builder — parse failures return empty/null. The graph must always complete.
 - **`extractSubgraph` logic is mirrored** in `graph-context-prompt.mjs` (`buildNeighborhood()`). Keep both in sync.
 - **doc-sync rebuilds graph on every sync** — calls `buildRepoGraph` + `persistGraphArtifacts` (with target) to keep it fresh.
+- **Code-map output is sync-stable** — no totals, no dates, no hotspot churn counts, no `+N more` suffixes. Anything that varies between syncs without a real code change must stay out of generated context.
 
 ## References
 - **Hook mirror:** `src/templates/hooks/graph-context-prompt.mjs`
 
 ---
-**Last Updated:** 2026-04-02
+**Last Updated:** 2026-05-11

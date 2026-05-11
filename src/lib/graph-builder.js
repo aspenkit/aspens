@@ -197,8 +197,8 @@ export async function buildRepoGraph(repoPath, languages = []) {
 
 // --- File walking ---
 
-const SOURCE_EXTS = new Set(['.py', '.ts', '.js', '.tsx', '.jsx', '.rb', '.go', '.rs']);
-const JS_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs']);
+const SOURCE_EXTS = new Set(['.py', '.ts', '.js', '.tsx', '.jsx', '.mjs', '.cjs', '.rb', '.go', '.rs']);
+const JS_EXTS = new Set(['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs']);
 
 const SKIP_DIRS = new Set([
   'node_modules', '__pycache__', 'dist', 'build', '.git',
