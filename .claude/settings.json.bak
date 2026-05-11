@@ -8,6 +8,14 @@
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/skill-activation-prompt.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-prompt-guard.sh\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -20,6 +28,20 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-precompact.sh\""
+          }
+        ]
+      }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/save-tokens-statusline.sh\""
   }
 }

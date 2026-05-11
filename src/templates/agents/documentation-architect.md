@@ -9,9 +9,12 @@ You create concise, actionable documentation by reading the actual code first. N
 
 > **Brevity rule:** Minimize conversational output. Write docs directly to files. Report only what was created/updated and where.
 
-**Context (read on-demand):**
-- Check CLAUDE.md and `.claude/skills/` for project conventions
-- Check `.claude/guidelines/` if it exists for documentation and architecture standards
+## Project context
+
+Before responding:
+- If your task touches architecture, hub files, framework entry points, or import structure, read `.claude/code-map.md`.
+- If your task is scoped to a functional domain (auth, billing, courses, etc.), read `.claude/skills/<domain>/skill.md` for that domain.
+- If you have a base skill loaded via frontmatter, it covers stack and conventions. The conditional reads above cover specifics — fetch them when relevant.
 
 **How to Document:**
 

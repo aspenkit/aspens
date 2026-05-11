@@ -38,6 +38,17 @@ export async function customizeCommand(what, options) {
 
   p.intro(pc.cyan('aspens customize agents'));
 
+  if (options.reset) {
+    p.log.info('--reset: re-customizing all agents (applies v0.8 upgrades like skills: [base]).');
+  }
+
+  // Phase 6: pre-flight — base skill is required for full subagent context.
+  const baseSkillPath = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
+  if (!existsSync(baseSkillPath)) {
+    throw new CliError("Run 'aspens doc init' first — base skill is required for agent context.");
+  }
+  const baseSkillExists = true;
+
   // Step 1: Find agents in the repo
   const agentsDir = join(repoPath, '.claude', 'agents');
   if (!existsSync(agentsDir)) {
@@ -86,7 +97,14 @@ export async function customizeCommand(what, options) {
 
       const files = parseFileOutput(text);
       if (files.length > 0) {
-        allFiles.push(...files);
+        // Phase 6: inject `skills: [base]` into customized agent frontmatter
+        // when (a) base skill exists on disk, AND (b) the agent doesn't
+        // already declare a `skills:` line OR --reset was passed.
+        const injected = files.map(file => ({
+          ...file,
+          content: maybeInjectBaseSkill(file.content, baseSkillExists, !!options.reset),
+        }));
+        allFiles.push(...injected);
         agentSpinner.stop(pc.green(`${agent.name} customized`));
       } else {
         agentSpinner.stop(pc.dim(`${agent.name} — no changes needed`));
@@ -143,13 +161,52 @@ export async function customizeCommand(what, options) {
 
 // --- Helpers ---
 
+/**
+ * Inject `skills: [base]` into an agent's YAML frontmatter when the base
+ * skill exists on disk AND the agent doesn't already declare `skills:` (or
+ * `--reset` was passed, in which case we override).
+ *
+ * Templates intentionally do NOT carry `skills:` — that line is added here so
+ * agents stay valid in any install state (including `aspens add agent` runs
+ * without a prior `doc init`).
+ *
+ * @param {string} content - agent .md content (with frontmatter)
+ * @param {boolean} baseSkillExists
+ * @param {boolean} reset
+ * @returns {string}
+ */
+export function maybeInjectBaseSkill(content, baseSkillExists, reset) {
+  if (!baseSkillExists) return content;
+
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!fmMatch) return content; // no frontmatter — leave alone
+
+  const frontmatter = fmMatch[1];
+  const hasSkillsLine = /^skills:\s*/m.test(frontmatter);
+
+  if (hasSkillsLine && !reset) return content;
+
+  let newFrontmatter;
+  if (hasSkillsLine && reset) {
+    newFrontmatter = frontmatter.replace(/^skills:\s*.*$/m, 'skills: [base]');
+  } else {
+    newFrontmatter = frontmatter.trimEnd() + '\nskills: [base]';
+  }
+
+  return content.replace(/^---\n[\s\S]*?\n---/, '---\n' + newFrontmatter + '\n---');
+}
+
 function findAgents(agentsDir, repoPath) {
   const agents = [];
 
   function walk(dir) {
-    for (const entry of readdirSync(dir)) {
+    let entries;
+    try { entries = readdirSync(dir); } catch { return; }
+    for (const entry of entries) {
       const full = join(dir, entry);
-      if (statSync(full).isDirectory()) {
+      let stat;
+      try { stat = statSync(full); } catch { continue; } // broken symlink, race, etc.
+      if (stat.isDirectory()) {
         walk(full);
       } else if (entry.endsWith('.md')) {
         const content = readFileSync(full, 'utf8');
@@ -183,9 +240,13 @@ function gatherProjectContext(repoPath) {
   const skillsDir = join(repoPath, '.claude', 'skills');
   if (existsSync(skillsDir)) {
     function walkSkills(dir) {
-      for (const entry of readdirSync(dir)) {
+      let entries;
+      try { entries = readdirSync(dir); } catch { return; }
+      for (const entry of entries) {
         const full = join(dir, entry);
-        if (statSync(full).isDirectory()) {
+        let stat;
+        try { stat = statSync(full); } catch { continue; }
+        if (stat.isDirectory()) {
           walkSkills(full);
         } else if (entry.endsWith('.md')) {
           const content = readFileSync(full, 'utf8');
@@ -195,26 +256,6 @@ function gatherProjectContext(repoPath) {
       }
     }
     walkSkills(skillsDir);
-  }
-
-  // Guidelines paths (just list them, don't read)
-  const guidelinesDir = join(repoPath, '.claude', 'guidelines');
-  if (existsSync(guidelinesDir)) {
-    const paths = [];
-    function walkGuidelines(dir) {
-      for (const entry of readdirSync(dir)) {
-        const full = join(dir, entry);
-        if (statSync(full).isDirectory()) {
-          walkGuidelines(full);
-        } else if (entry.endsWith('.md')) {
-          paths.push(relative(repoPath, full));
-        }
-      }
-    }
-    walkGuidelines(guidelinesDir);
-    if (paths.length > 0) {
-      parts.push(`### Available Guidelines\n${paths.map(p => `- ${p}`).join('\n')}`);
-    }
   }
 
   return parts.length > 0 ? parts.join('\n\n') : null;

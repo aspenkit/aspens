@@ -15,7 +15,8 @@ import { installGitHook, removeGitHook } from '../lib/git-hook.js';
 import { isGitRepo, getGitRoot, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
 import { TARGETS, getAllowedPaths, loadConfig } from '../lib/target.js';
 import { getSelectedFilesDiff, buildPrioritizedDiff, truncate } from '../lib/diff-helpers.js';
-import { projectCodexDomainDocs, transformForTarget } from '../lib/target-transform.js';
+import { projectCodexDomainDocs, transformForTarget, assertTargetParity, syncSkillsSection, syncBehaviorSection, ensureRootKeyFilesSection } from '../lib/target-transform.js';
+import { isNoOpDiff } from '../lib/diff-classifier.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
 const PARALLEL_LIMIT = 3;
@@ -62,24 +63,119 @@ function chooseSyncSourceTarget(repoPath, targets) {
   return targets[0] || TARGETS.claude;
 }
 
+/**
+ * Backwards-compat helper (Phase 1: stability). v0.7 emitted a `## Key Files`
+ * block with hub counts in CLAUDE.md/AGENTS.md. Phase 1 removes that block.
+ * On the first sync after upgrade we surface a one-line notice so the resulting
+ * diff isn't alarming.
+ */
+const LEGACY_HUB_BLOCK_RE = /^## Key Files\b[\s\S]*?(?:Hub files|most depended-on|N dependents|\d+ dependents)/m;
+const LEGACY_CODE_MAP_HUB_RE = /^\*\*Hub files\b/m;
+
+/**
+ * Force-regenerate `.claude/code-map.md` when it carries the v0.7 hub-files
+ * block. Phase 6 agents read code-map; we don't want them seeing stale format
+ * even on a no-op sync.
+ */
+async function regenerateStaleCodeMap(repoPath, sourceTarget, scan) {
+  const codeMapPath = join(repoPath, '.claude', 'code-map.md');
+  let needsRegen = false;
+  try {
+    const content = readFileSync(codeMapPath, 'utf8');
+    if (LEGACY_CODE_MAP_HUB_RE.test(content)) needsRegen = true;
+  } catch {
+    return; // no code-map present — nothing to do
+  }
+  if (!needsRegen) return;
+
+  try {
+    const rawGraph = await buildRepoGraph(repoPath, scan.languages);
+    persistGraphArtifacts(repoPath, rawGraph, { target: sourceTarget });
+    p.log.info('Regenerated .claude/code-map.md (legacy hub-files block detected)');
+  } catch {
+    // best-effort — surface nothing on failure
+  }
+}
+
+function notifyLegacyHubBlockIfPresent(repoPath) {
+  const candidates = ['CLAUDE.md', 'AGENTS.md'];
+  for (const file of candidates) {
+    try {
+      const content = readFileSync(join(repoPath, file), 'utf8');
+      if (LEGACY_HUB_BLOCK_RE.test(content)) {
+        p.log.info(`First sync after upgrade: removing legacy hub-counts block from ${file} (no longer needed)`);
+        return;
+      }
+    } catch {}
+  }
+}
+
+/**
+ * Build the per-target file map. Returns Map<targetId, files[]> so callers
+ * can route writes per target and so the parity validator can compare slots
+ * across targets. Use `flattenPublishedMap` when a flat list is needed.
+ */
+/**
+ * No-LLM repair pass: re-injects the deterministic `## Skills` + `## Behavior`
+ * sections into the root instructions file from on-disk state. Runs from the
+ * no-op / "up to date" sync paths so missing-section drift is fixed every time
+ * the user invokes sync, even when no diff or LLM update happens.
+ *
+ * Returns the list of written file results (empty when nothing needed updating).
+ */
+export function repairDeterministicSections(repoPath, sourceTarget, publishTargets, scan, graphSerialized = null) {
+  const instructionsFile = sourceTarget?.instructionsFile || 'CLAUDE.md';
+  const instrPath = join(repoPath, instructionsFile);
+  if (!existsSync(instrPath)) return [];
+
+  const existingSkills = findExistingSkills(repoPath, sourceTarget);
+  const baseSkillForList = existingSkills.find(s => s.name === 'base') || null;
+  const domainSkillsForList = existingSkills.filter(s => s.name !== 'base');
+  const startContent = readFileSync(instrPath, 'utf8');
+
+  let updated = ensureRootKeyFilesSection(startContent);
+  updated = syncSkillsSection(updated, baseSkillForList, domainSkillsForList, sourceTarget, false);
+  updated = syncBehaviorSection(updated);
+  if (updated === startContent) return [];
+
+  const baseFiles = [{ path: instructionsFile, content: updated }];
+  const perTarget = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized, repoPath);
+  const files = flattenPublishedMap(perTarget);
+  const directWriteFiles = files.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
+  const dirScopedFiles = files.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
+  return [
+    ...writeSkillFiles(repoPath, directWriteFiles, { force: true }),
+    ...writeTransformedFiles(repoPath, dirScopedFiles, { force: true }),
+  ];
+}
+
 function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized = null, repoPath = null) {
-  const published = [];
+  const perTarget = new Map();
 
   for (const target of publishTargets) {
+    let files;
     if (target.id === sourceTarget.id) {
-      published.push(...baseFiles, ...buildDerivedCodexFiles(baseFiles, target, scan));
-      continue;
+      files = [...baseFiles, ...buildDerivedCodexFiles(baseFiles, target, scan)];
+    } else {
+      files = transformForTarget(baseFiles, sourceTarget, target, {
+        scanResult: scan,
+        graphSerialized,
+        repoPath,
+      });
     }
-
-    const transformed = transformForTarget(baseFiles, sourceTarget, target, {
-      scanResult: scan,
-      graphSerialized,
-      repoPath,
-    });
-    published.push(...transformed);
+    perTarget.set(target.id, dedupeFiles(files));
   }
 
-  return dedupeFiles(published);
+  assertTargetParity(perTarget);
+  return perTarget;
+}
+
+function flattenPublishedMap(perTarget) {
+  const all = [];
+  for (const files of perTarget.values()) {
+    all.push(...files);
+  }
+  return dedupeFiles(all);
 }
 
 export async function docSyncCommand(path, options) {
@@ -138,9 +234,40 @@ export async function docSyncCommand(path, options) {
   diffSpinner.stop(`${changedFiles.length} files changed`);
 
   if (changedFiles.length === 0) {
-    p.outro('Nothing to sync');
+    const repairs = repairDeterministicSections(repoPath, sourceTarget, publishTargets, scanRepo(repoPath));
+    if (repairs.length > 0) {
+      console.log();
+      for (const wr of repairs) console.log(`  ${pc.yellow('~')} ${wr.path} ${pc.dim('(deterministic section repair)')}`);
+    }
+    p.outro(repairs.length > 0 ? 'No diffs — repaired deterministic sections' : 'Nothing to sync');
     return;
   }
+
+  // Phase 1: changetype filter — skip the LLM call entirely on lockfile-only
+  // diffs and diffs that touch zero code-bearing files.
+  if (isNoOpDiff(changedFiles)) {
+    if (verbose) {
+      p.log.info('Skipped: no code-bearing changes (lockfile bumps / non-code files only)');
+    } else {
+      p.log.info('Skipped: no code-bearing changes');
+    }
+    // If a stale-format code-map is on disk (legacy `## Hub files` block),
+    // force a graph rebuild so subsequent reads see the modern format.
+    const noOpScan = scanRepo(repoPath);
+    await regenerateStaleCodeMap(repoPath, sourceTarget, noOpScan);
+    const repairs = repairDeterministicSections(repoPath, sourceTarget, publishTargets, noOpScan);
+    if (repairs.length > 0) {
+      console.log();
+      for (const wr of repairs) console.log(`  ${pc.yellow('~')} ${wr.path} ${pc.dim('(deterministic section repair)')}`);
+    }
+    p.outro(repairs.length > 0 ? 'No code changes — repaired deterministic sections' : 'No sync needed');
+    return;
+  }
+
+  // Backwards-compat notice (Phase 1): if the user has a v0.7-era hub block
+  // in CLAUDE.md/AGENTS.md, the upcoming sync will remove it. Surface this
+  // once so the diff isn't surprising.
+  notifyLegacyHubBlockIfPresent(repoPath);
 
   const diff = getSelectedFilesDiff(gitRoot, changedFiles.map(file => withProjectPrefix(file, projectPrefix)), actualCommits);
 
@@ -314,7 +441,41 @@ ${truncate(instructionsContent, 5000)}
       p.log.warn('LLM responded without <file> tags — treating as no updates needed.');
     }
   }
-  const files = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized, repoPath);
+
+  // Deterministic `## Skills` + `## Behavior` injection on the canonical
+  // instructions file. Runs whether or not the LLM updated it, so drift
+  // gets repaired every sync. Source target paths flow through unchanged;
+  // transformForTarget handles the codex/claude projection downstream.
+  {
+    const instrPath = join(repoPath, instructionsFile);
+    const pending = baseFiles.find(f => f.path === instructionsFile);
+    const startContent = pending
+      ? pending.content
+      : (existsSync(instrPath) ? readFileSync(instrPath, 'utf8') : null);
+
+    if (startContent != null) {
+      const baseSkillForList = existingSkills.find(s => s.name === 'base') || null;
+      const domainSkillsForList = existingSkills.filter(s => s.name !== 'base');
+
+      let updated = ensureRootKeyFilesSection(startContent);
+      updated = syncSkillsSection(
+        updated,
+        baseSkillForList,
+        domainSkillsForList,
+        sourceTarget,
+        false
+      );
+      updated = syncBehaviorSection(updated);
+
+      if (updated !== startContent) {
+        if (pending) pending.content = updated;
+        else baseFiles.push({ path: instructionsFile, content: updated });
+      }
+    }
+  }
+
+  const perTarget = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized, repoPath);
+  const files = flattenPublishedMap(perTarget);
 
   if (files.length === 0) {
     syncSpinner.stop('No updates needed');
@@ -617,6 +778,30 @@ async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets 
     }
   }
 
+  // Step 5b: Deterministically (re)inject `## Skills` and `## Behavior`, even
+  // when the LLM didn't propose an update — guarantees drift repair every sync.
+  if (existsSync(instrPath)) {
+    const pending = allUpdatedFiles.find(f => f.path === instrFile);
+    const startContent = pending ? pending.content : readFileSync(instrPath, 'utf8');
+    const baseSkillForList = existingSkills.find(s => s.name === 'base') || null;
+    const domainSkillsForList = existingSkills.filter(s => s.name !== 'base');
+
+    let updated = ensureRootKeyFilesSection(startContent);
+    updated = syncSkillsSection(
+      updated,
+      baseSkillForList,
+      domainSkillsForList,
+      sourceTarget,
+      false
+    );
+    updated = syncBehaviorSection(updated);
+
+    if (updated !== startContent) {
+      if (pending) pending.content = updated;
+      else allUpdatedFiles.push({ path: instrFile, content: updated });
+    }
+  }
+
   // Step 6: Check for uncovered domains
   const coveredNames = new Set(existingSkills.map(s => s.name.toLowerCase()));
   const uncoveredDomains = (scan.domains || []).filter(d =>
@@ -647,7 +832,8 @@ async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets 
     return;
   }
 
-  const filesToWrite = publishFilesForTargets(allUpdatedFiles, sourceTarget, publishTargets, scan, graphSerialized, repoPath);
+  const refreshPerTarget = publishFilesForTargets(allUpdatedFiles, sourceTarget, publishTargets, scan, graphSerialized, repoPath);
+  const filesToWrite = flattenPublishedMap(refreshPerTarget);
   const directWriteFiles = filesToWrite.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
   const dirScopedFiles = filesToWrite.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
   const results = [

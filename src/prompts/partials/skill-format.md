@@ -8,12 +8,8 @@ Skill = markdown file at `{{skillsDir}}/{domain}/{{skillFilename}}` with YAML fr
 ---
 name: base
 description: Core conventions, tech stack, and project structure for [repo-name]
----
-
-## Activation
-
-This is a **base skill** that always loads when working in this repository.
-
+triggers:
+  alwaysActivate: true
 ---
 
 You are working in **[repo-name]**.
@@ -40,30 +36,32 @@ You are working in **[repo-name]**.
 ---
 name: [domain-name]
 description: [One-line description]
----
-
-## Activation
-
-This skill triggers when editing these files:
-- `[file pattern]`
-
-Keywords: keyword1, keyword2
-
+triggers:
+  files:
+    - [glob-pattern-matching-key-files]
+  keywords:
+    - [primary-keyword]
+    - [secondary-keyword]
 ---
 
 You are working on **[domain description]**.
 
-## Key Files
-- `[file]` — [what it does]
+## Domain purpose
+[One paragraph: what this domain DOES for the business and what users/systems rely on it.]
 
-## Key Concepts
-- **[Concept]:** [Brief explanation]
+## Business rules / invariants
+- [Concrete rule that must always hold — e.g. "Stripe subscriptions cancel at period end, never immediately"]
+- [Authorization/data invariant — e.g. "Only the request owner or staff can mutate this resource"]
+
+## Non-obvious behaviors
+- [Behavior the code wouldn't reveal at a glance — e.g. "Auth callback redirects to onboarding if profile is incomplete"]
+- [Edge case the implementation handles silently]
+
+## Critical files (purpose, not inventory)
+- `[file]` — [what role it plays in the domain — not "exports X, Y, Z"]
 
 ## Critical Rules
 - [Rule that would break things if violated]
-
-## References
-- **Patterns:** `{{configDir}}/guidelines/{domain}/patterns.md`
 
 ---
 **Last Updated:** [DATE]
@@ -74,5 +72,6 @@ You are working on **[domain description]**.
 - 30-60 lines max. Only what an AI needs to write correct code.
 - Be specific: real file paths, real commands, real patterns.
 - Non-obvious knowledge only — don't explain the framework, explain THIS project's usage.
-- Activation: file patterns as `- \`glob\`` lines; `Keywords:` comma-separated. Base skill uses "always loads" sentence instead.
-- References section required on domain skills — bold label + backtick path to guideline files.
+- **Do NOT emit a `## Activation` section.** Trigger metadata belongs in the `triggers:` frontmatter field, not in a markdown section. Hub/graph data lives in code-map and graph metadata, not in skills.
+- **Emit `triggers:` in frontmatter** with `files:` (array of globs matching key files for this domain) and `keywords:` (array of terms that signal this skill is relevant). For the base skill, use `triggers:\n  alwaysActivate: true` instead. Do NOT emit `## Key Files` hub counts, file counts, hub rankings, dependency tallies, line counts, or "most depended on" lists.
+- **Lead with business behavior, not file inventory.** Skills are about WHAT the code does for the business and WHY.

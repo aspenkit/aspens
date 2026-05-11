@@ -220,6 +220,16 @@ function addResource(repoPath, resourceType, name, available) {
   copyFileSync(sourceFile, targetFile);
   console.log(`  ${pc.green('+')} ${resourceType.targetDir}/${resource.fileName}`);
 
+  // Phase 6: agents reference the base skill via conditional reads (and via
+  // `skills: [base]` if Claude Code supports it). Warn — non-fatal — when the
+  // base skill is not on disk so users know to run `aspens doc init`.
+  if (resourceType.targetDir === '.claude/agents') {
+    const baseSkillPath = join(repoPath, '.claude', 'skills', 'base', 'skill.md');
+    if (!existsSync(baseSkillPath)) {
+      console.log(pc.yellow('    ! Base skill missing.') + pc.dim(" Run 'aspens doc init' before this agent can fully self-contextualize. The agent will still install."));
+    }
+  }
+
   // Plan/execute agents need dev/ gitignored for plan storage
   if (name === 'plan' || name === 'execute') {
     ensureDevGitignore(repoPath);

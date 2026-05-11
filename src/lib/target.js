@@ -61,7 +61,7 @@ export const TARGETS = {
     supportsSkills: true,
     supportsMCP: false,
     needsActivationSection: false,
-    needsCodeMapEmbed: true,
+    needsCodeMapEmbed: false,
     maxInstructionsBytes: 32768,
   },
 };

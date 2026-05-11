@@ -5,8 +5,11 @@
  * Other targets are projected from that canonical output.
  */
 
-import { join } from 'path';
+import { join, relative } from 'path';
 import { readFileSync } from 'fs';
+import { TARGETS } from './target.js';
+import { CliError } from './errors.js';
+import { findSkillFiles } from './skill-reader.js';
 
 export function transformForTarget(files, sourceTarget, destTarget, context) {
   if (sourceTarget.id === destTarget.id) return files;
@@ -64,7 +67,15 @@ function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
     file.path.startsWith(sourceTarget.skillsDir + '/')
   );
 
-  const rootContent = buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphSerialized, destTarget);
+  // The Skills section in the root instructions file (AGENTS.md/CLAUDE.md)
+  // must list every on-disk skill, not just the ones that changed in this
+  // sync. doc-sync passes only changed skills in `files`, so we re-read the
+  // full skill set from disk and let pending changes override on-disk content.
+  const { baseSkillForList, domainSkillsForList } = collectSkillsForList(
+    files, baseSkill, instructionsFile, sourceTarget, repoPath,
+  );
+
+  const rootContent = buildRootInstructions(baseSkillForList, instructionsFile, domainSkillsForList, graphSerialized, destTarget);
   if (rootContent) {
     result.push({ path: destTarget.instructionsFile, content: rootContent });
   }
@@ -99,6 +110,57 @@ function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
   }
 
   return result;
+}
+
+/**
+ * Build the full skill list for the Skills section of the root instructions
+ * file. Reads every skill from disk under `sourceTarget.skillsDir`, then
+ * overlays pending changes from `files` (by path) so newly-written content
+ * wins over stale on-disk content.
+ *
+ * Returns `{ baseSkillForList, domainSkillsForList }` in the shape
+ * `{ path, content }` expected by `buildSkillRefs`.
+ */
+function collectSkillsForList(files, pendingBaseSkill, instructionsFile, sourceTarget, repoPath) {
+  const baseSkillPrefix = sourceTarget.skillsDir + '/base/';
+  const skillsPrefix = sourceTarget.skillsDir + '/';
+
+  const merged = new Map();
+
+  // Layer 1: on-disk skills (so unchanged skills survive a partial sync).
+  if (repoPath && sourceTarget.skillsDir) {
+    try {
+      const skillsDirAbs = join(repoPath, sourceTarget.skillsDir);
+      const onDisk = findSkillFiles(skillsDirAbs, { skillFilename: sourceTarget.skillFilename });
+      for (const skill of onDisk) {
+        const relPath = relative(repoPath, skill.path).split('\\').join('/');
+        merged.set(relPath, { path: relPath, content: skill.content });
+      }
+    } catch { /* skills dir unreadable — fall through to pending-only */ }
+  }
+
+  // Layer 2: pending changes override on-disk content.
+  for (const file of files) {
+    if (file === instructionsFile) continue;
+    if (!file.path.startsWith(skillsPrefix)) continue;
+    merged.set(file.path, file);
+  }
+
+  let baseSkillForList = null;
+  const domainSkillsForList = [];
+  for (const entry of merged.values()) {
+    if (entry.path.startsWith(baseSkillPrefix)) {
+      baseSkillForList = entry;
+    } else {
+      domainSkillsForList.push(entry);
+    }
+  }
+
+  if (!baseSkillForList && pendingBaseSkill) baseSkillForList = pendingBaseSkill;
+
+  domainSkillsForList.sort((a, b) => a.path.localeCompare(b.path));
+
+  return { baseSkillForList, domainSkillsForList };
 }
 
 function generateCodexSkillReferences(destTarget, graphSerialized) {
@@ -153,7 +215,7 @@ function buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphS
     content = remapContentPaths(content, { instructionsFile: 'CLAUDE.md', skillsDir: '.claude/skills', skillFilename: 'skill.md', configDir: '.claude' }, destTarget);
     if (destTarget.id === 'codex') {
       content = sanitizeCodexInstructions(content);
-      content = syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget, !!graphSerialized);
+      content = syncSkillsSection(content, baseSkill, domainSkills, destTarget, !!graphSerialized);
     }
     sections.push(content.trim());
   } else if (baseSkill) {
@@ -162,7 +224,7 @@ function buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphS
     content = remapContentPaths(content, { instructionsFile: 'CLAUDE.md', skillsDir: '.claude/skills', skillFilename: 'skill.md', configDir: '.claude' }, destTarget);
     if (destTarget.id === 'codex') {
       content = sanitizeCodexInstructions(content);
-      content = syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget, !!graphSerialized);
+      content = syncSkillsSection(content, baseSkill, domainSkills, destTarget, !!graphSerialized);
     }
     sections.push(content.trim());
   }
@@ -189,56 +251,94 @@ function buildRootInstructions(baseSkill, instructionsFile, domainSkills, graphS
   return result;
 }
 
-export function ensureRootKeyFilesSection(content, graphSerialized) {
-  if (!content || !graphSerialized?.hubs?.length) return content;
-
-  const section = buildHubFilesSection(graphSerialized);
-  if (!section) return content;
-
-  const trimmed = content.trimEnd();
-  const keyFilesSectionRegex = /## Key Files\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/;
-
-  if (keyFilesSectionRegex.test(trimmed)) {
-    return trimmed.replace(keyFilesSectionRegex, section).replace(/(\n){3,}/g, '\n\n') + '\n';
-  }
-
-  const behaviorIndex = trimmed.search(/\n## Behavior\b/);
-  const lastUpdatedIndex = trimmed.search(/\n\*\*Last Updated\b/);
-  const insertAt = behaviorIndex >= 0
-    ? behaviorIndex
-    : lastUpdatedIndex >= 0
-      ? lastUpdatedIndex
-      : trimmed.length;
-
-  const before = trimmed.slice(0, insertAt).trimEnd();
-  const after = trimmed.slice(insertAt).trimStart();
-
-  return (
-    before +
-    '\n\n' +
-    section +
-    (after ? '\n\n' + after : '') +
-    '\n'
-  ).replace(/(\n){3,}/g, '\n\n');
+/**
+ * Stripped in Phase 1: stability. Previously injected a `## Key Files` hub-count
+ * block into CLAUDE.md/AGENTS.md after LLM generation. That post-processing is
+ * now removed — hub-counts/rankings live only in code-map and graph metadata.
+ *
+ * Function kept for API stability (callers were updated in the same commit) but
+ * is now an identity transform that also removes legacy hub blocks if present.
+ *
+ * @param {string} content
+ * @returns {string}
+ */
+export function ensureRootKeyFilesSection(content /*, graphSerialized */) {
+  if (!content) return content;
+  // Strip any legacy `## Key Files` block left over from older versions.
+  const legacyHubBlockRegex = /\n## Key Files\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/;
+  return content.replace(legacyHubBlockRegex, '\n').replace(/(\n){3,}/g, '\n\n');
 }
 
-function syncCodexSkillsSection(content, baseSkill, domainSkills, destTarget, hasGraph = false) {
-  const skillRefs = buildCodexSkillRefs(baseSkill, domainSkills, destTarget, hasGraph);
+const BEHAVIOR_RULES = [
+  '- **Verify before claiming** — Never state that something is configured, running, scheduled, or complete without confirming it first. If you haven\'t verified it in this session, say so rather than assuming.',
+  '- **Make sure code is running** — If you suggest code changes, ensure the code is running and tested before claiming the task is done.',
+  '- **Ask clarifying questions** — If the task is ambiguous, ask for clarification rather than making assumptions. Don\'t imply or guess at requirements or constraints that aren\'t explicitly stated.',
+  '- **Simplicity first** — Write the minimum code that solves the problem. No speculative features, abstractions for single-use code, or error handling for impossible scenarios.',
+  '- **Surgical changes** — Touch only what the task requires. Don\'t refactor adjacent code, fix unrelated formatting, or "improve" things that aren\'t broken.',
+];
+
+/**
+ * Deterministically inject/replace the `## Behavior` section in a root instructions
+ * file so the same coding guardrails ship with every generated CLAUDE.md/AGENTS.md.
+ */
+export function syncBehaviorSection(content) {
+  if (!content) return content;
+  const section = ['## Behavior', '', ...BEHAVIOR_RULES].join('\n');
+  if (/## Behavior\s*\n/i.test(content)) {
+    return content.replace(/## Behavior\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/, section + '\n');
+  }
+
+  const lastUpdatedMatch = content.match(/\n\*\*Last Updated[^\n]*/);
+  if (lastUpdatedMatch) {
+    const idx = lastUpdatedMatch.index;
+    return content.slice(0, idx).trimEnd() + '\n\n' + section + '\n' + content.slice(idx);
+  }
+
+  return content.trimEnd() + '\n\n' + section + '\n';
+}
+
+/**
+ * Deterministically inject/replace the `## Skills` section in a root instructions
+ * file (CLAUDE.md or AGENTS.md) so it always lists every generated skill.
+ *
+ * Caller is responsible for picking the right `destTarget` (paths + filename) and
+ * whether to advertise the architecture skill ref (`hasArchitectureSkill`). The
+ * architecture skill file is only written for Codex today, so Claude callers
+ * should pass `false`.
+ */
+export function syncSkillsSection(content, baseSkill, domainSkills, destTarget, hasArchitectureSkill = false) {
+  const skillRefs = buildSkillRefs(baseSkill, domainSkills, destTarget, hasArchitectureSkill);
   if (skillRefs.length === 0) return content;
 
+  // Strip Skill-variant headings the LLM may emit as a workaround for the
+  // "do not emit ## Skills" rule (e.g., ## Skills Reference, ## Skills Overview).
+  // The canonical `## Skills` (no trailing words) is preserved and handled below.
+  let working = content
+    .replace(/\n## Skills [^\n]+\r?\n[\s\S]*?(?=\r?\n## |\r?\n\*\*Last Updated|$)/gi, '\n')
+    .replace(/(\r?\n){3,}/g, '\n\n');
+
   const section = ['## Skills', '', ...skillRefs].join('\n');
-  if (/## Skills\s*\n/i.test(content)) {
-    return content.replace(/## Skills\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/, section + '\n');
+  if (/## Skills\s*\n/i.test(working)) {
+    return working.replace(/## Skills\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/, section + '\n');
   }
 
-  const headingMatch = content.match(/^# .+\n?/);
-  if (!headingMatch) return section + '\n\n' + content;
+  // Fresh insert: place the Skills section just BEFORE the first existing
+  // `## ` heading so prose between the H1 and that heading isn't pushed
+  // "into" the Skills section. Otherwise the next sync's regex (which spans
+  // from `## Skills` until the next `## `) would eat that prose.
+  const nextSectionMatch = working.match(/\n## [^\n]+/);
+  if (nextSectionMatch) {
+    const idx = nextSectionMatch.index; // index of the '\n' before the heading
+    const head = working.slice(0, idx).replace(/\s+$/, '');
+    const tail = working.slice(idx).replace(/^\s+/, '');
+    return head + '\n\n' + section + '\n\n' + tail + (working.endsWith('\n') ? '' : '');
+  }
 
-  const insertAt = headingMatch[0].length;
-  return content.slice(0, insertAt) + '\n' + section + '\n\n' + content.slice(insertAt).trimStart();
+  // No other `## ` heading: append at the end so we don't trap any prose.
+  return working.replace(/\s+$/, '') + '\n\n' + section + '\n';
 }
 
-function buildCodexSkillRefs(baseSkill, domainSkills, destTarget, hasGraph = false) {
+function buildSkillRefs(baseSkill, domainSkills, destTarget, hasArchitectureSkill = false) {
   const refs = [];
 
   if (baseSkill) {
@@ -246,29 +346,17 @@ function buildCodexSkillRefs(baseSkill, domainSkills, destTarget, hasGraph = fal
   }
 
   for (const skill of domainSkills) {
-    const domainName = extractDomainName(skill.path, { skillsDir: '.claude/skills' });
+    const domainName = extractDomainFromAnyPath(skill.path);
     if (!domainName) continue;
     const description = extractFrontmatterField(skill.content, 'description');
     const suffix = description ? ' — ' + description : '';
     refs.push('- `' + join(destTarget.skillsDir, domainName, destTarget.skillFilename) + '`' + suffix);
   }
 
-  if (hasGraph) {
+  if (hasArchitectureSkill) {
     refs.push('- `' + join(destTarget.skillsDir, 'architecture', destTarget.skillFilename) + '` — Import graph and code-map reference for structural changes.');
   }
   return refs;
-}
-
-function buildHubFilesSection(serializedGraph) {
-  if (!serializedGraph?.hubs?.length) return null;
-
-  const lines = ['## Key Files', '', '**Hub files (most depended-on):**'];
-  for (const hub of serializedGraph.hubs.slice(0, 5)) {
-    lines.push('- `' + hub.path + '` - ' + hub.fanIn + ' dependents');
-  }
-  lines.push('');
-
-  return lines.join('\n');
 }
 
 function extractFrontmatterField(content, field) {
@@ -279,46 +367,80 @@ function extractFrontmatterField(content, field) {
 function generateCondensedCodeMap(serializedGraph) {
   const lines = [];
 
-  if (serializedGraph?.hubs?.length > 0) {
-    lines.push('## Key Files');
-    lines.push('');
-    lines.push('**Hub files (most depended-on):**');
-    for (const hub of serializedGraph.hubs.slice(0, 5)) {
-      lines.push('- `' + hub.path + '` - ' + hub.fanIn + ' dependents');
-    }
-    lines.push('');
+  const clusterBlock = condenseDomainClusters(serializedGraph);
+  if (clusterBlock) {
+    lines.push(clusterBlock);
   }
 
-  if (serializedGraph?.clusters?.length > 0) {
-    const multiFileClusters = serializedGraph.clusters.filter(cluster => cluster.size > 1);
-    if (multiFileClusters.length > 0) {
-      lines.push('**Domain clusters:**');
-      lines.push('');
-      lines.push('| Domain | Files | Top entries |');
-      lines.push('|--------|-------|-------------|');
-      for (const cluster of multiFileClusters.slice(0, 10)) {
-        const topFiles = cluster.files
-          .filter(file => serializedGraph.files[file])
-          .sort((a, b) => (serializedGraph.files[b]?.priority || 0) - (serializedGraph.files[a]?.priority || 0))
-          .slice(0, 3)
-          .map(shortPath)
-          .map(file => '`' + file + '`')
-          .join(', ');
-        lines.push('| ' + cluster.label + ' | ' + cluster.size + ' | ' + topFiles + ' |');
-      }
-      lines.push('');
-    }
-  }
-
-  if (serializedGraph?.hotspots?.length > 0) {
-    lines.push('**High-churn hotspots:**');
-    for (const hotspot of serializedGraph.hotspots.slice(0, 3)) {
-      lines.push('- `' + hotspot.path + '` - ' + hotspot.churn + ' changes');
-    }
-    lines.push('');
+  const frameworkSection = condenseFrameworkEntryPoints(serializedGraph);
+  if (frameworkSection) {
+    lines.push(frameworkSection);
   }
 
   return lines.length > 0 ? lines.join('\n') : null;
+}
+
+const CONDENSED_CLUSTER_FILES = 5;
+
+function condenseDomainClusters(serializedGraph) {
+  const clusters = serializedGraph?.clusters;
+  const files = serializedGraph?.files;
+  if (!Array.isArray(clusters) || clusters.length === 0) return '';
+  if (!files) return '';
+
+  const merged = new Map();
+  for (const cluster of clusters) {
+    const existing = merged.get(cluster.label);
+    if (existing) {
+      for (const file of (cluster.files || [])) existing.files.push(file);
+    } else {
+      merged.set(cluster.label, { label: cluster.label, files: [...(cluster.files || [])] });
+    }
+  }
+
+  const out = ['**Domain clusters:**'];
+  let emitted = 0;
+  for (const cluster of merged.values()) {
+    if (cluster.files.length < 2) continue;
+    const topFiles = cluster.files
+      .filter(p => files[p])
+      .sort((a, b) => {
+        const fA = files[a].fanIn || 0;
+        const fB = files[b].fanIn || 0;
+        if (fB !== fA) return fB - fA;
+        return a.localeCompare(b);
+      })
+      .slice(0, CONDENSED_CLUSTER_FILES);
+    if (topFiles.length === 0) continue;
+    out.push('- **' + cluster.label + '**: ' + topFiles.map(f => '`' + f + '`').join(', '));
+    emitted++;
+  }
+  if (emitted === 0) return '';
+  out.push('');
+  return out.join('\n');
+}
+
+function condenseFrameworkEntryPoints(serializedGraph) {
+  const entries = serializedGraph?.frameworkEntryPoints;
+  if (!Array.isArray(entries) || entries.length === 0) return '';
+
+  const grouped = new Map();
+  for (const entry of entries) {
+    const list = grouped.get(entry.kind) || [];
+    list.push(entry);
+    grouped.set(entry.kind, list);
+  }
+
+  const out = [];
+  for (const [kind, items] of grouped) {
+    out.push('**Framework entry points (' + kind + '):**');
+    for (const item of items.slice(0, 10)) {
+      out.push('- `' + item.path + '`');
+    }
+    // No "+N more" suffix — N varies between syncs and produces diff noise.
+    out.push('');
+  }
+  return out.join('\n');
 }
 
 function shortPath(filePath) {
@@ -360,6 +482,51 @@ function stripActivationSection(content) {
     /## Activation\s*\r?\n[\s\S]*?(?=\r?\n## |\r?\n---|\r?\n\*\*Last Updated|$)/,
     ''
   ).replace(/(\r?\n){3,}/g, '\n\n');
+}
+
+/**
+ * Single-chokepoint sanitizer applied by the writers. Strips two classes of
+ * forbidden content that must never appear in any published file:
+ *
+ *   1. `## Activation` blocks (activation is removed from the system).
+ *   2. `## Key Files` blocks AND standalone hub/cluster/hotspot tables
+ *      (count-bearing graph data belongs in code-map.md only).
+ *
+ * Defense-in-depth: callers may strip earlier, but every disk write also
+ * runs through this so a leak upstream can't reach the user.
+ */
+export function sanitizePublishedContent(content, filePath = '') {
+  if (!content) return content;
+  let result = content;
+
+  // Always strip ## Activation blocks — they don't belong anywhere.
+  result = result.replace(
+    /\n## Activation\s*\r?\n[\s\S]*?(?=\r?\n## |\r?\n---|\r?\n\*\*Last Updated|$)/gi,
+    '\n'
+  );
+
+  // Always strip ## Key Files blocks — count-bearing data belongs in code-map only.
+  result = result.replace(
+    /\n## Key Files\s*\r?\n[\s\S]*?(?=\r?\n## |\r?\n\*\*Last Updated|$)/gi,
+    '\n'
+  );
+
+  // Domain clusters / framework entries are legitimate content in code-map.md.
+  // For instruction / skill files, strip them so graph data doesn't leak in.
+  const isCodeMap = filePath.endsWith('code-map.md');
+  if (!isCodeMap) {
+    const forbiddenBlockHeadings = [
+      /\n\*\*Hub files[^*\n]*\*\*[\s\S]*?(?=\r?\n## |\r?\n\*\*[A-Z]|\r?\n\*\*Last Updated|$)/gi,
+      /\n\*\*Domain clusters:\*\*[\s\S]*?(?=\r?\n## |\r?\n\*\*[A-Z]|\r?\n\*\*Last Updated|$)/gi,
+      /\n\*\*High-churn hotspots:\*\*[\s\S]*?(?=\r?\n## |\r?\n\*\*[A-Z]|\r?\n\*\*Last Updated|$)/gi,
+      /\n\*\*Framework entry points[^*\n]*\*\*[\s\S]*?(?=\r?\n## |\r?\n\*\*[A-Z]|\r?\n\*\*Last Updated|$)/gi,
+    ];
+    for (const regex of forbiddenBlockHeadings) {
+      result = result.replace(regex, '\n');
+    }
+  }
+
+  return result.replace(/(\r?\n){3,}/g, '\n\n');
 }
 
 function remapContentPaths(content, sourceTarget, destTarget) {
@@ -405,6 +572,11 @@ function remapContentPaths(content, sourceTarget, destTarget) {
 }
 
 function sanitizeCodexInstructions(content) {
+  // Line-level drops are reserved for content that has no analogue in AGENTS.md
+  // (Claude Code hooks, skill-rules.json, customize-agents). Generic `CLAUDE.md`
+  // mentions are rewritten by the substitution pass below, not dropped — line-
+  // level filtering on `CLAUDE.md` deletes self-documenting context that the
+  // substitution would have handled correctly.
   const filteredLines = content
     .split('\n')
     .filter(line =>
@@ -414,8 +586,7 @@ function sanitizeCodexInstructions(content) {
       !/\.claude\/hooks/i.test(line) &&
       !/\.codex\/hooks/i.test(line) &&
       !/skill-rules\.json/i.test(line) &&
-      !/hook compatibility/i.test(line) &&
-      !/CLAUDE\.md/i.test(line)
+      !/hook compatibility/i.test(line)
     );
 
   return filteredLines
@@ -477,6 +648,15 @@ function extractDomainName(skillPath, target) {
   return rest.split('/')[0];
 }
 
+// Source-skillsDir-agnostic version. Skill files always live at
+// `<skillsDir>/<domainName>/<filename>` so the domain name is the
+// second-to-last path segment regardless of whether the source is
+// Claude (`.claude/skills/...`) or Codex (`.agents/skills/...`).
+function extractDomainFromAnyPath(skillPath) {
+  const parts = skillPath.split('/').filter(Boolean);
+  return parts.length >= 2 ? parts[parts.length - 2] : null;
+}
+
 function resolveDomainDirectory(domainName, scanResult) {
   if (!scanResult?.domains) return null;
 
@@ -497,6 +677,112 @@ function escapeRegex(str) {
     result = result.replaceAll(char, '\\' + char);
   }
   return result;
+}
+
+/**
+ * Map a Claude-format path (CLAUDE.md, .claude/skills/<name>/skill.md) to the
+ * corresponding path under another target. Returns the input unchanged when
+ * the destination target is Claude itself, or `null` when the path doesn't
+ * correspond to a known target slot.
+ *
+ * @param {string} targetId — destination target id ('claude' | 'codex')
+ * @param {string} claudePath — source path in Claude format
+ * @returns {string|null}
+ */
+export function transformPathForTarget(targetId, claudePath) {
+  const claude = TARGETS.claude;
+  const dest = TARGETS[targetId];
+  if (!dest) return null;
+  if (dest.id === claude.id) return claudePath;
+
+  if (claudePath === claude.instructionsFile) return dest.instructionsFile;
+
+  const skillsPrefix = claude.skillsDir + '/';
+  if (claudePath.startsWith(skillsPrefix)) {
+    const rest = claudePath.slice(skillsPrefix.length);
+    const parts = rest.split('/');
+    if (parts.length >= 2) {
+      const domain = parts[0];
+      return join(dest.skillsDir, domain, dest.skillFilename);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Logical role of a published file under a given target — used by parity checks
+ * so we compare logical slots (root-instructions, per-domain skill) rather than
+ * raw paths that differ across targets.
+ *
+ * Returns null for codex-only derived files (directory-scoped AGENTS.md inside
+ * a domain dir): those have no Claude counterpart by design.
+ */
+function logicalKeyForFile(filePath, target) {
+  if (filePath === target.instructionsFile) return 'INSTRUCTIONS';
+
+  const skillsPrefix = (target.skillsDir || '') + '/';
+  if (target.skillsDir && filePath.startsWith(skillsPrefix)) {
+    const rest = filePath.slice(skillsPrefix.length);
+    const domain = rest.split('/')[0];
+    // The codex 'architecture' skill is synthetic — generated from graph
+    // data — and has no Claude counterpart by design (Claude reads the
+    // graph directly via .claude/graph.json + code-map.md).
+    if (target.id === 'codex' && domain === 'architecture') return null;
+    return `SKILL:${domain}`;
+  }
+
+  // Codex-only directory-scoped AGENTS.md inside a domain dir (not the root)
+  if (
+    target.directoryDocFile &&
+    filePath.endsWith('/' + target.directoryDocFile) &&
+    filePath !== target.directoryDocFile
+  ) {
+    return null;
+  }
+
+  return `OTHER:${filePath}`;
+}
+
+/**
+ * Phase 4 parity validator. Asserts that every configured target publishes the
+ * same set of logical files (root instructions + per-domain skills). Codex
+ * directory-scoped AGENTS.md files are excluded from the check — they have no
+ * Claude counterpart by design.
+ *
+ * @param {Map<string, Array<{path:string,content:string}>>} perTargetMap
+ * @throws {CliError} when targets diverge
+ */
+export function assertTargetParity(perTargetMap) {
+  const targetIds = [...perTargetMap.keys()];
+  if (targetIds.length < 2) return;
+
+  const keysByTarget = new Map();
+  for (const targetId of targetIds) {
+    const target = TARGETS[targetId];
+    if (!target) continue;
+    const keys = new Set();
+    for (const file of perTargetMap.get(targetId) || []) {
+      const key = logicalKeyForFile(file.path, target);
+      if (key) keys.add(key);
+    }
+    keysByTarget.set(targetId, keys);
+  }
+
+  const [firstId, ...restIds] = targetIds;
+  const firstKeys = keysByTarget.get(firstId) || new Set();
+
+  for (const otherId of restIds) {
+    const otherKeys = keysByTarget.get(otherId) || new Set();
+    const missingInOther = [...firstKeys].filter(k => !otherKeys.has(k));
+    const missingInFirst = [...otherKeys].filter(k => !firstKeys.has(k));
+    if (missingInOther.length === 0 && missingInFirst.length === 0) continue;
+
+    const lines = [`Target parity violation between '${firstId}' and '${otherId}':`];
+    if (missingInOther.length) lines.push(`  Missing in ${otherId}: ${missingInOther.join(', ')}`);
+    if (missingInFirst.length) lines.push(`  Missing in ${firstId}: ${missingInFirst.join(', ')}`);
+    throw new CliError(lines.join('\n'));
+  }
 }
 
 export function validateTransformedFiles(files) {

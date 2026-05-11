@@ -234,6 +234,7 @@ program
   .description('Inject project-specific context into agents')
   .argument('<what>', 'What to customize: agents')
   .option('--dry-run', 'Preview without writing files')
+  .option('--reset', 'Re-customize existing agents (apply v0.8 upgrades like skills: [base])')
   .option('--timeout <seconds>', 'Claude timeout in seconds', parseTimeout, 300)
   .option('--model <model>', 'Claude model to use (e.g., sonnet, opus, haiku)')
   .option('--verbose', 'Show what Claude is reading/doing in real time')

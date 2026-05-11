@@ -67,14 +67,110 @@ export function parseFrontmatter(content) {
 }
 
 /**
- * Extract file patterns from ## Activation section.
- * Returns string[] of patterns like ["src/lib/*.js", "src/prompts/**\/*"]
- * Parses lines starting with `- \`` wrapped in backticks.
+ * Parse `triggers:` block from YAML frontmatter.
+ * Supports:
+ *   triggers:
+ *     files:
+ *       - app/deps.py
+ *     keywords: [auth, jwt]        # inline array
+ *     keywords:                    # block array
+ *       - auth
+ *     alwaysActivate: true
+ *
+ * Returns { filePatterns: string[], keywords: string[], alwaysActivate: boolean }
+ * Returns null when no `triggers:` key is present in frontmatter.
+ *
+ * Sentinel note: a bare `triggers:` (or `triggers: {}` with no sub-keys) is
+ * treated as "triggers present but empty" — it returns the empty-fields object,
+ * not null. Callers using `=== null` to mean "no triggers key" will see that
+ * as "triggers configured", which is intentional: an author who typed the key
+ * is opting in to the empty contract over the legacy `## Activation` fallback.
+ */
+export function parseTriggersFrontmatter(content) {
+  if (!content || typeof content !== 'string') return null;
+
+  // Extract the frontmatter block (between first --- and second ---)
+  const fmMatch = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+  if (!fmMatch) return null;
+
+  const block = fmMatch[1];
+
+  // Check if triggers: key exists at all
+  if (!/^triggers:/m.test(block)) return null;
+
+  // Extract the triggers sub-block: from "triggers:" to the next top-level key or end
+  // Top-level YAML keys start at column 0 with no leading spaces
+  const triggersMatch = block.match(/^triggers:\s*\r?\n((?:[ \t]+[^\r\n]*\r?\n?)*)/m);
+  if (!triggersMatch) {
+    // "triggers:" with no sub-block — treat as empty triggers present
+    return { filePatterns: [], keywords: [], alwaysActivate: false };
+  }
+
+  const triggersBlock = triggersMatch[1];
+
+  // --- parse files: sub-key ---
+  const filePatterns = [];
+  const filesSubMatch = triggersBlock.match(/[ \t]+files:\s*\r?\n((?:[ \t]+-[^\r\n]*\r?\n?)*)/);
+  if (filesSubMatch) {
+    const listBlock = filesSubMatch[1];
+    const itemRegex = /[ \t]+-\s*(.+)/g;
+    let m;
+    while ((m = itemRegex.exec(listBlock)) !== null) {
+      const val = m[1].trim().replace(/^['"]|['"]$/g, '');
+      if (val) filePatterns.push(val);
+    }
+  }
+
+  // --- parse keywords: sub-key (inline array OR block list) ---
+  const keywords = [];
+  // Inline: keywords: [auth, jwt, token]
+  const kwInlineMatch = triggersBlock.match(/[ \t]+keywords:\s*\[([^\]]*)\]/);
+  if (kwInlineMatch) {
+    kwInlineMatch[1]
+      .split(',')
+      .map(k => k.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean)
+      .forEach(k => keywords.push(k));
+  } else {
+    // Block list: keywords:\n  - auth
+    const kwBlockMatch = triggersBlock.match(/[ \t]+keywords:\s*\r?\n((?:[ \t]+-[^\r\n]*\r?\n?)*)/);
+    if (kwBlockMatch) {
+      const listBlock = kwBlockMatch[1];
+      const itemRegex = /[ \t]+-\s*(.+)/g;
+      let m;
+      while ((m = itemRegex.exec(listBlock)) !== null) {
+        const val = m[1].trim().replace(/^['"]|['"]$/g, '');
+        if (val) keywords.push(val);
+      }
+    }
+  }
+
+  // --- parse alwaysActivate: ---
+  let alwaysActivate = false;
+  const aaMatch = triggersBlock.match(/[ \t]+alwaysActivate:\s*(true|false)/i);
+  if (aaMatch) {
+    alwaysActivate = aaMatch[1].toLowerCase() === 'true';
+  }
+
+  return { filePatterns, keywords, alwaysActivate };
+}
+
+/**
+ * Extract file patterns from a skill file.
+ * Prefers `triggers.files` from YAML frontmatter when present;
+ * falls back to parsing `## Activation` section for backwards compatibility.
+ * Returns string[] of glob patterns.
  */
 export function parseActivationPatterns(content) {
   if (!content || typeof content !== 'string') return [];
 
-  // Match the Activation section: from "## Activation" to the next "---" or "##"
+  // Prefer frontmatter triggers
+  const fromFrontmatter = parseTriggersFrontmatter(content);
+  if (fromFrontmatter !== null) {
+    return fromFrontmatter.filePatterns;
+  }
+
+  // Fallback: parse ## Activation section (legacy)
   const activationMatch = content.match(/## Activation[\s\S]*?(?=\n---|\n## (?!Activation)|$)/);
   if (!activationMatch) return [];
 
@@ -127,13 +223,21 @@ export function fileMatchesActivation(filePath, activationBlock, genericSegments
 }
 
 /**
- * Extract keywords from ## Activation Keywords: line.
+ * Extract keywords from a skill file.
+ * Prefers `triggers.keywords` from YAML frontmatter when present;
+ * falls back to parsing `Keywords:` line in the `## Activation` section.
  * Returns string[] or empty array.
  */
 export function parseKeywords(content) {
   if (!content || typeof content !== 'string') return [];
 
-  // Look for "Keywords:" line within the Activation section or as a standalone line
+  // Prefer frontmatter triggers
+  const fromFrontmatter = parseTriggersFrontmatter(content);
+  if (fromFrontmatter !== null) {
+    return fromFrontmatter.keywords;
+  }
+
+  // Fallback: look for "Keywords:" line within ## Activation or as standalone
   const keywordsMatch = content.match(/Keywords:\s*(.+)/i);
   if (!keywordsMatch) return [];
 

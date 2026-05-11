@@ -75,6 +75,7 @@ export function serializeGraph(rawGraph, repoPath) {
     })),
     coupling: rawGraph.clusters?.coupling || [],
     hotspots: rawGraph.hotspots,
+    frameworkEntryPoints: rawGraph.frameworkEntryPoints || [],
     clusterIndex,
   };
 }
@@ -347,6 +348,24 @@ function shortPath(p) {
   return parts.length > 2 ? parts.slice(-2).join('/') : p;
 }
 
+/**
+ * Group framework-entry-point objects by their `kind` field.
+ * Returns a Map preserving deterministic insertion order so the resulting
+ * code-map sections render consistently across runs.
+ *
+ * @param {Array<{path: string, kind: string}>} entries
+ * @returns {Map<string, Array<{path: string, kind: string}>>}
+ */
+export function groupFrameworkEntries(entries) {
+  const grouped = new Map();
+  for (const entry of entries || []) {
+    const list = grouped.get(entry.kind) || [];
+    list.push(entry);
+    grouped.set(entry.kind, list);
+  }
+  return grouped;
+}
+
 // ---------------------------------------------------------------------------
 // Code-map generation — standalone overview, independent of skills
 // ---------------------------------------------------------------------------
@@ -366,56 +385,82 @@ const MAX_MAP_HOTSPOTS = 5;
 export function generateCodeMap(serializedGraph) {
   const lines = ['## Codebase Structure\n'];
 
-  // Hub files
-  if (serializedGraph.hubs?.length > 0) {
-    lines.push('**Hub files (most depended-on — prioritize reading these):**');
-    for (const h of serializedGraph.hubs.slice(0, MAX_MAP_HUBS)) {
-      const exports = (h.exports || []).slice(0, 6).join(', ');
-      lines.push(`- \`${h.path}\` — ${h.fanIn} dependents${exports ? ' | exports: ' + exports : ''}`);
-    }
+  const clusterBlock = formatDomainClusters(
+    serializedGraph.clusters,
+    serializedGraph.files,
+  );
+  if (clusterBlock) {
+    lines.push(clusterBlock);
     lines.push('');
   }
 
-  // Domain clusters
-  if (serializedGraph.clusters?.length > 0) {
-    const multiFileClusters = serializedGraph.clusters.filter(c => c.size > 1);
-    if (multiFileClusters.length > 0) {
-      lines.push('**Domain clusters:**');
-      for (const c of multiFileClusters) {
-        const topFiles = c.files
-          .filter(f => serializedGraph.files[f])
-          .sort((a, b) => (serializedGraph.files[b].priority || 0) - (serializedGraph.files[a].priority || 0))
-          .slice(0, 5)
-          .map(f => `\`${shortPath(f)}\``)
-          .join(', ');
-        lines.push(`- **${c.label}** (${c.size} files): ${topFiles}`);
+  // Framework entry points (Next.js implicit roots, etc.)
+  if (serializedGraph.frameworkEntryPoints?.length > 0) {
+    const grouped = groupFrameworkEntries(serializedGraph.frameworkEntryPoints);
+    for (const [kind, entries] of grouped) {
+      lines.push(`**Framework entry points (${kind}):**`);
+      for (const entry of entries.slice(0, 20)) {
+        lines.push(`- \`${entry.path}\``);
       }
       lines.push('');
     }
   }
 
-  // Cross-domain coupling
-  if (serializedGraph.coupling?.length > 0) {
-    lines.push('**Cross-domain dependencies:**');
-    for (const c of serializedGraph.coupling.slice(0, 5)) {
-      lines.push(`- ${c.from} \u2192 ${c.to} (${c.edges} imports)`);
-    }
-    lines.push('');
-  }
-
-  // Hotspots
-  if (serializedGraph.hotspots?.length > 0) {
-    lines.push('**Hotspots (high churn):**');
-    for (const h of serializedGraph.hotspots.slice(0, MAX_MAP_HOTSPOTS)) {
-      lines.push(`- \`${h.path}\` — ${h.churn} changes, ${h.lines} lines`);
-    }
-    lines.push('');
-  }
-
-  lines.push(`*${serializedGraph.meta.totalFiles} files, ${serializedGraph.meta.totalEdges} edges — updated ${serializedGraph.meta.generatedAt.split('T')[0]}*`);
-  lines.push('');
-
   return lines.join('\n');
+}
+
+const MAX_CLUSTER_FILES = 5;
+
+/**
+ * Format the Domain clusters block. Stable across syncs: cluster files are
+ * sorted by fanIn (descending), then path (ascending), capped at
+ * MAX_CLUSTER_FILES per cluster. No counts, no totals, no hotspots.
+ */
+export function formatDomainClusters(clusters, files) {
+  if (!Array.isArray(clusters) || clusters.length === 0) return null;
+  if (!files) return null;
+
+  const merged = mergeClustersByLabel(clusters);
+  if (merged.length === 0) return null;
+
+  const out = ['**Domain clusters:**'];
+  let emitted = 0;
+  for (const cluster of merged) {
+    if (cluster.files.length < 2) continue;
+    const topFiles = cluster.files
+      .filter(path => files[path])
+      .sort((a, b) => {
+        const fA = files[a].fanIn || 0;
+        const fB = files[b].fanIn || 0;
+        if (fB !== fA) return fB - fA;
+        return a.localeCompare(b);
+      })
+      .slice(0, MAX_CLUSTER_FILES);
+    if (topFiles.length === 0) continue;
+    const formatted = topFiles.map(f => '`' + f + '`').join(', ');
+    out.push(`- **${cluster.label}**: ${formatted}`);
+    emitted++;
+  }
+  return emitted > 0 ? out.join('\n') : null;
+}
+
+/**
+ * Merge clusters that share the same label. The graph builder produces one
+ * cluster per connected component, so isolated files (e.g., independent test
+ * files) become separate single-file clusters. For display purposes we collapse
+ * those into a single per-label entry.
+ */
+function mergeClustersByLabel(clusters) {
+  const byLabel = new Map();
+  for (const cluster of clusters) {
+    const existing = byLabel.get(cluster.label);
+    if (existing) {
+      for (const file of (cluster.files || [])) existing.files.push(file);
+    } else {
+      byLabel.set(cluster.label, { label: cluster.label, files: [...(cluster.files || [])] });
+    }
+  }
+  return [...byLabel.values()];
 }
 
 /**
@@ -446,6 +491,9 @@ export function generateGraphIndex(serializedGraph) {
   const exports = {};
   for (const [path, info] of Object.entries(serializedGraph.files)) {
     for (const exp of (info.exports || [])) {
+      // Skip synthetic re-export markers (e.g. "re-export:./foo") — they are
+      // structural edges, not identifiers a user would mention.
+      if (typeof exp === 'string' && exp.startsWith('re-export:')) continue;
       // Skip very short or generic exports (1-2 chars like 'x', 'a')
       if (exp.length > 2) {
         if (!exports[exp]) {

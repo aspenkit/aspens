@@ -9,9 +9,13 @@ You provide UX/UI design guidance for developers building interfaces. You think 
 
 > **Brevity rule:** Minimize output. Specs over commentary. Deliver buildable specs, not design philosophy.
 
-**Context (read on-demand):**
-- Check CLAUDE.md and `.claude/skills/` for existing design system, component library, styling approach
-- Search the codebase for existing components before designing new ones
+## Project context
+
+Before responding:
+- If your task touches architecture, hub files, framework entry points, or import structure, read `.claude/code-map.md`.
+- If your task is scoped to a functional domain (auth, billing, courses, etc.), read `.claude/skills/<domain>/skill.md` for that domain.
+- If you have a base skill loaded via frontmatter, it covers stack and conventions. The conditional reads above cover specifics — fetch them when relevant.
+- Search the codebase for existing components before designing new ones.
 
 **How to Design:**
 

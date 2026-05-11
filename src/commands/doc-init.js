@@ -13,7 +13,7 @@ import { CliError } from '../lib/errors.js';
 import { resolveTimeout } from '../lib/timeout.js';
 import { TARGETS, resolveTarget, getAllowedPaths, writeConfig, loadConfig, mergeConfiguredTargets } from '../lib/target.js';
 import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
-import { transformForTarget, validateTransformedFiles, ensureRootKeyFilesSection } from '../lib/target-transform.js';
+import { transformForTarget, validateTransformedFiles, ensureRootKeyFilesSection, syncSkillsSection, syncBehaviorSection } from '../lib/target-transform.js';
 import { findSkillFiles } from '../lib/skill-reader.js';
 import { getGitRoot } from '../lib/git-helpers.js';
 import { installSaveTokensRecommended } from './save-tokens.js';
@@ -1124,18 +1124,12 @@ function buildGraphContext(graph) {
   return sections.join('\n');
 }
 
-function buildRootInstructionsGraphContext(graph) {
-  if (!graph?.hubs?.length) return '';
-
-  const sections = ['## Key Files To Surface In Root Context', ''];
-  sections.push('Add a concise `## Key Files` section to the root instructions file and mention these hub files explicitly:');
-  for (const hub of graph.hubs.slice(0, 5)) {
-    const fileInfo = graph.files?.[hub.path];
-    sections.push(`- \`${hub.path}\` — ${hub.fanIn} dependents${fileInfo?.lines ? `, ${fileInfo.lines} lines` : ''}`);
-  }
-  sections.push('');
-
-  return sections.join('\n');
+function buildRootInstructionsGraphContext(/* graph */) {
+  // Phase 1: stability — no longer instruct the LLM to emit a `## Key Files`
+  // section in CLAUDE.md/AGENTS.md from hub data. Hub-counts/rankings live in
+  // code-map and graph metadata only. The function is preserved for caller
+  // stability and intentionally returns an empty context string.
+  return '';
 }
 
 /**
@@ -1704,9 +1698,19 @@ async function generateChunked(repoPath, scan, repoGraph, domains, baseOnly, tim
         claudeMdSpinner.stop(pc.yellow(`${instructionsArtifactLabel()} — failed after retries`));
         p.log.warn(`Could not generate ${instructionsArtifactLabel()}. Try: aspens doc init --strategy rewrite --mode base-only`);
       } else {
-        files = files.map(file => file.path === 'CLAUDE.md'
-          ? { ...file, content: ensureRootKeyFilesSection(file.content, repoGraph) }
-          : file);
+        const claudeSkillsDirPrefix = TARGETS.claude.skillsDir + '/';
+        const claudeBaseSkillPrefix = TARGETS.claude.skillsDir + '/base/';
+        const baseSkillForList = allFiles.find(f => f.path.startsWith(claudeBaseSkillPrefix));
+        const domainSkillsForList = allFiles.filter(f =>
+          f.path.startsWith(claudeSkillsDirPrefix) && !f.path.startsWith(claudeBaseSkillPrefix)
+        );
+        files = files.map(file => {
+          if (file.path !== 'CLAUDE.md') return file;
+          let content = ensureRootKeyFilesSection(file.content);
+          content = syncSkillsSection(content, baseSkillForList, domainSkillsForList, TARGETS.claude, false);
+          content = syncBehaviorSection(content);
+          return { ...file, content };
+        });
         files = validateGeneratedChunk(files, repoPath);
         allFiles.push(...files);
         if (writeIncrementally && files.length > 0) {

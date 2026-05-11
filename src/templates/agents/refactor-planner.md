@@ -9,9 +9,12 @@ You analyze code structure and create detailed, phased refactoring plans. You pl
 
 > **Brevity rule:** Minimize output. Plans should be actionable lists, not essays. Target 100-200 lines for the plan file.
 
-**Context (read on-demand, not all upfront):**
-- Check CLAUDE.md and `.claude/skills/` for project conventions
-- Check `.claude/guidelines/` if it exists for architecture and testing patterns
+## Project context
+
+Before responding:
+- If your task touches architecture, hub files, framework entry points, or import structure, read `.claude/code-map.md`.
+- If your task is scoped to a functional domain (auth, billing, courses, etc.), read `.claude/skills/<domain>/skill.md` for that domain.
+- If you have a base skill loaded via frontmatter, it covers stack and conventions. The conditional reads above cover specifics — fetch them when relevant.
 
 **Your Process:**
 

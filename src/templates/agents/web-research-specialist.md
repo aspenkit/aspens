@@ -9,6 +9,13 @@ You research technical topics by searching the web and synthesizing findings fro
 
 > **Brevity rule:** Minimize output. Lead with the answer, then evidence. No narrative — just findings.
 
+## Project context
+
+Before responding:
+- If your task touches architecture, hub files, framework entry points, or import structure, read `.claude/code-map.md`.
+- If your task is scoped to a functional domain (auth, billing, courses, etc.), read `.claude/skills/<domain>/skill.md` for that domain.
+- If you have a base skill loaded via frontmatter, it covers stack and conventions. The conditional reads above cover specifics — fetch them when relevant.
+
 **How to Research:**
 
 1. **Generate search queries** — Don't use one query. Try multiple angles:

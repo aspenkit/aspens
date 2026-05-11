@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { transformForTarget, validateTransformedFiles, projectCodexDomainDocs, ensureRootKeyFilesSection } from '../src/lib/target-transform.js';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { transformForTarget, validateTransformedFiles, projectCodexDomainDocs, ensureRootKeyFilesSection, syncSkillsSection, syncBehaviorSection, assertTargetParity, sanitizePublishedContent } from '../src/lib/target-transform.js';
 import { TARGETS } from '../src/lib/target.js';
 
 const mockScanResult = {
@@ -124,6 +127,90 @@ describe('transformForTarget', () => {
   });
 });
 
+// Regression: doc-sync passes only the CHANGED skills in `files`. The Skills
+// section of AGENTS.md/CLAUDE.md must still list every on-disk skill — earlier
+// builds were truncating the list to just the in-flight subset.
+describe('transformForTarget — Skills section completeness (regression)', () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const fixtureRoot = join(__dirname, 'fixtures', 'skills-completeness');
+
+  beforeAll(() => {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+    const skillsDir = join(fixtureRoot, '.claude', 'skills');
+    mkdirSync(skillsDir, { recursive: true });
+
+    const skills = [
+      ['base',    '---\nname: base\ndescription: Core conventions\n---\n\nBase content.\n'],
+      ['billing', '---\nname: billing\ndescription: Stripe billing flows\n---\n\nBilling.\n'],
+      ['auth',    '---\nname: auth\ndescription: JWT + Supabase auth\n---\n\nAuth.\n'],
+      ['payments',  '---\nname: payments\ndescription: Webhook + checkout handling\n---\n\nPayments.\n'],
+      ['profile',   '---\nname: profile\ndescription: User profile, settings, and stats\n---\n\nProfile.\n'],
+      ['platform',  '---\nname: platform\ndescription: Cross-cutting infra and middleware\n---\n\nPlatform.\n'],
+    ];
+
+    for (const [name, body] of skills) {
+      mkdirSync(join(skillsDir, name), { recursive: true });
+      writeFileSync(join(skillsDir, name, 'skill.md'), body, 'utf8');
+    }
+
+    writeFileSync(
+      join(fixtureRoot, 'CLAUDE.md'),
+      '# Test Repo\n\nOverview.\n\n## Skills\n\n- `.claude/skills/base/skill.md` — old listing\n',
+      'utf8',
+    );
+  });
+
+  afterAll(() => {
+    if (existsSync(fixtureRoot)) rmSync(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it('lists every on-disk skill in AGENTS.md even when files only contains one changed skill', () => {
+    // doc-sync's typical call shape: only the changed skill flows through `files`.
+    const files = [
+      { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\ndescription: Stripe billing flows (updated)\n---\n\nBilling (new content).\n' },
+    ];
+
+    const result = transformForTarget(
+      files,
+      TARGETS.claude,
+      TARGETS.codex,
+      { scanResult: { domains: [] }, repoPath: fixtureRoot }
+    );
+
+    const rootAgents = result.find(f => f.path === 'AGENTS.md');
+    expect(rootAgents).toBeDefined();
+
+    // Every on-disk skill should appear in the Skills section.
+    expect(rootAgents.content).toContain('.agents/skills/base/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/billing/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/auth/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/payments/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/profile/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/platform/SKILL.md');
+
+    // Pending changes should win for descriptions.
+    expect(rootAgents.content).toContain('Stripe billing flows (updated)');
+  });
+
+  it('falls back to pending-only Skills list when repoPath is unavailable', () => {
+    const files = [
+      { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\ndescription: Billing\n---\n\nBilling.\n' },
+      { path: '.claude/skills/base/skill.md',    content: '---\nname: base\ndescription: Base\n---\n\nBase.\n' },
+    ];
+
+    const result = transformForTarget(
+      files,
+      TARGETS.claude,
+      TARGETS.codex,
+      { scanResult: { domains: [] } }
+    );
+
+    const rootAgents = result.find(f => f.path === 'AGENTS.md');
+    expect(rootAgents.content).toContain('.agents/skills/base/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/billing/SKILL.md');
+  });
+});
+
 describe('projectCodexDomainDocs', () => {
   it('projects codex skills into directory AGENTS docs', () => {
     const files = [
@@ -139,24 +226,28 @@ describe('projectCodexDomainDocs', () => {
   });
 });
 
-describe('ensureRootKeyFilesSection', () => {
-  it('inserts a key files section before behavior when missing', () => {
+describe('ensureRootKeyFilesSection (Phase 1: legacy-only stripper)', () => {
+  it('does NOT insert a key files section when missing — hub blocks are no longer emitted into root instructions', () => {
     const content = '# Backend\n\n## Commands\n\nuv run pytest\n\n## Behavior\n\n- Verify before claiming\n';
     const result = ensureRootKeyFilesSection(content, mockGraph);
 
-    expect(result).toContain('## Key Files');
-    expect(result).toContain('`app/core/cache_service.py`');
-    expect(result.indexOf('## Key Files')).toBeLessThan(result.indexOf('## Behavior'));
+    expect(result).not.toContain('## Key Files');
+    expect(result).toContain('## Commands');
+    expect(result).toContain('## Behavior');
   });
 
-  it('replaces an incomplete key files section with all top hubs', () => {
+  it('strips a legacy hub block if present (backwards-compat one-shot)', () => {
     const content = '# Backend\n\n## Key Files\n\n- `app/core/db.py` - 9 dependents\n\n## Behavior\n';
     const result = ensureRootKeyFilesSection(content, mockGraph);
 
-    expect(result).toContain('`app/core/db.py` - 9 dependents');
-    expect(result).toContain('`app/core/cache_service.py` - 7 dependents');
-    expect(result).toContain('`app/middleware/rate_limit.py` - 6 dependents');
-    expect(result.match(/## Key Files/g)).toHaveLength(1);
+    expect(result).not.toContain('## Key Files');
+    expect(result).not.toContain('9 dependents');
+    expect(result).toContain('## Behavior');
+  });
+
+  it('returns content unchanged when no legacy block is present', () => {
+    const content = '# Backend\n\n## Commands\n\nrun me\n';
+    expect(ensureRootKeyFilesSection(content, mockGraph)).toBe(content);
   });
 });
 
@@ -211,5 +302,317 @@ describe('validateTransformedFiles', () => {
     ]);
     expect(valid).toBe(false);
     expect(issues).toHaveLength(2);
+  });
+});
+
+describe('syncSkillsSection', () => {
+  const baseSkill = { path: '.claude/skills/base/skill.md', content: '---\nname: base\ndescription: Base skill desc\n---\n' };
+  const domainSkills = [
+    { path: '.claude/skills/auth/skill.md', content: '---\nname: auth\ndescription: Auth handling\n---\n' },
+    { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\ndescription: Billing flows\n---\n' },
+  ];
+
+  it('injects a Skills section listing every generated skill for Claude', () => {
+    const claudeMd = '# Project\n\nIntro.\n';
+    const out = syncSkillsSection(claudeMd, baseSkill, domainSkills, TARGETS.claude, false);
+    expect(out).toContain('## Skills');
+    expect(out).toContain('.claude/skills/base/skill.md');
+    expect(out).toContain('.claude/skills/auth/skill.md');
+    expect(out).toContain('.claude/skills/billing/skill.md');
+    expect(out).toContain('Auth handling');
+    expect(out).toContain('Billing flows');
+  });
+
+  it('overwrites an existing Skills section rather than duplicating it', () => {
+    const claudeMd = '# Project\n\n## Skills\n\n- only-one-stale-entry\n\n## Conventions\n\nstuff\n';
+    const out = syncSkillsSection(claudeMd, baseSkill, domainSkills, TARGETS.claude, false);
+    expect(out.match(/## Skills/g)).toHaveLength(1);
+    expect(out).not.toContain('only-one-stale-entry');
+    expect(out).toContain('.claude/skills/auth/skill.md');
+    expect(out).toContain('## Conventions');
+  });
+
+  it('uses Codex paths and casing when destTarget is codex', () => {
+    const agentsMd = '# Project\n';
+    const out = syncSkillsSection(agentsMd, baseSkill, domainSkills, TARGETS.codex, true);
+    expect(out).toContain('.agents/skills/base/SKILL.md');
+    expect(out).toContain('.agents/skills/auth/SKILL.md');
+    expect(out).toContain('.agents/skills/architecture/SKILL.md');
+  });
+
+  it('does not raise a parity violation for the codex-only synthetic architecture skill', () => {
+    const claudeFiles = [
+      { path: 'CLAUDE.md', content: '# x' },
+      { path: '.claude/skills/base/skill.md', content: '---\nname: base\n---\n' },
+      { path: '.claude/skills/auth/skill.md', content: '---\nname: auth\n---\n' },
+    ];
+    const codexFiles = [
+      { path: 'AGENTS.md', content: '# x' },
+      { path: '.agents/skills/base/SKILL.md', content: '---\nname: base\n---\n' },
+      { path: '.agents/skills/auth/SKILL.md', content: '---\nname: auth\n---\n' },
+      { path: '.agents/skills/architecture/SKILL.md', content: '---\nname: architecture\n---\n' },
+    ];
+    const perTarget = new Map([
+      ['claude', claudeFiles],
+      ['codex', codexFiles],
+    ]);
+    expect(() => assertTargetParity(perTarget)).not.toThrow();
+  });
+
+  it('extracts domain names when source skill paths use the Codex skillsDir', () => {
+    const codexBase = { path: '.agents/skills/base/SKILL.md', content: '---\nname: base\ndescription: Base\n---\n' };
+    const codexDomains = [
+      { path: '.agents/skills/auth/SKILL.md', content: '---\nname: auth\ndescription: Auth\n---\n' },
+      { path: '.agents/skills/billing/SKILL.md', content: '---\nname: billing\ndescription: Billing\n---\n' },
+    ];
+    const out = syncSkillsSection('# Project\n', codexBase, codexDomains, TARGETS.codex, false);
+    expect(out).toContain('.agents/skills/auth/SKILL.md');
+    expect(out).toContain('.agents/skills/billing/SKILL.md');
+  });
+});
+
+describe('syncBehaviorSection', () => {
+  it('appends a Behavior section with the canonical rules when missing', () => {
+    const out = syncBehaviorSection('# Project\n\nIntro.\n');
+    expect(out).toContain('## Behavior');
+    expect(out).toContain('Verify before claiming');
+    expect(out).toContain('Simplicity first');
+    expect(out).toContain('Surgical changes');
+  });
+
+  it('overwrites an existing Behavior section, never duplicating it', () => {
+    const input = '# Project\n\n## Behavior\n\n- stale rule\n\n## Conventions\n\nstuff\n';
+    const out = syncBehaviorSection(input);
+    expect(out.match(/## Behavior/g)).toHaveLength(1);
+    expect(out).not.toContain('stale rule');
+    expect(out).toContain('Surgical changes');
+    expect(out).toContain('## Conventions');
+  });
+});
+
+describe('sanitizePublishedContent', () => {
+  const skillBody = [
+    '# Skill',
+    '',
+    '## Activation',
+    '',
+    '- src/foo/**',
+    '',
+    '## Key Files',
+    '',
+    '- src/foo/bar.js',
+    '',
+    '## Real Content',
+    '',
+    'kept.',
+  ].join('\n');
+
+  it('strips ## Activation blocks regardless of path', () => {
+    const out = sanitizePublishedContent('\n' + skillBody, '.claude/skills/foo/skill.md');
+    expect(out).not.toContain('## Activation');
+    expect(out).toContain('## Real Content');
+  });
+
+  it('strips ## Key Files blocks regardless of path', () => {
+    const out = sanitizePublishedContent('\n' + skillBody, '.claude/skills/foo/skill.md');
+    expect(out).not.toContain('## Key Files');
+    expect(out).toContain('## Real Content');
+  });
+
+  it('strips data-block leaks (Hub files, Domain clusters, Hotspots, Framework entries) from skill files', () => {
+    const polluted = [
+      '# Skill',
+      '',
+      '**Hub files (most depended-on):**',
+      '- src/lib/foo.js (10 dependents)',
+      '',
+      '**Domain clusters:**',
+      '- src: src/lib/a.js, src/lib/b.js',
+      '',
+      '**High-churn hotspots:**',
+      '- src/lib/c.js (5 changes)',
+      '',
+      '**Framework entry points (nextjs-app):**',
+      '- src/app/page.tsx',
+      '',
+      '## Real Content',
+      '',
+      'kept.',
+    ].join('\n');
+
+    const out = sanitizePublishedContent('\n' + polluted, '.claude/skills/foo/skill.md');
+    expect(out).not.toContain('**Hub files');
+    expect(out).not.toContain('**Domain clusters:**');
+    expect(out).not.toContain('**High-churn hotspots:**');
+    expect(out).not.toContain('**Framework entry points');
+    expect(out).toContain('## Real Content');
+  });
+
+  it('preserves data-block content when filePath ends with code-map.md', () => {
+    const codeMap = [
+      '## Codebase Structure',
+      '',
+      '**Domain clusters:**',
+      '- **src**: `src/lib/foo.js`, `src/lib/bar.js`',
+      '',
+      '**Framework entry points (nextjs-app):**',
+      '- `src/app/page.tsx`',
+    ].join('\n');
+
+    const out = sanitizePublishedContent('\n' + codeMap, '.claude/code-map.md');
+    expect(out).toContain('**Domain clusters:**');
+    expect(out).toContain('**Framework entry points');
+    expect(out).toContain('src/lib/foo.js');
+  });
+
+  it('also preserves data blocks in codex references/code-map.md', () => {
+    const codeMap = '\n**Domain clusters:**\n- **app**: `app/main.py`\n';
+    const out = sanitizePublishedContent(codeMap, '.agents/skills/architecture/references/code-map.md');
+    expect(out).toContain('**Domain clusters:**');
+  });
+
+  it('still strips Activation from code-map paths (Activation never legitimate anywhere)', () => {
+    const polluted = '\n## Activation\n\nshould-go\n\n## Other\n\nkept\n';
+    const out = sanitizePublishedContent(polluted, '.claude/code-map.md');
+    expect(out).not.toContain('## Activation');
+    expect(out).toContain('## Other');
+  });
+
+  it('returns empty content unchanged', () => {
+    expect(sanitizePublishedContent('', 'whatever.md')).toBe('');
+    expect(sanitizePublishedContent(null, 'whatever.md')).toBe(null);
+  });
+
+  it('works without a filePath argument (defaults to non-codemap stripping)', () => {
+    const polluted = '\n**Domain clusters:**\n- thing\n';
+    const out = sanitizePublishedContent(polluted);
+    expect(out).not.toContain('**Domain clusters:**');
+  });
+});
+
+// Regression: repairDeterministicSections feeds a Claude-shaped baseFiles array
+// (just CLAUDE.md, no skills) into transformForTarget for each non-source target.
+// The codex side adds a synthetic `architecture` skill when a graph is present,
+// which the Claude side has no counterpart for. assertTargetParity has a
+// carve-out — this test pins that behavior so the no-op repair path stays safe.
+describe('Multi-target parity through the no-op repair flow', () => {
+  const __dirname2 = dirname(fileURLToPath(import.meta.url));
+  const fixtureRoot = join(__dirname2, 'fixtures', 'multi-target-parity');
+
+  beforeAll(() => {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+    const skillsDir = join(fixtureRoot, '.claude', 'skills');
+    mkdirSync(skillsDir, { recursive: true });
+
+    const skills = [
+      ['base',    '---\nname: base\ndescription: Core conventions\n---\n\nBase content.\n'],
+      ['billing', '---\nname: billing\ndescription: Stripe flows\n---\n\nBilling.\n'],
+      ['auth',    '---\nname: auth\ndescription: JWT auth\n---\n\nAuth.\n'],
+    ];
+    for (const [name, body] of skills) {
+      mkdirSync(join(skillsDir, name), { recursive: true });
+      writeFileSync(join(skillsDir, name, 'skill.md'), body, 'utf8');
+    }
+
+    writeFileSync(
+      join(fixtureRoot, 'CLAUDE.md'),
+      '# Test\n\n## Skills\n\n- old stub\n\n## Behavior\n\n- placeholder\n',
+      'utf8',
+    );
+  });
+
+  afterAll(() => {
+    if (existsSync(fixtureRoot)) rmSync(fixtureRoot, { recursive: true, force: true });
+  });
+
+  function buildFakeGraph() {
+    return {
+      version: '1.0',
+      meta: { generatedAt: new Date().toISOString(), gitHash: '', totalFiles: 0, totalEdges: 0 },
+      files: {},
+      hubs: [],
+      clusters: [],
+      coupling: [],
+      hotspots: [],
+      frameworkEntryPoints: [],
+      clusterIndex: {},
+    };
+  }
+
+  it('produces a parity-clean perTarget map when graph is present (codex adds architecture skill)', () => {
+    const baseFiles = [{
+      path: 'CLAUDE.md',
+      content: '# Test\n\n## Skills\n\n- list will be replaced by syncSkillsSection\n\n## Behavior\n\n- placeholder\n',
+    }];
+
+    const claudeFiles = baseFiles; // source == dest path
+    const codexFiles = transformForTarget(baseFiles, TARGETS.claude, TARGETS.codex, {
+      scanResult: { domains: [] },
+      graphSerialized: buildFakeGraph(),
+      repoPath: fixtureRoot,
+    });
+
+    const perTarget = new Map([
+      ['claude', claudeFiles],
+      ['codex', codexFiles],
+    ]);
+
+    // assertTargetParity must not throw — the architecture carve-out keeps the
+    // codex-only synthetic skill from creating a parity violation.
+    expect(() => assertTargetParity(perTarget)).not.toThrow();
+
+    // Codex output must contain all on-disk skills in AGENTS.md, not just the
+    // (empty) pending skill set passed in.
+    const agents = codexFiles.find(f => f.path === 'AGENTS.md');
+    expect(agents).toBeDefined();
+    expect(agents.content).toContain('.agents/skills/base/SKILL.md');
+    expect(agents.content).toContain('.agents/skills/billing/SKILL.md');
+    expect(agents.content).toContain('.agents/skills/auth/SKILL.md');
+    expect(agents.content).toContain('.agents/skills/architecture/SKILL.md');
+  });
+
+  it('produces a parity-clean perTarget map when no graph is present (no architecture skill)', () => {
+    const baseFiles = [{
+      path: 'CLAUDE.md',
+      content: '# Test\n\nBody.\n',
+    }];
+
+    const claudeFiles = baseFiles;
+    const codexFiles = transformForTarget(baseFiles, TARGETS.claude, TARGETS.codex, {
+      scanResult: { domains: [] },
+      // no graphSerialized → no architecture skill
+      repoPath: fixtureRoot,
+    });
+
+    const perTarget = new Map([
+      ['claude', claudeFiles],
+      ['codex', codexFiles],
+    ]);
+
+    expect(() => assertTargetParity(perTarget)).not.toThrow();
+
+    const agents = codexFiles.find(f => f.path === 'AGENTS.md');
+    expect(agents.content).not.toContain('.agents/skills/architecture/SKILL.md');
+    expect(agents.content).toContain('.agents/skills/billing/SKILL.md');
+  });
+});
+
+// Regression: sanitizeCodexInstructions used to filter out any line containing
+// `CLAUDE.md`, deleting context that the substitution pass would have rewritten.
+describe('sanitizeCodexInstructions (via transformForTarget) — CLAUDE.md mention rewrite', () => {
+  it('rewrites CLAUDE.md mentions to AGENTS.md instead of deleting the line', () => {
+    const files = [
+      { path: '.claude/skills/base/skill.md', content: '---\nname: base\n---\n\nBase.\n' },
+      { path: 'CLAUDE.md', content: '# Project\n\nThis project ships with CLAUDE.md describing conventions.\n\n## Notes\n\nSee CLAUDE.md sections above.\n' },
+    ];
+
+    const result = transformForTarget(files, TARGETS.claude, TARGETS.codex, { scanResult: { domains: [] } });
+    const agents = result.find(f => f.path === 'AGENTS.md');
+    expect(agents).toBeDefined();
+    // The original sentence survives — `CLAUDE.md` is rewritten, not the line dropped.
+    expect(agents.content).toContain('AGENTS.md describing conventions');
+    expect(agents.content).toContain('See AGENTS.md sections above');
+    // And the original token isn't left behind.
+    expect(agents.content).not.toContain('CLAUDE.md');
   });
 });
