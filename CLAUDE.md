@@ -3,19 +3,17 @@
 ## Skills
 
 - `.claude/skills/base/skill.md` — Base repo skill; load whenever working in this repo.
-- `.claude/skills/repo-scanning/skill.md` — Deterministic repo analysis — language/framework detection, structure mapping, domain discovery, health checks, and import graph integration
-- `.claude/skills/skill-generation/skill.md` — LLM-powered generation pipeline for Claude Code skills and CLAUDE.md — doc-init command, prompt system, context building, and output parsing
-- `.claude/skills/doc-sync/skill.md` — Incremental skill updater that maps git diffs to affected skills and optionally auto-syncs via a post-commit hook
-- `.claude/skills/doc-impact/skill.md` — Context health analysis — freshness, domain coverage, hub surfacing, drift detection, LLM-powered interpretation, and auto-repair for generated agent context
-- `.claude/skills/import-graph/skill.md` — Static import analysis that builds dependency graphs, domain clusters, hub files, git churn hotspots, and file priority rankings
-- `.claude/skills/claude-runner/skill.md` — Claude/Codex CLI execution layer — prompt loading, stream-json parsing, file output extraction, path sanitization, skill file writing, and skill rule generation
-- `.claude/skills/codex-support/skill.md` — Multi-target output system — target abstraction, backend routing, content transforms for Codex CLI and future targets
 - `.claude/skills/agent-customization/skill.md` — LLM-powered injection of project context into installed agent templates via `aspens customize agents`
-- `.claude/skills/template-library/skill.md` — Bundled agents, commands, hooks, and settings that users install via `aspens add`, `aspens doc init`, and `aspens save-tokens` into their .claude/ directories
-- `.claude/skills/save-tokens/skill.md` — Token-saving session automation — statusline, prompt guard, precompact handoffs, session rotation, and handoff commands for Claude Code
+- `.claude/skills/claude-runner/skill.md` — Claude/Codex CLI execution layer — prompt loading, stream-json parsing, file output extraction, path sanitization, skill file writing, and skill rule generation
 - `.claude/skills/cli-shell/skill.md` — Top-level Commander wiring, welcome screen, missing-hook warning, CliError exit handling, and the public programmatic API surface
-
-CLI for keeping coding-agent context accurate as your codebase changes. Supports Claude Code and Codex CLI. Stack: Node.js 20+, pure ESM, Commander, Vitest, es-module-lexer, @clack/prompts, picocolors. Entry point: `src/index.js` and CLI at `bin/cli.js`.
+- `.claude/skills/codex-support/skill.md` — Multi-target output system — target abstraction, backend routing, content transforms for Codex CLI and future targets
+- `.claude/skills/doc-impact/skill.md` — Context health analysis — freshness, domain coverage, hub surfacing, drift detection, LLM-powered interpretation, and auto-repair for generated agent context
+- `.claude/skills/doc-sync/skill.md` — Incremental skill updater that maps git diffs to affected skills and optionally auto-syncs via a post-commit hook
+- `.claude/skills/import-graph/skill.md` — Static import analysis that builds dependency graphs, domain clusters, hub files, git churn hotspots, and file priority rankings
+- `.claude/skills/repo-scanning/skill.md` — Deterministic repo analysis — language/framework detection, structure mapping, domain discovery, health checks, and import graph integration
+- `.claude/skills/save-tokens/skill.md` — Token-saving session automation — statusline, prompt guard, precompact handoffs, session rotation, and handoff commands for Claude Code
+- `.claude/skills/skill-generation/skill.md` — LLM-powered generation pipeline for Claude Code skills and CLAUDE.md — doc-init command, prompt system, context building, and output parsing
+- `.claude/skills/template-library/skill.md` — Bundled agents, commands, hooks, and settings that users install via `aspens add`, `aspens doc init`, and `aspens save-tokens` into their .claude/ directories
 
 ## Commands
 

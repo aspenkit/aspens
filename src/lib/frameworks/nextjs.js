@@ -123,9 +123,8 @@ function walkPagesDir(repoPath, dir, out, depth = 0) {
   try { entries = readdirSync(dir); } catch { return; }
 
   for (const entry of entries) {
-    if (entry.startsWith('.') || entry.startsWith('_document') || entry.startsWith('_app')) {
-      // _app and _document are entry-equivalents — keep them too.
-    }
+    if (entry.startsWith('.')) continue; // skip hidden files/dirs (.DS_Store, .next/, etc.)
+    // `_app` and `_document` are Pages Router entry equivalents — fall through.
     const full = join(dir, entry);
     let stat;
     try { stat = statSync(full); } catch { continue; }
