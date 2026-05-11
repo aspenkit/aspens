@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { transformForTarget, validateTransformedFiles, projectCodexDomainDocs, ensureRootKeyFilesSection } from '../src/lib/target-transform.js';
+import { transformForTarget, validateTransformedFiles, projectCodexDomainDocs, ensureRootKeyFilesSection, syncSkillsSection, syncBehaviorSection } from '../src/lib/target-transform.js';
 import { TARGETS } from '../src/lib/target.js';
 
 const mockScanResult = {
@@ -139,24 +139,28 @@ describe('projectCodexDomainDocs', () => {
   });
 });
 
-describe('ensureRootKeyFilesSection', () => {
-  it('inserts a key files section before behavior when missing', () => {
+describe('ensureRootKeyFilesSection (Phase 1: legacy-only stripper)', () => {
+  it('does NOT insert a key files section when missing — hub blocks are no longer emitted into root instructions', () => {
     const content = '# Backend\n\n## Commands\n\nuv run pytest\n\n## Behavior\n\n- Verify before claiming\n';
     const result = ensureRootKeyFilesSection(content, mockGraph);
 
-    expect(result).toContain('## Key Files');
-    expect(result).toContain('`app/core/cache_service.py`');
-    expect(result.indexOf('## Key Files')).toBeLessThan(result.indexOf('## Behavior'));
+    expect(result).not.toContain('## Key Files');
+    expect(result).toContain('## Commands');
+    expect(result).toContain('## Behavior');
   });
 
-  it('replaces an incomplete key files section with all top hubs', () => {
+  it('strips a legacy hub block if present (backwards-compat one-shot)', () => {
     const content = '# Backend\n\n## Key Files\n\n- `app/core/db.py` - 9 dependents\n\n## Behavior\n';
     const result = ensureRootKeyFilesSection(content, mockGraph);
 
-    expect(result).toContain('`app/core/db.py` - 9 dependents');
-    expect(result).toContain('`app/core/cache_service.py` - 7 dependents');
-    expect(result).toContain('`app/middleware/rate_limit.py` - 6 dependents');
-    expect(result.match(/## Key Files/g)).toHaveLength(1);
+    expect(result).not.toContain('## Key Files');
+    expect(result).not.toContain('9 dependents');
+    expect(result).toContain('## Behavior');
+  });
+
+  it('returns content unchanged when no legacy block is present', () => {
+    const content = '# Backend\n\n## Commands\n\nrun me\n';
+    expect(ensureRootKeyFilesSection(content, mockGraph)).toBe(content);
   });
 });
 
@@ -211,5 +215,60 @@ describe('validateTransformedFiles', () => {
     ]);
     expect(valid).toBe(false);
     expect(issues).toHaveLength(2);
+  });
+});
+
+describe('syncSkillsSection', () => {
+  const baseSkill = { path: '.claude/skills/base/skill.md', content: '---\nname: base\ndescription: Base skill desc\n---\n' };
+  const domainSkills = [
+    { path: '.claude/skills/auth/skill.md', content: '---\nname: auth\ndescription: Auth handling\n---\n' },
+    { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\ndescription: Billing flows\n---\n' },
+  ];
+
+  it('injects a Skills section listing every generated skill for Claude', () => {
+    const claudeMd = '# Project\n\nIntro.\n';
+    const out = syncSkillsSection(claudeMd, baseSkill, domainSkills, TARGETS.claude, false);
+    expect(out).toContain('## Skills');
+    expect(out).toContain('.claude/skills/base/skill.md');
+    expect(out).toContain('.claude/skills/auth/skill.md');
+    expect(out).toContain('.claude/skills/billing/skill.md');
+    expect(out).toContain('Auth handling');
+    expect(out).toContain('Billing flows');
+  });
+
+  it('overwrites an existing Skills section rather than duplicating it', () => {
+    const claudeMd = '# Project\n\n## Skills\n\n- only-one-stale-entry\n\n## Conventions\n\nstuff\n';
+    const out = syncSkillsSection(claudeMd, baseSkill, domainSkills, TARGETS.claude, false);
+    expect(out.match(/## Skills/g)).toHaveLength(1);
+    expect(out).not.toContain('only-one-stale-entry');
+    expect(out).toContain('.claude/skills/auth/skill.md');
+    expect(out).toContain('## Conventions');
+  });
+
+  it('uses Codex paths and casing when destTarget is codex', () => {
+    const agentsMd = '# Project\n';
+    const out = syncSkillsSection(agentsMd, baseSkill, domainSkills, TARGETS.codex, true);
+    expect(out).toContain('.agents/skills/base/SKILL.md');
+    expect(out).toContain('.agents/skills/auth/SKILL.md');
+    expect(out).toContain('.agents/skills/architecture/SKILL.md');
+  });
+});
+
+describe('syncBehaviorSection', () => {
+  it('appends a Behavior section with the canonical rules when missing', () => {
+    const out = syncBehaviorSection('# Project\n\nIntro.\n');
+    expect(out).toContain('## Behavior');
+    expect(out).toContain('Verify before claiming');
+    expect(out).toContain('Simplicity first');
+    expect(out).toContain('Surgical changes');
+  });
+
+  it('overwrites an existing Behavior section, never duplicating it', () => {
+    const input = '# Project\n\n## Behavior\n\n- stale rule\n\n## Conventions\n\nstuff\n';
+    const out = syncBehaviorSection(input);
+    expect(out.match(/## Behavior/g)).toHaveLength(1);
+    expect(out).not.toContain('stale rule');
+    expect(out).toContain('Surgical changes');
+    expect(out).toContain('## Conventions');
   });
 });

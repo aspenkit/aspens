@@ -42,8 +42,5 @@ You are working on **aspens' repo scanning system** — a fully deterministic an
 - **Tests use real filesystem fixtures**, not mocks — create fixtures with `createFixture(name, files)` pattern, always clean up
 - **`detectEntryPoints` is exported** and reused by `graph-builder.js` — changing its signature breaks the graph builder
 
-## References
-- **No guidelines directory** — `.claude/guidelines/` does not exist yet for this domain
-
 ---
-**Last Updated:** 2026-04-16
+**Last Updated:** 2026-05-10

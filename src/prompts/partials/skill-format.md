@@ -53,17 +53,22 @@ Keywords: keyword1, keyword2
 
 You are working on **[domain description]**.
 
-## Key Files
-- `[file]` — [what it does]
+## Domain purpose
+[One paragraph: what this domain DOES for the business and what users/systems rely on it.]
 
-## Key Concepts
-- **[Concept]:** [Brief explanation]
+## Business rules / invariants
+- [Concrete rule that must always hold — e.g. "Stripe subscriptions cancel at period end, never immediately"]
+- [Authorization/data invariant — e.g. "Only the request owner or staff can mutate this resource"]
+
+## Non-obvious behaviors
+- [Behavior the code wouldn't reveal at a glance — e.g. "Auth callback redirects to onboarding if profile is incomplete"]
+- [Edge case the implementation handles silently]
+
+## Critical files (purpose, not inventory)
+- `[file]` — [what role it plays in the domain — not "exports X, Y, Z"]
 
 ## Critical Rules
 - [Rule that would break things if violated]
-
-## References
-- **Patterns:** `{{configDir}}/guidelines/{domain}/patterns.md`
 
 ---
 **Last Updated:** [DATE]
@@ -75,4 +80,4 @@ You are working on **[domain description]**.
 - Be specific: real file paths, real commands, real patterns.
 - Non-obvious knowledge only — don't explain the framework, explain THIS project's usage.
 - Activation: file patterns as `- \`glob\`` lines; `Keywords:` comma-separated. Base skill uses "always loads" sentence instead.
-- References section required on domain skills — bold label + backtick path to guideline files.
+- **Lead with business behavior, not file inventory.** Forbidden in skills: file counts, hub names, dependency tallies, line counts, "most depended on" rankings — the graph supplies these dynamically. Skills are about WHAT the code does for the business and WHY, not metadata about the code.

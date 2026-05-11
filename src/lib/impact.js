@@ -68,7 +68,7 @@ export function summarizeTarget(repoPath, target, scan, graph, sourceState, conf
     ...skillFiles.map(skill => skill.path),
   ]);
   const domainCoverage = computeDomainCoverage(scan.domains, skillFiles);
-  const hubCoverage = computeHubCoverage(topHubs, contextText);
+  const hubCoverage = computeHubCoverage(topHubs, contextText, { repoPath, target });
   const drift = computeDrift(sourceState, lastUpdated, scan.domains);
   const status = computeTargetStatus({
     instructionExists,
@@ -150,14 +150,60 @@ export function computeDomainCoverage(domains, skills) {
   };
 }
 
-export function computeHubCoverage(hubPaths, contextText) {
-  const haystack = (contextText || '').toLowerCase();
+/**
+ * Hub coverage check (Phase 4: relocated from CLAUDE.md to code-map).
+ *
+ * Phase 1 removed the `## Key Files` block from CLAUDE.md/AGENTS.md, so the
+ * old check (look for hub paths in `contextText` built from CLAUDE.md + base
+ * skill) always reported 0/N. Hub coverage is now delegated to code-map:
+ *   - Claude target: `.claude/code-map.md`
+ *   - Codex target: `.agents/skills/architecture/references/code-map.md`
+ *
+ * If the relevant code-map file is missing, we report a single signal
+ * (`codeMapMissing: true`) rather than spurious "missing hub" warnings.
+ *
+ * @param {string[]} hubPaths
+ * @param {string} contextText - kept as a fallback haystack
+ * @param {{ repoPath?: string, target?: object }} [opts]
+ */
+export function computeHubCoverage(hubPaths, contextText, opts = {}) {
+  const { repoPath, target } = opts;
+  const total = hubPaths?.length || 0;
+
+  let codeMapText = null;
+  let codeMapMissing = false;
+  if (repoPath && target) {
+    const codeMapPath = resolveCodeMapPath(repoPath, target);
+    if (codeMapPath && existsSync(codeMapPath)) {
+      try {
+        codeMapText = readFileSync(codeMapPath, 'utf8');
+      } catch { codeMapText = null; }
+    } else {
+      codeMapMissing = true;
+    }
+  }
+
+  // Code-map is the canonical surface for hub paths post-Phase 1.
+  // If it's present, that's our haystack. Otherwise (or if no repoPath was
+  // passed — older callers/tests), fall back to the old contextText behavior.
+  const haystack = (codeMapText ?? contextText ?? '').toLowerCase();
   const mentioned = (hubPaths || []).filter(path => haystack.includes(path.toLowerCase()));
+
   return {
     mentioned: mentioned.length,
-    total: hubPaths?.length || 0,
+    total,
     paths: mentioned,
+    codeMapMissing,
   };
+}
+
+function resolveCodeMapPath(repoPath, target) {
+  // Codex puts the code-map under the architecture skill's references dir;
+  // Claude has a top-level `.claude/code-map.md`.
+  if (target?.id === 'codex') {
+    return join(repoPath, '.agents', 'skills', 'architecture', 'references', 'code-map.md');
+  }
+  return join(repoPath, '.claude', 'code-map.md');
 }
 
 export function computeHealthScore(input, target) {
@@ -355,6 +401,17 @@ export function summarizeOpportunities(repoPath, targets, config = null) {
     });
   }
 
+  // Phase 6: warn when an agent's `skills:` frontmatter references a missing
+  // skill file. This catches manually-broken agents and stale upgrades.
+  const brokenAgentSkillRefs = checkAgentSkillReferences(repoPath);
+  for (const ref of brokenAgentSkillRefs) {
+    opportunities.push({
+      kind: 'agent-skill-refs',
+      message: `${ref.agent}: skills [${ref.missing.join(', ')}] not found in .claude/skills/`,
+      command: `aspens doc init   # generate the missing skill, or remove the frontmatter ref`,
+    });
+  }
+
   return opportunities;
 }
 
@@ -436,8 +493,25 @@ export function summarizeMissing(targets) {
     });
   }
 
+  // Phase 4: code-map presence is the single signal we surface when missing.
+  // Hub-coverage warnings only fire when the code-map exists but doesn't list
+  // the hubs (which usually means the code-map is stale and a `doc graph`
+  // would fix it).
+  const codeMapMissingTargets = targets.filter(target => target.hubCoverage?.codeMapMissing);
+  if (codeMapMissingTargets.length > 0) {
+    items.push({
+      kind: 'code-map-missing',
+      severity: 'low',
+      message: `code-map missing — run \`aspens doc graph\` (${codeMapMissingTargets.map(t => t.label).join(', ')})`,
+    });
+  }
+
   const weakRootContext = targets
-    .filter(target => target.hubCoverage?.total > 0 && target.hubCoverage.mentioned < target.hubCoverage.total)
+    .filter(target =>
+      target.hubCoverage?.total > 0 &&
+      target.hubCoverage.mentioned < target.hubCoverage.total &&
+      !target.hubCoverage.codeMapMissing
+    )
     .map(target => ({
       label: target.label,
       missing: target.hubCoverage.total - target.hubCoverage.mentioned,
@@ -447,7 +521,7 @@ export function summarizeMissing(targets) {
       kind: 'root-context',
       severity: 'low',
       message: weakRootContext
-        .map(item => `${item.label} is missing ${item.missing} top hub file${item.missing === 1 ? '' : 's'} from root context`)
+        .map(item => `${item.label} is missing ${item.missing} top hub file${item.missing === 1 ? '' : 's'} from code-map`)
         .join(' | '),
     });
   }
@@ -464,6 +538,48 @@ export function summarizeMissing(targets) {
   }
 
   return items;
+}
+
+/**
+ * Phase 6: scan `.claude/agents/*.md` for `skills: [name1, name2]` frontmatter
+ * lines and verify each named skill file exists at `.claude/skills/<name>/skill.md`.
+ *
+ * @param {string} repoPath
+ * @returns {Array<{agent: string, missing: string[]}>}
+ */
+export function checkAgentSkillReferences(repoPath) {
+  const agentsDir = join(repoPath, '.claude', 'agents');
+  const skillsDir = join(repoPath, '.claude', 'skills');
+  if (!existsSync(agentsDir)) return [];
+
+  const broken = [];
+  let entries;
+  try { entries = readdirSync(agentsDir); } catch { return []; }
+
+  for (const entry of entries) {
+    if (!entry.endsWith('.md')) continue;
+    const fullPath = join(agentsDir, entry);
+    let content;
+    try { content = readFileSync(fullPath, 'utf8'); } catch { continue; }
+
+    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!fmMatch) continue;
+    const skillsMatch = fmMatch[1].match(/^skills:\s*\[([^\]]*)\]/m);
+    if (!skillsMatch) continue;
+
+    const declared = skillsMatch[1]
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    const missing = declared.filter(name =>
+      !existsSync(join(skillsDir, name, 'skill.md'))
+    );
+    if (missing.length > 0) {
+      broken.push({ agent: entry, missing });
+    }
+  }
+
+  return broken;
 }
 
 export function evaluateSaveTokensHealth(repoPath, saveTokensConfig = null) {

@@ -24,7 +24,6 @@ You are a senior code reviewer. You examine code for quality, architectural cons
 - Read `CLAUDE.md` for top-level conventions and commands
 - Read `.claude/skills/base/skill.md` for full architecture map, module inventory, and critical conventions
 - Read domain-specific skills in `.claude/skills/` when reviewing code in a particular area (e.g., `claude-runner/skill.md` for `runner.js` changes)
-- No `.claude/guidelines/` directory exists yet — skip checking for it
 - If reviewing a task with plans, check `dev/active/[task-name]/` for context
 
 **How to Review:**

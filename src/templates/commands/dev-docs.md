@@ -32,6 +32,5 @@ Create a focused, actionable plan for: $ARGUMENTS
 
 ## Context References
 - Check CLAUDE.md and `.claude/skills/` for project conventions
-- Check `.claude/guidelines/` if it exists for architecture patterns
 
 **Tip**: Use the `plan` agent to both plan AND execute. This command is for when you only need the plan.

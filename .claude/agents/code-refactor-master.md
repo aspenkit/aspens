@@ -13,7 +13,6 @@ You execute refactoring systematically — reorganizing code, extracting compone
 
 **Context (read on-demand):**
 - Read `CLAUDE.md` and `.claude/skills/base/skill.md` for project conventions
-- No `.claude/guidelines/` directory exists — skip checking for it
 - If a refactoring plan exists, check `dev/active/[task-name]/` for the plan (create `dev/` dirs as needed)
 
 **Key Conventions:**

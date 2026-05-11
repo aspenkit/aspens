@@ -50,7 +50,7 @@ export function readSkillContent(projectDir, skillName) {
     if (rel.startsWith('..') || resolve(rel) === rel) continue;
     if (existsSync(candidate)) {
       try {
-        return readFileSync(candidate, 'utf-8');
+        return stripActivationBlock(readFileSync(candidate, 'utf-8'));
       } catch {
         // Continue to next path
       }
@@ -58,6 +58,18 @@ export function readSkillContent(projectDir, skillName) {
   }
 
   return null;
+}
+
+// The `## Activation` section is the source-of-truth for skill-rules.json
+// (file patterns + keywords). Once a skill has been selected for activation,
+// re-stating *when* it activates inside the injected content is wasted tokens.
+// Strip the block before injection — the on-disk file is unchanged so the
+// rules generator still reads it.
+function stripActivationBlock(content) {
+  if (!content) return content;
+  return content
+    .replace(/\n## Activation\s*\r?\n[\s\S]*?(?:\r?\n---\s*\r?\n|(?=\r?\n## )|$)/, '\n')
+    .replace(/(\r?\n){3,}/g, '\n\n');
 }
 
 /**

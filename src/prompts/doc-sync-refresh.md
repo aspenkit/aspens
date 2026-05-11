@@ -1,5 +1,7 @@
 Refresh an existing **skill file** to match the current codebase. Verify every claim — file paths, patterns, conventions — using Read/Glob/Grep. Fix stale references, add missing coverage.
 
+{{preservation-contract-refresh}}
+
 {{skill-format}}
 
 ## Your task
@@ -28,3 +30,4 @@ Return ONLY the files that need updating, wrapped in XML tags:
 5. **Update timestamps.** Change `Last Updated` to today's date on any skill you modify.
 6. **Keep skills concise.** 30-60 lines. Every line earns its place.
 7. **Don't fabricate.** Only document what you can verify exists in the codebase right now.
+8. **Update-trigger allowlist (refresh mode).** Same allowlist as `doc-sync`: only changes to exported symbols, files, public-boundary signatures, frameworks, or major feature areas warrant edits. Refresh mode has no diff to anchor "removed" — instead, remove a line ONLY if its referenced file/export no longer exists in the current codebase (verify by reading or grepping). Stat-style content (counts, hub rankings, dependency tallies, freshness timestamps) is OUT OF SCOPE for refresh — never add, never update.

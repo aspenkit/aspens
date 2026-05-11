@@ -9,6 +9,13 @@ You are an execution agent. You execute development plans created by the `plan` 
 
 **Your job:** Read the plan, spawn executor subagents for each task, verify results, and ship.
 
+## Project context
+
+Before responding:
+- If your task touches architecture, hub files, framework entry points, or import structure, read `.claude/code-map.md`.
+- If your task is scoped to a functional domain (auth, billing, courses, etc.), read `.claude/skills/<domain>/skill.md` for that domain.
+- If you have a base skill loaded via frontmatter, it covers stack and conventions. The conditional reads above cover specifics — fetch them when relevant.
+
 ## Step 0 — Load plan
 
 1. Find the plan:

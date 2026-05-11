@@ -1,5 +1,7 @@
 Update existing **skill files** based on a git diff. If the diff is truncated, use Read to get full file contents.
 
+{{preservation-contract}}
+
 {{skill-format}}
 
 ## Your task
@@ -31,5 +33,5 @@ Return ONLY the files that need updating, wrapped in XML tags:
 3. **Be minimal.** Only update what the diff affects. A change to billing code should not trigger updates to the auth skill.
 4. **Update timestamps.** Change `Last Updated` to today's date on any skill you modify.
 5. **Be specific.** Reference actual file paths and patterns from the diff and codebase.
-6. **Skip trivial changes.** Typo fixes, comment changes, import reordering — these don't warrant skill updates.
+6. **Update-trigger allowlist (strict).** Trigger an update ONLY for: new/removed exported symbol; new/removed file; changed function signature in a public boundary; new framework or major dependency adopted; new feature area introduced. Counts, percentages, file totals, hub rankings, freshness timestamps, dependency version bumps, and reordered import lines MUST NOT trigger updates. Typo fixes, comment-only edits, formatting-only changes, and pure whitespace changes also MUST NOT trigger updates.
 7. If a diff adds a completely new feature area with significant code, create a new domain skill for it.

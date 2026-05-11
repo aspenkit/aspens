@@ -33,9 +33,6 @@ You are working on **billing, Stripe integration, and usage limits**.
 - Webhook endpoint has NO JWT auth — Stripe signature verification only
 - Cancel = `cancel_at_period_end=True` (access until period end)
 
-## References
-- **Patterns:** `{{configDir}}/guidelines/billing/patterns.md`
-
 ---
 **Last Updated:** 2026-03-18
 ```

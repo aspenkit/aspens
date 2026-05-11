@@ -75,6 +75,7 @@ export function serializeGraph(rawGraph, repoPath) {
     })),
     coupling: rawGraph.clusters?.coupling || [],
     hotspots: rawGraph.hotspots,
+    frameworkEntryPoints: rawGraph.frameworkEntryPoints || [],
     clusterIndex,
   };
 }
@@ -347,6 +348,24 @@ function shortPath(p) {
   return parts.length > 2 ? parts.slice(-2).join('/') : p;
 }
 
+/**
+ * Group framework-entry-point objects by their `kind` field.
+ * Returns a Map preserving deterministic insertion order so the resulting
+ * code-map sections render consistently across runs.
+ *
+ * @param {Array<{path: string, kind: string}>} entries
+ * @returns {Map<string, Array<{path: string, kind: string}>>}
+ */
+export function groupFrameworkEntries(entries) {
+  const grouped = new Map();
+  for (const entry of entries || []) {
+    const list = grouped.get(entry.kind) || [];
+    list.push(entry);
+    grouped.set(entry.kind, list);
+  }
+  return grouped;
+}
+
 // ---------------------------------------------------------------------------
 // Code-map generation — standalone overview, independent of skills
 // ---------------------------------------------------------------------------
@@ -366,15 +385,9 @@ const MAX_MAP_HOTSPOTS = 5;
 export function generateCodeMap(serializedGraph) {
   const lines = ['## Codebase Structure\n'];
 
-  // Hub files
-  if (serializedGraph.hubs?.length > 0) {
-    lines.push('**Hub files (most depended-on — prioritize reading these):**');
-    for (const h of serializedGraph.hubs.slice(0, MAX_MAP_HUBS)) {
-      const exports = (h.exports || []).slice(0, 6).join(', ');
-      lines.push(`- \`${h.path}\` — ${h.fanIn} dependents${exports ? ' | exports: ' + exports : ''}`);
-    }
-    lines.push('');
-  }
+  // Hub files block intentionally removed — counts/rankings move to code-map only
+  // (removed in Phase 1: stability — see dev/active/aspens-stability/plan.md).
+  // The graph hook still surfaces hubs at prompt-injection time when needed.
 
   // Domain clusters
   if (serializedGraph.clusters?.length > 0) {
@@ -412,6 +425,21 @@ export function generateCodeMap(serializedGraph) {
     lines.push('');
   }
 
+  // Framework entry points (Phase 3 — Next.js implicit roots)
+  if (serializedGraph.frameworkEntryPoints?.length > 0) {
+    const grouped = groupFrameworkEntries(serializedGraph.frameworkEntryPoints);
+    for (const [kind, entries] of grouped) {
+      lines.push(`**Framework entry points (${kind}):**`);
+      for (const entry of entries.slice(0, 20)) {
+        lines.push(`- \`${entry.path}\``);
+      }
+      if (entries.length > 20) {
+        lines.push(`- ... +${entries.length - 20} more`);
+      }
+      lines.push('');
+    }
+  }
+
   lines.push(`*${serializedGraph.meta.totalFiles} files, ${serializedGraph.meta.totalEdges} edges — updated ${serializedGraph.meta.generatedAt.split('T')[0]}*`);
   lines.push('');
 
@@ -446,6 +474,9 @@ export function generateGraphIndex(serializedGraph) {
   const exports = {};
   for (const [path, info] of Object.entries(serializedGraph.files)) {
     for (const exp of (info.exports || [])) {
+      // Skip synthetic re-export markers (e.g. "re-export:./foo") — they are
+      // structural edges, not identifiers a user would mention.
+      if (typeof exp === 'string' && exp.startsWith('re-export:')) continue;
       // Skip very short or generic exports (1-2 chars like 'x', 'a')
       if (exp.length > 2) {
         if (!exports[exp]) {

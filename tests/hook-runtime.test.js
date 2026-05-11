@@ -72,4 +72,21 @@ describe('skill activation hook runtime', () => {
     expect(result.stdout).toContain('ACTIVE SKILLS');
     expect(result.stdout).toContain('Base content');
   });
+
+  it('strips the ## Activation block from injected skill content', () => {
+    const scriptPath = join(HOOKS_DIR, 'skill-activation-prompt.sh');
+    const result = spawnSync('bash', [scriptPath], {
+      input: JSON.stringify({ prompt: 'anything' }),
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CLAUDE_PROJECT_DIR: MONOREPO_ROOT,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('Base content');
+    expect(result.stdout).not.toContain('## Activation');
+    expect(result.stdout).not.toContain('always loads when working in this repository');
+  });
 });

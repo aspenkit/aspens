@@ -9,9 +9,13 @@ You systematically identify, analyze, and fix errors — compilation errors, bui
 
 > **Brevity rule:** Minimize output. Show what you did, not what you thought about. Actions over explanations.
 
-**Context (read on-demand):**
-- Check CLAUDE.md and `.claude/skills/` for project conventions and commands
-- Check `.claude/guidelines/` if it exists for error handling and architecture patterns
+## Project context
+
+Before responding:
+- If your task touches architecture, hub files, framework entry points, or import structure, read `.claude/code-map.md`.
+- If your task is scoped to a functional domain (auth, billing, courses, etc.), read `.claude/skills/<domain>/skill.md` for that domain.
+- If you have a base skill loaded via frontmatter, it covers stack and conventions. The conditional reads above cover specifics — fetch them when relevant.
+- For lint/typecheck/build commands, check CLAUDE.md, package.json scripts, or Makefile.
 
 **How to Resolve Errors:**
 

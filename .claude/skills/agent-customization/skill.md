@@ -22,7 +22,7 @@ You are working on **agent customization** — the feature that reads a project'
 
 ## Key Concepts
 - **Claude-only feature:** Customize command reads `.aspens.json` and throws `CliError` if repo is configured for Codex-only (`targets: ['codex']`). Codex CLI has no agent concept.
-- **Context gathering:** `gatherProjectContext()` reads CLAUDE.md (truncated at 3000 chars), all `.claude/skills/**/*.md` in full, and lists `.claude/guidelines/` paths without reading their contents.
+- **Context gathering:** `gatherProjectContext()` reads CLAUDE.md (truncated at 3000 chars) and all `.claude/skills/**/*.md` in full. Skills are the single source of truth for project context.
 - **Agent discovery:** `findAgents()` recursively walks `.claude/agents/`, reads `.md` files, extracts `name:` via regex — falls back to filename if no frontmatter match.
 - **Read-only tools:** Claude is invoked with `allowedTools: ['Read', 'Glob', 'Grep']` and no maxTokens cap (unlike doc-init which sets per-call limits).
 - **Output parsing:** Claude returns `<file path="...">content</file>` XML tags, parsed by `parseFileOutput()`. Only `.claude/` paths are allowed.

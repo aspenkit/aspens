@@ -375,9 +375,15 @@ describe('generateCodeMap', () => {
     expect(map).toContain('## Codebase Structure');
   });
 
-  it('includes hub files', () => {
+  it('Phase 1: stability — does NOT include a `Hub files` block (hubs live only in clusters/hotspots/graph metadata)', () => {
     const map = generateCodeMap(graph);
-    expect(map).toContain('Hub files');
+    expect(map).not.toMatch(/^\*\*Hub files/m);
+  });
+
+  it('still surfaces hub-file paths via domain clusters', () => {
+    const map = generateCodeMap(graph);
+    // scanner.js still appears via the cluster listing even though the
+    // dedicated `Hub files` block was removed.
     expect(map).toContain('src/lib/scanner.js');
   });
 
