@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, existsSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { findSkillFiles, parseKeywords } from './skill-reader.js';
+import { sanitizePublishedContent } from './target-transform.js';
 
 /**
  * Write parsed skill files to the target repo.
@@ -27,7 +28,7 @@ export function writeSkillFiles(repoPath, files, options = {}) {
 
     // Create directories
     mkdirSync(dirname(fullPath), { recursive: true });
-    writeFileSync(fullPath, file.content, 'utf8');
+    writeFileSync(fullPath, sanitizePublishedContent(file.content, file.path), 'utf8');
     results.push({ path: file.path, status: exists ? 'overwritten' : 'created' });
   }
 
@@ -71,7 +72,7 @@ export function writeTransformedFiles(repoPath, files, options = {}) {
     }
 
     mkdirSync(dirname(fullPath), { recursive: true });
-    writeFileSync(fullPath, file.content, 'utf8');
+    writeFileSync(fullPath, sanitizePublishedContent(file.content, file.path), 'utf8');
     results.push({ path: file.path, status: exists ? 'overwritten' : 'created' });
   }
 

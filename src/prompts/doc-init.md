@@ -31,14 +31,14 @@ description: ...
 </file>
 
 <file path="{{instructionsFile}}">
-[{{instructionsFile}} content — do NOT include a `## Skills` section; aspens injects it deterministically]
+[{{instructionsFile}} content — do NOT include a `## Skills` section or any Skills variant (`## Skills Reference`, `## Skills Overview`, `## Available Skills`, etc.); aspens injects the canonical Skills list deterministically and strips variants]
 </file>
 
 **Important:** Use `<file path="...">` and `</file>` tags exactly as shown. Content between tags is written verbatim. Code blocks inside skills are fine — they won't break the parsing.
 
 ## Rules
 
-1. **Use YAML frontmatter** with `name` and `description` fields.
+1. **Use YAML frontmatter** with `name`, `description`, and `triggers:` fields (see skill-format above for the `triggers:` schema).
 2. **30-60 lines per skill.** Concise and actionable.
 3. **Be specific.** Use actual file paths, actual commands, actual patterns you found by reading the code.
 4. **Non-obvious knowledge only.** Don't explain what the framework is. Explain how THIS project uses it.

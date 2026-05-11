@@ -18,7 +18,7 @@ Return exactly one file wrapped in XML tags:
 
 ## Rules
 
-1. **Use YAML frontmatter** with `name` and `description` fields.
+1. **Use YAML frontmatter** with `name`, `description`, and `triggers:` fields (see skill-format above for the `triggers:` schema).
 2. **30-60 lines.** Concise and actionable.
 3. **Be specific.** Use actual file paths, actual patterns from the code you read.
 4. **Non-obvious knowledge only.** The base skill already covers the tech stack and general conventions. Focus on what's unique to THIS domain.

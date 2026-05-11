@@ -380,24 +380,44 @@ describe('generateCodeMap', () => {
     expect(map).not.toMatch(/^\*\*Hub files/m);
   });
 
-  it('still surfaces hub-file paths via domain clusters', () => {
+  it('includes Domain clusters block (language-agnostic structural data)', () => {
     const map = generateCodeMap(graph);
-    // scanner.js still appears via the cluster listing even though the
-    // dedicated `Hub files` block was removed.
+    expect(map).toContain('**Domain clusters:**');
+    expect(map).toContain('**src**');
     expect(map).toContain('src/lib/scanner.js');
   });
 
-  it('includes hotspots', () => {
+  it('drops single-file clusters (config/declaration noise)', () => {
+    // Fixture's `tests` cluster has only 1 file — should be filtered out.
     const map = generateCodeMap(graph);
-    expect(map).toContain('Hotspots');
+    expect(map).not.toContain('**tests**');
   });
 
-  it('includes graph stats', () => {
+  it('omits per-cluster (N files) counts (churn-prone on every sync)', () => {
     const map = generateCodeMap(graph);
-    expect(map).toContain('6 files');
-    expect(map).toContain('5 edges');
+    // No "(5 files)" / "(1 file)" suffixes after cluster labels.
+    expect(map).not.toMatch(/\*\*\s*\(\d+\s+files?\)/);
+    expect(map).not.toMatch(/-\s+\w+\s+\(\d+\s+files?\):/);
+  });
+
+  it('omits cross-domain dependencies block', () => {
+    const map = generateCodeMap(graph);
+    expect(map).not.toContain('**Cross-domain dependencies:**');
+  });
+
+  it('omits hotspots block (churn counts change every sync)', () => {
+    const map = generateCodeMap(graph);
+    expect(map).not.toContain('Hotspots');
+    expect(map).not.toMatch(/\d+ changes/);
+  });
+
+  it('omits totals/date footer (single biggest source of sync diff noise)', () => {
+    const map = generateCodeMap(graph);
+    expect(map).not.toMatch(/\d+ files, \d+ edges/);
+    expect(map).not.toMatch(/updated \d{4}-\d{2}-\d{2}/);
   });
 });
+
 
 // ---------------------------------------------------------------------------
 // writeCodeMap

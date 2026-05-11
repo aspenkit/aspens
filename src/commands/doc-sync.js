@@ -15,7 +15,7 @@ import { installGitHook, removeGitHook } from '../lib/git-hook.js';
 import { isGitRepo, getGitRoot, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
 import { TARGETS, getAllowedPaths, loadConfig } from '../lib/target.js';
 import { getSelectedFilesDiff, buildPrioritizedDiff, truncate } from '../lib/diff-helpers.js';
-import { projectCodexDomainDocs, transformForTarget, assertTargetParity, syncSkillsSection, syncBehaviorSection } from '../lib/target-transform.js';
+import { projectCodexDomainDocs, transformForTarget, assertTargetParity, syncSkillsSection, syncBehaviorSection, ensureRootKeyFilesSection } from '../lib/target-transform.js';
 import { isNoOpDiff } from '../lib/diff-classifier.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Glob', 'Grep'];
@@ -115,6 +115,40 @@ function notifyLegacyHubBlockIfPresent(repoPath) {
  * can route writes per target and so the parity validator can compare slots
  * across targets. Use `flattenPublishedMap` when a flat list is needed.
  */
+/**
+ * No-LLM repair pass: re-injects the deterministic `## Skills` + `## Behavior`
+ * sections into the root instructions file from on-disk state. Runs from the
+ * no-op / "up to date" sync paths so missing-section drift is fixed every time
+ * the user invokes sync, even when no diff or LLM update happens.
+ *
+ * Returns the list of written file results (empty when nothing needed updating).
+ */
+function repairDeterministicSections(repoPath, sourceTarget, publishTargets, scan, graphSerialized = null) {
+  const instructionsFile = sourceTarget?.instructionsFile || 'CLAUDE.md';
+  const instrPath = join(repoPath, instructionsFile);
+  if (!existsSync(instrPath)) return [];
+
+  const existingSkills = findExistingSkills(repoPath, sourceTarget);
+  const baseSkillForList = existingSkills.find(s => s.name === 'base') || null;
+  const domainSkillsForList = existingSkills.filter(s => s.name !== 'base');
+  const startContent = readFileSync(instrPath, 'utf8');
+
+  let updated = ensureRootKeyFilesSection(startContent);
+  updated = syncSkillsSection(updated, baseSkillForList, domainSkillsForList, sourceTarget, false);
+  updated = syncBehaviorSection(updated);
+  if (updated === startContent) return [];
+
+  const baseFiles = [{ path: instructionsFile, content: updated }];
+  const perTarget = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized, repoPath);
+  const files = flattenPublishedMap(perTarget);
+  const directWriteFiles = files.filter(f => !(f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md'));
+  const dirScopedFiles = files.filter(f => f.path.endsWith('/AGENTS.md') && f.path !== 'AGENTS.md');
+  return [
+    ...writeSkillFiles(repoPath, directWriteFiles, { force: true }),
+    ...writeTransformedFiles(repoPath, dirScopedFiles, { force: true }),
+  ];
+}
+
 function publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized = null, repoPath = null) {
   const perTarget = new Map();
 
@@ -200,7 +234,12 @@ export async function docSyncCommand(path, options) {
   diffSpinner.stop(`${changedFiles.length} files changed`);
 
   if (changedFiles.length === 0) {
-    p.outro('Nothing to sync');
+    const repairs = repairDeterministicSections(repoPath, sourceTarget, publishTargets, scanRepo(repoPath));
+    if (repairs.length > 0) {
+      console.log();
+      for (const wr of repairs) console.log(`  ${pc.yellow('~')} ${wr.path} ${pc.dim('(deterministic section repair)')}`);
+    }
+    p.outro(repairs.length > 0 ? 'No diffs — repaired deterministic sections' : 'Nothing to sync');
     return;
   }
 
@@ -215,7 +254,12 @@ export async function docSyncCommand(path, options) {
     // If a stale-format code-map is on disk (legacy `## Hub files` block),
     // force a graph rebuild so subsequent reads see the modern format.
     await regenerateStaleCodeMap(repoPath, sourceTarget, scanRepo(repoPath));
-    p.outro('No sync needed');
+    const repairs = repairDeterministicSections(repoPath, sourceTarget, publishTargets, scanRepo(repoPath));
+    if (repairs.length > 0) {
+      console.log();
+      for (const wr of repairs) console.log(`  ${pc.yellow('~')} ${wr.path} ${pc.dim('(deterministic section repair)')}`);
+    }
+    p.outro(repairs.length > 0 ? 'No code changes — repaired deterministic sections' : 'No sync needed');
     return;
   }
 
@@ -396,6 +440,39 @@ ${truncate(instructionsContent, 5000)}
       p.log.warn('LLM responded without <file> tags — treating as no updates needed.');
     }
   }
+
+  // Deterministic `## Skills` + `## Behavior` injection on the canonical
+  // instructions file. Runs whether or not the LLM updated it, so drift
+  // gets repaired every sync. Source target paths flow through unchanged;
+  // transformForTarget handles the codex/claude projection downstream.
+  {
+    const instrPath = join(repoPath, instructionsFile);
+    const pending = baseFiles.find(f => f.path === instructionsFile);
+    const startContent = pending
+      ? pending.content
+      : (existsSync(instrPath) ? readFileSync(instrPath, 'utf8') : null);
+
+    if (startContent != null) {
+      const baseSkillForList = existingSkills.find(s => s.name === 'base') || null;
+      const domainSkillsForList = existingSkills.filter(s => s.name !== 'base');
+
+      let updated = ensureRootKeyFilesSection(startContent);
+      updated = syncSkillsSection(
+        updated,
+        baseSkillForList,
+        domainSkillsForList,
+        sourceTarget,
+        false
+      );
+      updated = syncBehaviorSection(updated);
+
+      if (updated !== startContent) {
+        if (pending) pending.content = updated;
+        else baseFiles.push({ path: instructionsFile, content: updated });
+      }
+    }
+  }
+
   const perTarget = publishFilesForTargets(baseFiles, sourceTarget, publishTargets, scan, graphSerialized, repoPath);
   const files = flattenPublishedMap(perTarget);
 
@@ -708,8 +785,9 @@ async function refreshAllSkills(repoPath, options, sourceTarget, publishTargets 
     const baseSkillForList = existingSkills.find(s => s.name === 'base') || null;
     const domainSkillsForList = existingSkills.filter(s => s.name !== 'base');
 
-    let updated = syncSkillsSection(
-      startContent,
+    let updated = ensureRootKeyFilesSection(startContent);
+    updated = syncSkillsSection(
+      updated,
       baseSkillForList,
       domainSkillsForList,
       sourceTarget,

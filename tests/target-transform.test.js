@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { transformForTarget, validateTransformedFiles, projectCodexDomainDocs, ensureRootKeyFilesSection, syncSkillsSection, syncBehaviorSection } from '../src/lib/target-transform.js';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { transformForTarget, validateTransformedFiles, projectCodexDomainDocs, ensureRootKeyFilesSection, syncSkillsSection, syncBehaviorSection, assertTargetParity } from '../src/lib/target-transform.js';
 import { TARGETS } from '../src/lib/target.js';
 
 const mockScanResult = {
@@ -121,6 +124,90 @@ describe('transformForTarget', () => {
 
     const rootAgents = result.find(f => f.path === 'AGENTS.md');
     expect(rootAgents.content).not.toContain('CLAUDE.md');
+  });
+});
+
+// Regression: doc-sync passes only the CHANGED skills in `files`. The Skills
+// section of AGENTS.md/CLAUDE.md must still list every on-disk skill — earlier
+// builds were truncating the list to just the in-flight subset.
+describe('transformForTarget — Skills section completeness (regression)', () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const fixtureRoot = join(__dirname, 'fixtures', 'skills-completeness');
+
+  beforeAll(() => {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+    const skillsDir = join(fixtureRoot, '.claude', 'skills');
+    mkdirSync(skillsDir, { recursive: true });
+
+    const skills = [
+      ['base',    '---\nname: base\ndescription: Core conventions\n---\n\nBase content.\n'],
+      ['billing', '---\nname: billing\ndescription: Stripe billing flows\n---\n\nBilling.\n'],
+      ['auth',    '---\nname: auth\ndescription: JWT + Supabase auth\n---\n\nAuth.\n'],
+      ['payments',  '---\nname: payments\ndescription: Webhook + checkout handling\n---\n\nPayments.\n'],
+      ['profile',   '---\nname: profile\ndescription: User profile, settings, and stats\n---\n\nProfile.\n'],
+      ['platform',  '---\nname: platform\ndescription: Cross-cutting infra and middleware\n---\n\nPlatform.\n'],
+    ];
+
+    for (const [name, body] of skills) {
+      mkdirSync(join(skillsDir, name), { recursive: true });
+      writeFileSync(join(skillsDir, name, 'skill.md'), body, 'utf8');
+    }
+
+    writeFileSync(
+      join(fixtureRoot, 'CLAUDE.md'),
+      '# Test Repo\n\nOverview.\n\n## Skills\n\n- `.claude/skills/base/skill.md` — old listing\n',
+      'utf8',
+    );
+  });
+
+  afterAll(() => {
+    if (existsSync(fixtureRoot)) rmSync(fixtureRoot, { recursive: true, force: true });
+  });
+
+  it('lists every on-disk skill in AGENTS.md even when files only contains one changed skill', () => {
+    // doc-sync's typical call shape: only the changed skill flows through `files`.
+    const files = [
+      { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\ndescription: Stripe billing flows (updated)\n---\n\nBilling (new content).\n' },
+    ];
+
+    const result = transformForTarget(
+      files,
+      TARGETS.claude,
+      TARGETS.codex,
+      { scanResult: { domains: [] }, repoPath: fixtureRoot }
+    );
+
+    const rootAgents = result.find(f => f.path === 'AGENTS.md');
+    expect(rootAgents).toBeDefined();
+
+    // Every on-disk skill should appear in the Skills section.
+    expect(rootAgents.content).toContain('.agents/skills/base/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/billing/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/auth/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/payments/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/profile/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/platform/SKILL.md');
+
+    // Pending changes should win for descriptions.
+    expect(rootAgents.content).toContain('Stripe billing flows (updated)');
+  });
+
+  it('falls back to pending-only Skills list when repoPath is unavailable', () => {
+    const files = [
+      { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\ndescription: Billing\n---\n\nBilling.\n' },
+      { path: '.claude/skills/base/skill.md',    content: '---\nname: base\ndescription: Base\n---\n\nBase.\n' },
+    ];
+
+    const result = transformForTarget(
+      files,
+      TARGETS.claude,
+      TARGETS.codex,
+      { scanResult: { domains: [] } }
+    );
+
+    const rootAgents = result.find(f => f.path === 'AGENTS.md');
+    expect(rootAgents.content).toContain('.agents/skills/base/SKILL.md');
+    expect(rootAgents.content).toContain('.agents/skills/billing/SKILL.md');
   });
 });
 
@@ -251,6 +338,25 @@ describe('syncSkillsSection', () => {
     expect(out).toContain('.agents/skills/base/SKILL.md');
     expect(out).toContain('.agents/skills/auth/SKILL.md');
     expect(out).toContain('.agents/skills/architecture/SKILL.md');
+  });
+
+  it('does not raise a parity violation for the codex-only synthetic architecture skill', () => {
+    const claudeFiles = [
+      { path: 'CLAUDE.md', content: '# x' },
+      { path: '.claude/skills/base/skill.md', content: '---\nname: base\n---\n' },
+      { path: '.claude/skills/auth/skill.md', content: '---\nname: auth\n---\n' },
+    ];
+    const codexFiles = [
+      { path: 'AGENTS.md', content: '# x' },
+      { path: '.agents/skills/base/SKILL.md', content: '---\nname: base\n---\n' },
+      { path: '.agents/skills/auth/SKILL.md', content: '---\nname: auth\n---\n' },
+      { path: '.agents/skills/architecture/SKILL.md', content: '---\nname: architecture\n---\n' },
+    ];
+    const perTarget = new Map([
+      ['claude', claudeFiles],
+      ['codex', codexFiles],
+    ]);
+    expect(() => assertTargetParity(perTarget)).not.toThrow();
   });
 
   it('extracts domain names when source skill paths use the Codex skillsDir', () => {

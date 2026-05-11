@@ -6,7 +6,7 @@ Generate the root project instructions file at `{{instructionsFile}}`. Keep it c
 
 From the scan results and generated skills, create the root project instructions file covering: repo summary + tech stack, key commands (dev/test/lint), and critical conventions.
 
-**Do NOT generate a `## Skills` section.** aspens injects it deterministically after your output, listing every generated skill. If you write one it will be overwritten.
+**Do NOT generate a `## Skills` section, or any Skills variant** (`## Skills Reference`, `## Skills Overview`, `## Skill Inventory`, etc.). aspens injects the canonical skill list deterministically after your output. Variants will be stripped.
 
 ## Output format
 
@@ -19,7 +19,7 @@ Return exactly one file:
 ## Rules
 
 1. Keep it concise — this file is loaded often, so shorter is better.
-2. Do NOT emit a `## Skills` section. aspens injects the full skill list deterministically; anything you write will be overwritten.
+2. Do NOT emit `## Skills` or any Skills-variant heading (`## Skills Reference`, `## Skills Overview`, `## Skill Inventory`, `## Available Skills`, etc.). aspens owns this section; variants will be stripped.
 3. Include actual commands from the scan data, not placeholders.
 4. Do NOT duplicate what's already in the skills — just reference them by name in prose where useful.
 5. Do NOT emit a `## Behavior` section — aspens injects a fixed set of coding guardrails deterministically. Anything you write will be overwritten.

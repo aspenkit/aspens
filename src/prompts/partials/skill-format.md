@@ -8,12 +8,8 @@ Skill = markdown file at `{{skillsDir}}/{domain}/{{skillFilename}}` with YAML fr
 ---
 name: base
 description: Core conventions, tech stack, and project structure for [repo-name]
----
-
-## Activation
-
-This is a **base skill** that always loads when working in this repository.
-
+triggers:
+  alwaysActivate: true
 ---
 
 You are working in **[repo-name]**.
@@ -40,15 +36,12 @@ You are working in **[repo-name]**.
 ---
 name: [domain-name]
 description: [One-line description]
----
-
-## Activation
-
-This skill triggers when editing these files:
-- `[file pattern]`
-
-Keywords: keyword1, keyword2
-
+triggers:
+  files:
+    - [glob-pattern-matching-key-files]
+  keywords:
+    - [primary-keyword]
+    - [secondary-keyword]
 ---
 
 You are working on **[domain description]**.
@@ -79,5 +72,6 @@ You are working on **[domain description]**.
 - 30-60 lines max. Only what an AI needs to write correct code.
 - Be specific: real file paths, real commands, real patterns.
 - Non-obvious knowledge only — don't explain the framework, explain THIS project's usage.
-- Activation: file patterns as `- \`glob\`` lines; `Keywords:` comma-separated. Base skill uses "always loads" sentence instead.
-- **Lead with business behavior, not file inventory.** Forbidden in skills: file counts, hub names, dependency tallies, line counts, "most depended on" rankings — the graph supplies these dynamically. Skills are about WHAT the code does for the business and WHY, not metadata about the code.
+- **Do NOT emit a `## Activation` section.** Trigger metadata belongs in the `triggers:` frontmatter field, not in a markdown section. Hub/graph data lives in code-map and graph metadata, not in skills.
+- **Emit `triggers:` in frontmatter** with `files:` (array of globs matching key files for this domain) and `keywords:` (array of terms that signal this skill is relevant). For the base skill, use `triggers:\n  alwaysActivate: true` instead. Do NOT emit `## Key Files` hub counts, file counts, hub rankings, dependency tallies, line counts, or "most depended on" lists.
+- **Lead with business behavior, not file inventory.** Skills are about WHAT the code does for the business and WHY.
