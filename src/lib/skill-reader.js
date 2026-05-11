@@ -79,6 +79,12 @@ export function parseFrontmatter(content) {
  *
  * Returns { filePatterns: string[], keywords: string[], alwaysActivate: boolean }
  * Returns null when no `triggers:` key is present in frontmatter.
+ *
+ * Sentinel note: a bare `triggers:` (or `triggers: {}` with no sub-keys) is
+ * treated as "triggers present but empty" — it returns the empty-fields object,
+ * not null. Callers using `=== null` to mean "no triggers key" will see that
+ * as "triggers configured", which is intentional: an author who typed the key
+ * is opting in to the empty contract over the legacy `## Activation` fallback.
  */
 export function parseTriggersFrontmatter(content) {
   if (!content || typeof content !== 'string') return null;

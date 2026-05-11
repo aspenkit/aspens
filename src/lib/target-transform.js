@@ -322,11 +322,20 @@ export function syncSkillsSection(content, baseSkill, domainSkills, destTarget, 
     return working.replace(/## Skills\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/, section + '\n');
   }
 
-  const headingMatch = working.match(/^# .+\n?/);
-  if (!headingMatch) return section + '\n\n' + working;
+  // Fresh insert: place the Skills section just BEFORE the first existing
+  // `## ` heading so prose between the H1 and that heading isn't pushed
+  // "into" the Skills section. Otherwise the next sync's regex (which spans
+  // from `## Skills` until the next `## `) would eat that prose.
+  const nextSectionMatch = working.match(/\n## [^\n]+/);
+  if (nextSectionMatch) {
+    const idx = nextSectionMatch.index; // index of the '\n' before the heading
+    const head = working.slice(0, idx).replace(/\s+$/, '');
+    const tail = working.slice(idx).replace(/^\s+/, '');
+    return head + '\n\n' + section + '\n\n' + tail + (working.endsWith('\n') ? '' : '');
+  }
 
-  const insertAt = headingMatch[0].length;
-  return working.slice(0, insertAt) + '\n' + section + '\n\n' + working.slice(insertAt).trimStart();
+  // No other `## ` heading: append at the end so we don't trap any prose.
+  return working.replace(/\s+$/, '') + '\n\n' + section + '\n';
 }
 
 function buildSkillRefs(baseSkill, domainSkills, destTarget, hasArchitectureSkill = false) {

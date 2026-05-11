@@ -14,6 +14,7 @@ import {
   generateGraphIndex,
   saveGraphIndex,
   persistGraphArtifacts,
+  formatDomainClusters,
 } from '../src/lib/graph-persistence.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -490,6 +491,99 @@ describe('saveGraphIndex', () => {
     expect(loaded.exports.scanRepo).toEqual(['src/lib/scanner.js']);
     expect(loaded.hubBasenames).toBeDefined();
     expect(loaded.clusterLabels).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// formatDomainClusters (direct unit coverage)
+// ---------------------------------------------------------------------------
+describe('formatDomainClusters', () => {
+  const sampleFiles = {
+    'src/a.js': { fanIn: 3 },
+    'src/b.js': { fanIn: 5 },
+    'src/c.js': { fanIn: 1 },
+    'src/d.js': { fanIn: 5 },
+    'src/e.js': { fanIn: 0 },
+    'src/f.js': { fanIn: 0 },
+    'tests/x.test.js': { fanIn: 0 },
+    'tests/y.test.js': { fanIn: 0 },
+  };
+
+  it('returns null for null/empty input', () => {
+    expect(formatDomainClusters(null, sampleFiles)).toBeNull();
+    expect(formatDomainClusters([], sampleFiles)).toBeNull();
+    expect(formatDomainClusters([{ label: 'src', files: ['src/a.js'] }], null)).toBeNull();
+  });
+
+  it('drops single-file clusters', () => {
+    const out = formatDomainClusters(
+      [{ label: 'singleton', files: ['src/a.js'] }],
+      sampleFiles,
+    );
+    expect(out).toBeNull();
+  });
+
+  it('skips clusters where every file is missing from files map', () => {
+    const out = formatDomainClusters(
+      [
+        { label: 'ghost', files: ['ghost/a.js', 'ghost/b.js'] },
+        { label: 'src', files: ['src/a.js', 'src/b.js'] },
+      ],
+      sampleFiles,
+    );
+    expect(out).not.toContain('**ghost**');
+    expect(out).toContain('**src**');
+  });
+
+  it('sorts files within a cluster by fanIn desc then path asc', () => {
+    const out = formatDomainClusters(
+      [{ label: 'src', files: ['src/a.js', 'src/b.js', 'src/c.js', 'src/d.js'] }],
+      sampleFiles,
+    );
+    // b.js (fanIn 5) and d.js (fanIn 5) tie → alphabetical: b before d
+    const bIdx = out.indexOf('src/b.js');
+    const dIdx = out.indexOf('src/d.js');
+    const aIdx = out.indexOf('src/a.js');
+    const cIdx = out.indexOf('src/c.js');
+    expect(bIdx).toBeLessThan(dIdx);
+    expect(dIdx).toBeLessThan(aIdx);
+    expect(aIdx).toBeLessThan(cIdx);
+  });
+
+  it('caps top files per cluster at MAX_CLUSTER_FILES (5)', () => {
+    const out = formatDomainClusters(
+      [{ label: 'src', files: ['src/a.js', 'src/b.js', 'src/c.js', 'src/d.js', 'src/e.js', 'src/f.js'] }],
+      sampleFiles,
+    );
+    expect(out).toContain('src/a.js');
+    expect(out).toContain('src/b.js');
+    expect(out).toContain('src/c.js');
+    expect(out).toContain('src/d.js');
+    expect(out).toContain('src/e.js');
+    expect(out).not.toContain('src/f.js');
+  });
+
+  it('merges clusters with the same label (graph builder emits one component per disconnected island)', () => {
+    const out = formatDomainClusters(
+      [
+        { label: 'tests', files: ['tests/x.test.js'] },
+        { label: 'tests', files: ['tests/y.test.js'] },
+      ],
+      sampleFiles,
+    );
+    expect(out).toContain('**tests**');
+    expect(out).toContain('tests/x.test.js');
+    expect(out).toContain('tests/y.test.js');
+    // single header for the merged cluster
+    expect(out.match(/\*\*tests\*\*/g)).toHaveLength(1);
+  });
+
+  it('omits per-cluster (N files) counts', () => {
+    const out = formatDomainClusters(
+      [{ label: 'src', files: ['src/a.js', 'src/b.js'] }],
+      sampleFiles,
+    );
+    expect(out).not.toMatch(/\(\d+\s+files?\)/);
   });
 });
 

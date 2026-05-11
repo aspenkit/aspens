@@ -311,7 +311,7 @@ function resolveRelativeImport(repoPath, fromFile, specifier) {
   }
 
   // Try extensions
-  const extensions = ['.js', '.ts', '.tsx', '.jsx', '.mjs'];
+  const extensions = ['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs'];
   for (const ext of extensions) {
     const candidate = targetBase + ext;
     if (existsSync(candidate)) {
@@ -320,7 +320,7 @@ function resolveRelativeImport(repoPath, fromFile, specifier) {
   }
 
   // Try /index variants (directory import)
-  const indexExts = ['.js', '.ts', '.tsx', '.jsx'];
+  const indexExts = ['.js', '.ts', '.tsx', '.jsx', '.mjs', '.cjs'];
   for (const ext of indexExts) {
     const candidate = join(targetBase, 'index' + ext);
     if (existsSync(candidate)) {

@@ -123,7 +123,7 @@ function notifyLegacyHubBlockIfPresent(repoPath) {
  *
  * Returns the list of written file results (empty when nothing needed updating).
  */
-function repairDeterministicSections(repoPath, sourceTarget, publishTargets, scan, graphSerialized = null) {
+export function repairDeterministicSections(repoPath, sourceTarget, publishTargets, scan, graphSerialized = null) {
   const instructionsFile = sourceTarget?.instructionsFile || 'CLAUDE.md';
   const instrPath = join(repoPath, instructionsFile);
   if (!existsSync(instrPath)) return [];

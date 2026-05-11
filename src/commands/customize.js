@@ -200,9 +200,13 @@ function findAgents(agentsDir, repoPath) {
   const agents = [];
 
   function walk(dir) {
-    for (const entry of readdirSync(dir)) {
+    let entries;
+    try { entries = readdirSync(dir); } catch { return; }
+    for (const entry of entries) {
       const full = join(dir, entry);
-      if (statSync(full).isDirectory()) {
+      let stat;
+      try { stat = statSync(full); } catch { continue; } // broken symlink, race, etc.
+      if (stat.isDirectory()) {
         walk(full);
       } else if (entry.endsWith('.md')) {
         const content = readFileSync(full, 'utf8');
@@ -236,9 +240,13 @@ function gatherProjectContext(repoPath) {
   const skillsDir = join(repoPath, '.claude', 'skills');
   if (existsSync(skillsDir)) {
     function walkSkills(dir) {
-      for (const entry of readdirSync(dir)) {
+      let entries;
+      try { entries = readdirSync(dir); } catch { return; }
+      for (const entry of entries) {
         const full = join(dir, entry);
-        if (statSync(full).isDirectory()) {
+        let stat;
+        try { stat = statSync(full); } catch { continue; }
+        if (stat.isDirectory()) {
           walkSkills(full);
         } else if (entry.endsWith('.md')) {
           const content = readFileSync(full, 'utf8');

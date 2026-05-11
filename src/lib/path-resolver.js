@@ -13,8 +13,8 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, dirname, extname, resolve, relative } from 'path';
 
-const ALIAS_RESOLUTION_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs'];
-const ALIAS_INDEX_EXTS = ['.ts', '.tsx', '.js', '.jsx'];
+const ALIAS_RESOLUTION_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
+const ALIAS_INDEX_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
 
 /**
  * Load path aliases from tsconfig.json / jsconfig.json. Walks the repo root,
@@ -154,7 +154,7 @@ export function resolveAliasImport(repoPath, specifier, aliases) {
     const targetBase = join(replacement, rest);
 
     if (extname(rest)) {
-      if (existsSync(targetBase)) {
+      if (existsSync(targetBase) && isInsideRepo(repoPath, targetBase)) {
         return relative(repoPath, targetBase);
       }
       continue;
@@ -162,20 +162,30 @@ export function resolveAliasImport(repoPath, specifier, aliases) {
 
     for (const ext of ALIAS_RESOLUTION_EXTS) {
       const candidate = targetBase + ext;
-      if (existsSync(candidate)) {
+      if (existsSync(candidate) && isInsideRepo(repoPath, candidate)) {
         return relative(repoPath, candidate);
       }
     }
 
     for (const ext of ALIAS_INDEX_EXTS) {
       const candidate = join(targetBase, 'index' + ext);
-      if (existsSync(candidate)) {
+      if (existsSync(candidate) && isInsideRepo(repoPath, candidate)) {
         return relative(repoPath, candidate);
       }
     }
   }
 
   return null;
+}
+
+/**
+ * Guard against malformed/malicious `tsconfig.json` `paths:` entries that
+ * resolve outside the repo (e.g. `"@/*": ["../../../outside/*"]`). Graph
+ * nodes for out-of-repo files corrupt cluster analysis and code-map output.
+ */
+function isInsideRepo(repoPath, candidate) {
+  const rel = relative(repoPath, candidate);
+  return !!rel && !rel.startsWith('..') && !rel.startsWith('/');
 }
 
 function readFileSafe(filePath) {

@@ -31,7 +31,7 @@
 
 ## Release
 
-- Release workflow: `/Users/MV/aspenkit/dev/release.md`
+- Release workflow: `../dev/release.md`
 
 ## Conventions
 
