@@ -30,11 +30,11 @@ You are working on **multi-target output support** — the system that lets aspe
 - **Canonical generation:** Generation always produces Claude-canonical format first. Prompts always receive `CANONICAL_VARS` (hardcoded Claude paths from `doc-init.js`). Transforms run **after** generation to produce other target formats.
 - **Content transform:** `transformForTarget()` remaps paths and content. For Codex: base skill → root `AGENTS.md`, domain skills → both `.agents/skills/{domain}/SKILL.md` and source directory `AGENTS.md`. `generateCodexSkillReferences()` creates `.agents/skills/architecture/` with code-map data.
 - **Skills section completeness:** `collectSkillsForList()` (internal) reads every skill from disk under `sourceTarget.skillsDir` and overlays pending in-flight changes (`files` passed to the transform) so the root instructions file's `## Skills` section always lists every on-disk skill — not just the subset that changed in this sync. Pending changes win for descriptions; on-disk content survives for unchanged skills.
-- **Instructions file disk fallback:** `transformToDirectoryScoped` loads `instructionsFile` from disk via `repoPath` context parameter when it's not in the canonical files array (e.g., during `doc init --strategy skip-existing` or incremental `doc sync`). Uses a single `readFileSync` from `fs` wrapped in try/catch (no separate `existsSync` check).
+- **Instructions file disk fallback:** `transformToDirectoryScoped` loads `instructionsFile` from disk via `repoPath` context parameter when it's not in the canonical files array (e.g., during `doc init --strategy skip-existing` or incremental `doc sync`). Uses a single `readFileSync` from `fs` wrapped in try/catch (no separate `existsSync` check). The disk-loaded content is used as body input for `buildRootInstructions` but does **not** manufacture a dest output slot — only when the source instructions file is actually pending in `files` (tracked via `pendingInstructions`) does the dest instructions file get pushed to `result`. This preserves parity with the source target, whose output is `[...baseFiles, ...]` and emits no instructions file when the canonical pass produced no diff.
 - **Content sanitization:** `sanitizeCodexInstructions()` and `sanitizeCodexSkill()` strip Claude-specific references (hooks, skill-rules.json, Claude Code mentions) from Codex output.
 - **`sanitizePublishedContent(content, filePath)`** — Single-chokepoint sanitizer invoked by `skill-writer.js` on every disk write. Always strips `## Activation` blocks and `## Key Files` blocks. Outside `code-map.md`, also strips count-bearing blocks: `**Hub files…**`, `**Domain clusters:**`, `**High-churn hotspots:**`, `**Framework entry points…**`. Defense in depth — upstream leaks can't reach the user.
 - **Skills-variant stripping:** `syncSkillsSection()` removes LLM-emitted Skill-section variants (`## Skills Reference`, `## Skills Overview`, etc.) before injecting the canonical `## Skills` list. Doc-init and doc-sync prompts also forbid such headings.
-- **`ensureRootKeyFilesSection(content, graphSerialized)`** — Post-processes root instructions file to guarantee a `## Key Files` section with top hub files from the graph.
+- **`ensureRootKeyFilesSection(content)`** — Backwards-compat shim only. Strips legacy `## Key Files` hub blocks left in older docs and collapses extra blank lines. **Does not insert anything** — hub rankings live in `code-map.md` / `graph.json` exclusively.
 - **`mergeConfiguredTargets(existing, next)`** — Merges target arrays to avoid dropping previously configured targets during narrower runs. Validates against `TARGETS` keys, deduplicates.
 - **`getAllowedPaths(targets)`** — Returns `{ dirPrefixes, exactFiles }` union across all active targets.
 - **Backend detection:** `detectAvailableBackends()` checks if `claude` and `codex` CLIs are installed. `resolveBackend()` picks best match: explicit flag > target match > fallback.
@@ -55,9 +55,10 @@ You are working on **multi-target output support** — the system that lets aspe
 - **Graph/hooks are Claude-only** — `persistGraphArtifacts()` returns data without writing files when `target.supportsGraph === false`. Hook installation skipped when `supportsHooks === false`.
 - **Config validation is defensive** — `readConfig()` treats malformed but parseable JSON (e.g., wrong types for `targets`/`backend`/`version`/`saveTokens`) as invalid and returns `null`, same as missing config.
 - **`repoPath` context is required for disk fallback** — callers of `transformForTarget` must pass `repoPath` in the context object for `instructionsFile` to load from disk when not in canonical files, and for `collectSkillsForList` to enumerate on-disk skills.
+- **Dest instructions parity:** The codex transform must not manufacture an output `AGENTS.md` slot from disk fallback alone. Only emit dest instructions when source instructions were actually pending in `files`; otherwise output stays at parity with the source target (`[...baseFiles, ...]`).
 
 ## References
 - **Patterns:** See `src/lib/target.js` for all target property definitions
 
 ---
-**Last Updated:** 2026-05-11
+**Last Updated:** 2026-05-13
