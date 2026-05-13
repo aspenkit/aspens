@@ -53,7 +53,8 @@ function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
 
   const baseSkillPrefix = sourceTarget.skillsDir + '/base/';
   const baseSkill = files.find(file => file.path.startsWith(baseSkillPrefix));
-  let instructionsFile = files.find(file => file.path === sourceTarget.instructionsFile);
+  const pendingInstructions = files.find(file => file.path === sourceTarget.instructionsFile);
+  let instructionsFile = pendingInstructions;
 
   if (!instructionsFile && repoPath && sourceTarget.instructionsFile) {
     try {
@@ -75,9 +76,17 @@ function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
     files, baseSkill, instructionsFile, sourceTarget, repoPath,
   );
 
-  const rootContent = buildRootInstructions(baseSkillForList, instructionsFile, domainSkillsForList, graphSerialized, destTarget);
-  if (rootContent) {
-    result.push({ path: destTarget.instructionsFile, content: rootContent });
+  // Only emit dest instructions when the source instructions were actually
+  // pending in `files`. The disk fallback above is kept for context (so
+  // buildRootInstructions has body content available when needed), but it
+  // must not manufacture an output slot — doing so breaks parity with the
+  // source target, whose output is `[...baseFiles, ...]` and therefore has
+  // no instructions file when the canonical pass produced no diff.
+  if (pendingInstructions) {
+    const rootContent = buildRootInstructions(baseSkillForList, instructionsFile, domainSkillsForList, graphSerialized, destTarget);
+    if (rootContent) {
+      result.push({ path: destTarget.instructionsFile, content: rootContent });
+    }
   }
 
   if (baseSkill) {
@@ -275,6 +284,7 @@ const BEHAVIOR_RULES = [
   '- **Ask clarifying questions** — If the task is ambiguous, ask for clarification rather than making assumptions. Don\'t imply or guess at requirements or constraints that aren\'t explicitly stated.',
   '- **Simplicity first** — Write the minimum code that solves the problem. No speculative features, abstractions for single-use code, or error handling for impossible scenarios.',
   '- **Surgical changes** — Touch only what the task requires. Don\'t refactor adjacent code, fix unrelated formatting, or "improve" things that aren\'t broken.',
+  '- **Brevity in output** — Keep output short. No additional prose in chat responses or when writing MD files.',
 ];
 
 /**

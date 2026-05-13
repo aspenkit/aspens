@@ -165,9 +165,13 @@ describe('transformForTarget — Skills section completeness (regression)', () =
   });
 
   it('lists every on-disk skill in AGENTS.md even when files only contains one changed skill', () => {
-    // doc-sync's typical call shape: only the changed skill flows through `files`.
+    // doc-sync's actual call shape after deterministic injection: when Skills/
+    // Behavior drift, the canonical pass adds CLAUDE.md to baseFiles alongside
+    // the changed skill. transformForTarget then projects AGENTS.md from that
+    // pending CLAUDE.md (no disk-fallback emit).
     const files = [
       { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\ndescription: Stripe billing flows (updated)\n---\n\nBilling (new content).\n' },
+      { path: 'CLAUDE.md',                       content: '# Test Repo\n\nOverview.\n' },
     ];
 
     const result = transformForTarget(
@@ -196,6 +200,7 @@ describe('transformForTarget — Skills section completeness (regression)', () =
     const files = [
       { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\ndescription: Billing\n---\n\nBilling.\n' },
       { path: '.claude/skills/base/skill.md',    content: '---\nname: base\ndescription: Base\n---\n\nBase.\n' },
+      { path: 'CLAUDE.md',                       content: '# Test Repo\n\nOverview.\n' },
     ];
 
     const result = transformForTarget(
@@ -208,6 +213,31 @@ describe('transformForTarget — Skills section completeness (regression)', () =
     const rootAgents = result.find(f => f.path === 'AGENTS.md');
     expect(rootAgents.content).toContain('.agents/skills/base/SKILL.md');
     expect(rootAgents.content).toContain('.agents/skills/billing/SKILL.md');
+  });
+
+  it('does not emit dest instructions when source instructions are absent from files (parity)', () => {
+    // doc-sync's "no drift" call shape: deterministic injection found no
+    // Skills/Behavior change, so CLAUDE.md is NOT in baseFiles. The codex
+    // transform must not manufacture AGENTS.md from disk fallback alone —
+    // doing so creates an INSTRUCTIONS parity violation with the claude
+    // target, whose output is just `[...baseFiles, ...]`.
+    const files = [
+      { path: '.claude/skills/billing/skill.md', content: '---\nname: billing\ndescription: Stripe billing flows\n---\n\nBilling.\n' },
+    ];
+
+    const result = transformForTarget(
+      files,
+      TARGETS.claude,
+      TARGETS.codex,
+      { scanResult: { domains: [] }, repoPath: fixtureRoot }
+    );
+
+    const rootAgents = result.find(f => f.path === 'AGENTS.md');
+    expect(rootAgents).toBeUndefined();
+
+    // The skill projection still happens.
+    const skill = result.find(f => f.path === '.agents/skills/billing/SKILL.md');
+    expect(skill).toBeDefined();
   });
 });
 
