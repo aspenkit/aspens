@@ -21,6 +21,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+      - run: npm install -g oxlint@1.79.0
       - name: OXLint
         run: oxlint .
       - run: npm ci
