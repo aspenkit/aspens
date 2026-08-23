@@ -16,11 +16,13 @@ jobs:
       matrix:
         node-version: [20, 22]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
+      - name: OXLint
+        run: npx oxlint .
       - run: npm ci
       - run: npm test
       - run: node bin/cli.js --help
