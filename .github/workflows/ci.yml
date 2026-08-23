@@ -22,7 +22,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - name: OXLint
-        run: npx oxlint .
+        run: oxlint .
       - run: npm ci
       - run: npm test
       - run: node bin/cli.js --help
