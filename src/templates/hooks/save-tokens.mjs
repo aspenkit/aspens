@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, unlink
 import { join, resolve, relative } from 'path';
 import { fileURLToPath } from 'url';
 
+const toPosix = (p) => p.split('\\').join('/');
+
 const DEFAULT_CONFIG = {
   enabled: true,
   warnAtTokens: 175000,
@@ -100,7 +102,7 @@ export function saveHandoff(projectDir, input = {}, reason = 'limit') {
 
   const now = new Date();
   const stamp = now.toISOString().replace(/[:.]/g, '-');
-  const relativePath = join('.aspens', 'sessions', `${stamp}-claude-handoff.md`);
+  const relativePath = toPosix(join('.aspens', 'sessions', `${stamp}-claude-handoff.md`));
   const handoffPath = join(projectDir, relativePath);
   const snapshot = sessionTokenSnapshot(projectDir, input);
   const tokenCount = Number.isInteger(snapshot.tokens) ? snapshot.tokens : null;
@@ -175,7 +177,7 @@ export function latestHandoff(projectDir) {
     .sort()
     .reverse();
 
-  return entries[0] ? join('.aspens', 'sessions', entries[0]) : null;
+  return entries[0] ? toPosix(join('.aspens', 'sessions', entries[0])) : null;
 }
 
 const MAX_HANDOFFS = 10;
@@ -306,7 +308,7 @@ function extractSessionFacts(projectDir, input) {
 
   const transcriptPath = input.transcript_path || input.transcriptPath || '';
   const resolvedTranscriptPath = transcriptPath ? resolve(projectDir, transcriptPath) : '';
-  const transcriptRelPath = resolvedTranscriptPath ? relative(projectDir, resolvedTranscriptPath) : '';
+  const transcriptRelPath = resolvedTranscriptPath ? toPosix(relative(projectDir, resolvedTranscriptPath)) : '';
   const transcriptInsideProject = transcriptRelPath === '' || (!transcriptRelPath.startsWith('..') && !transcriptRelPath.startsWith('/') && !transcriptRelPath.includes('..\\'));
 
   if (!resolvedTranscriptPath || !transcriptInsideProject || !existsSync(resolvedTranscriptPath)) {

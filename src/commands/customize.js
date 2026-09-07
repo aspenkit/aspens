@@ -213,7 +213,7 @@ function findAgents(agentsDir, repoPath) {
         const nameMatch = content.match(/name:\s*(.+)/);
         agents.push({
           name: nameMatch ? nameMatch[1].trim() : entry.replace('.md', ''),
-          relativePath: relative(repoPath, full),
+          relativePath: relativePosix(repoPath, full),
           content,
         });
       }
@@ -250,7 +250,7 @@ function gatherProjectContext(repoPath) {
           walkSkills(full);
         } else if (entry.endsWith('.md')) {
           const content = readFileSync(full, 'utf8');
-          const relativePath = relative(repoPath, full);
+          const relativePath = relativePosix(repoPath, full);
           parts.push(`### ${relativePath}\n\`\`\`\n${content}\n\`\`\``);
         }
       }

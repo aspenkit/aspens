@@ -30,7 +30,7 @@ describe.sequential('installGitHook', () => {
     expect(content).toContain('# <<< aspens doc-sync hook (.) <<<');
   });
 
-  it('makes hook executable', () => {
+  it.skipIf(process.platform === 'win32')('makes hook executable', () => {
     installGitHook(TEST_DIR);
     const mode = statSync(HOOK_PATH).mode;
     expect(mode & 0o111).toBeGreaterThan(0);

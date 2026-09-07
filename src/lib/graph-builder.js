@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, basename, extname, relative, dirname, resolve } from 'path';
+import { join, basename, extname, dirname, resolve } from 'path';
 import { execSync } from 'child_process';
 import { detectEntryPoints, scanRepo } from './scanner.js';
 import { LOCK_FILES } from './diff-classifier.js';
@@ -7,6 +7,7 @@ import { parseJsImports } from './parsers/typescript.js';
 import { parsePyImports, extractPythonExports } from './parsers/python.js';
 import { detectNextjsEntryPoints, isNextjsProject, nextjsImplicitAliases } from './frameworks/nextjs.js';
 import { loadPathAliases, resolveAliasImport } from './path-resolver.js';
+import { relativePosix } from './posix-path.js';
 
 /**
  * Build the import graph for a repository.
@@ -43,7 +44,7 @@ export async function buildRepoGraph(repoPath, languages = []) {
   const edges = [];
 
   for (const absPath of filePaths) {
-    const relPath = relative(repoPath, absPath);
+    const relPath = relativePosix(repoPath, absPath);
     const content = readFileSafe(absPath);
     if (content === null) continue;
 
@@ -300,7 +301,7 @@ function isPythonRelativeImport(specifier) {
 function resolveRelativeImport(repoPath, fromFile, specifier) {
   const fromDir = dirname(join(repoPath, fromFile));
   const targetBase = resolve(fromDir, specifier);
-  const targetRel = relative(repoPath, targetBase);
+  const targetRel = relativePosix(repoPath, targetBase);
 
   // If the specifier already has an extension, check directly
   if (extname(specifier)) {
@@ -315,7 +316,7 @@ function resolveRelativeImport(repoPath, fromFile, specifier) {
   for (const ext of extensions) {
     const candidate = targetBase + ext;
     if (existsSync(candidate)) {
-      return relative(repoPath, candidate);
+      return relativePosix(repoPath, candidate);
     }
   }
 
@@ -324,7 +325,7 @@ function resolveRelativeImport(repoPath, fromFile, specifier) {
   for (const ext of indexExts) {
     const candidate = join(targetBase, 'index' + ext);
     if (existsSync(candidate)) {
-      return relative(repoPath, candidate);
+      return relativePosix(repoPath, candidate);
     }
   }
 
@@ -354,7 +355,7 @@ function resolvePythonRelativeImport(repoPath, fromFile, specifier) {
     // Just dots — importing the package itself (__init__.py)
     const initPath = join(baseDir, '__init__.py');
     if (existsSync(initPath)) {
-      return relative(repoPath, initPath);
+      return relativePosix(repoPath, initPath);
     }
     return null;
   }
@@ -366,13 +367,13 @@ function resolvePythonRelativeImport(repoPath, fromFile, specifier) {
   // Try as a .py file
   const pyFile = modulePath + '.py';
   if (existsSync(pyFile)) {
-    return relative(repoPath, pyFile);
+    return relativePosix(repoPath, pyFile);
   }
 
   // Try as a package (__init__.py)
   const initFile = join(modulePath, '__init__.py');
   if (existsSync(initFile)) {
-    return relative(repoPath, initFile);
+    return relativePosix(repoPath, initFile);
   }
 
   return null;
@@ -394,13 +395,13 @@ function resolvePythonAbsoluteImport(repoPath, specifier, pythonRoots = [repoPat
     // Try as a .py file
     const pyFile = modulePath + '.py';
     if (existsSync(pyFile)) {
-      return relative(repoPath, pyFile);
+      return relativePosix(repoPath, pyFile);
     }
 
     // Try as a package (__init__.py)
     const initFile = join(modulePath, '__init__.py');
     if (existsSync(initFile)) {
-      return relative(repoPath, initFile);
+      return relativePosix(repoPath, initFile);
     }
   }
 

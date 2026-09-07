@@ -1,8 +1,9 @@
-import { join, relative } from 'path';
+import { join } from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, chmodSync } from 'fs';
 import { execSync } from 'child_process';
 import pc from 'picocolors';
 import { CliError } from './errors.js';
+import { toPosixRelative } from './posix-path.js';
 import { getGitRoot } from './git-helpers.js';
 
 function resolveAspensPath() {
@@ -148,12 +149,6 @@ export function removeGitHook(repoPath) {
     console.log(pc.dim('  Re-install first: aspens doc sync --install-hook'));
     console.log(pc.dim('  Or edit manually: .git/hooks/post-commit\n'));
   }
-}
-
-function toPosixRelative(from, to) {
-  const rel = relative(from, to);
-  if (!rel || rel === '.') return '';
-  return rel.split('\\').join('/');
 }
 
 function escapeForSingleQuotes(value) {

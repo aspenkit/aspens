@@ -93,7 +93,7 @@ describe('repairDeterministicSections', () => {
         '',
         '## Skills',
         '',
-        '- old stale entry',
+        '- `.claude/skills/deleted/skill.md` — Removed domain',
         '',
         '## Behavior',
         '',
@@ -109,10 +109,58 @@ describe('repairDeterministicSections', () => {
     );
 
     expect(result.length).toBeGreaterThan(0);
-    const claudeMd = readFileSync(join(fixtureRoot, 'CLAUDE.md'), 'utf8');
+    const claudeMd = readFileSync(join(fixtureRoot, 'CLAUDE.md'), 'utf8').replace(/\\/g, '/');
     expect(claudeMd).toContain('.claude/skills/base/skill.md');
     expect(claudeMd).toContain('.claude/skills/billing/skill.md');
     expect(claudeMd).toContain('.claude/skills/auth/skill.md');
-    expect(claudeMd).not.toContain('old stale entry');
+    expect(claudeMd).not.toContain('.claude/skills/deleted/skill.md');
+  });
+
+  it('writes skill refs with forward slashes on every platform (issue #53)', () => {
+    seedSkillsAndInstructions();
+
+    repairDeterministicSections(
+      fixtureRoot,
+      TARGETS.claude,
+      [TARGETS.claude],
+      { domains: [] },
+    );
+
+    const claudeMd = readFileSync(join(fixtureRoot, 'CLAUDE.md'), 'utf8');
+    expect(claudeMd).not.toContain('\\');
+    expect(claudeMd).toContain('.claude/skills/base/skill.md');
+    expect(claudeMd).toContain('.claude/skills/billing/skill.md');
+    expect(claudeMd).toContain('.claude/skills/auth/skill.md');
+  });
+
+  it('keeps hand-written lines in the Skills and Behavior sections (issue #52)', () => {
+    seedSkillsAndInstructions({
+      instructionsContent: [
+        '# Test',
+        '',
+        '## Skills',
+        '',
+        '- `.claude/skills/deleted/skill.md` — Removed domain',
+        '- **Claude Skills** - Ignore .claude/skills/* when editing.',
+        '',
+        '## Behavior',
+        '',
+        '- **Tools** - Prefer native tools like sed or grep. Use CRLF line endings.',
+        '',
+      ].join('\n'),
+    });
+
+    repairDeterministicSections(
+      fixtureRoot,
+      TARGETS.claude,
+      [TARGETS.claude],
+      { domains: [] },
+    );
+
+    const claudeMd = readFileSync(join(fixtureRoot, 'CLAUDE.md'), 'utf8');
+    expect(claudeMd).toContain('- **Claude Skills** - Ignore .claude/skills/* when editing.');
+    expect(claudeMd).toContain('- **Tools** - Prefer native tools like sed or grep. Use CRLF line endings.');
+    expect(claudeMd).toContain('Verify before claiming');
+    expect(claudeMd.replace(/\\/g, '/')).not.toContain('.claude/skills/deleted/skill.md');
   });
 });

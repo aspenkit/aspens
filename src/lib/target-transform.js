@@ -5,11 +5,12 @@
  * Other targets are projected from that canonical output.
  */
 
-import { join, relative } from 'path';
+import { join } from 'path';
 import { readFileSync } from 'fs';
 import { TARGETS } from './target.js';
 import { CliError } from './errors.js';
 import { findSkillFiles } from './skill-reader.js';
+import { toPosix, relativePosix } from './posix-path.js';
 
 export function transformForTarget(files, sourceTarget, destTarget, context) {
   if (sourceTarget.id === destTarget.id) return files;
@@ -82,7 +83,7 @@ function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
 
   if (baseSkill) {
     result.push({
-      path: join(destTarget.skillsDir, 'base', destTarget.skillFilename),
+      path: toPosix(join(destTarget.skillsDir, 'base', destTarget.skillFilename)),
       content: remapContentPaths(baseSkill.content, sourceTarget, destTarget),
     });
   }
@@ -92,7 +93,7 @@ function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
     if (!domainName) continue;
 
     result.push({
-      path: join(destTarget.skillsDir, domainName, destTarget.skillFilename),
+      path: toPosix(join(destTarget.skillsDir, domainName, destTarget.skillFilename)),
       content: remapContentPaths(skill.content, sourceTarget, destTarget),
     });
 
@@ -100,7 +101,7 @@ function transformToDirectoryScoped(files, sourceTarget, destTarget, context) {
     if (!targetDir) continue;
 
     result.push({
-      path: join(targetDir, destTarget.directoryDocFile || 'AGENTS.md'),
+      path: toPosix(join(targetDir, destTarget.directoryDocFile || 'AGENTS.md')),
       content: transformDomainSkill(skill.content, sourceTarget, destTarget),
     });
   }
@@ -133,7 +134,7 @@ function collectSkillsForList(files, pendingBaseSkill, instructionsFile, sourceT
       const skillsDirAbs = join(repoPath, sourceTarget.skillsDir);
       const onDisk = findSkillFiles(skillsDirAbs, { skillFilename: sourceTarget.skillFilename });
       for (const skill of onDisk) {
-        const relPath = relative(repoPath, skill.path).split('\\').join('/');
+        const relPath = relativePosix(repoPath, skill.path);
         merged.set(relPath, { path: relPath, content: skill.content });
       }
     } catch { /* skills dir unreadable — fall through to pending-only */ }
@@ -166,8 +167,8 @@ function collectSkillsForList(files, pendingBaseSkill, instructionsFile, sourceT
 function generateCodexSkillReferences(destTarget, graphSerialized) {
   const files = [];
   const skillsDir = destTarget.skillsDir;
-  const archSkillPath = join(skillsDir, 'architecture', 'SKILL.md');
-  const archRefPath = join(skillsDir, 'architecture', 'references', 'code-map.md');
+  const archSkillPath = toPosix(join(skillsDir, 'architecture', 'SKILL.md'));
+  const archRefPath = toPosix(join(skillsDir, 'architecture', 'references', 'code-map.md'));
 
   files.push({
     path: archSkillPath,
@@ -277,24 +278,78 @@ const BEHAVIOR_RULES = [
   '- **Surgical changes** — Touch only what the task requires. Don\'t refactor adjacent code, fix unrelated formatting, or "improve" things that aren\'t broken.',
 ];
 
+const BEHAVIOR_RULE_LABELS = new Set(
+  BEHAVIOR_RULES.map(ruleLabel).filter(Boolean)
+);
+
+function ruleLabel(line) {
+  const match = line.match(/^\s*-\s+\*\*(.+?)\*\*/);
+  return match ? match[1].trim() : null;
+}
+
+function detectEol(content) {
+  const newlines = content.match(/\r?\n/g) || [];
+  const crlf = newlines.filter(nl => nl === '\r\n').length;
+  return crlf > newlines.length - crlf ? '\r\n' : '\n';
+}
+
+function sectionBodyLines(match) {
+  return match.split('\n').slice(1);
+}
+
+function trailingBlankLines(bodyLines) {
+  const trailing = [];
+  for (let i = bodyLines.length - 1; i >= 0 && !bodyLines[i].trim(); i -= 1) trailing.unshift(bodyLines[i]);
+  return trailing;
+}
+
+function renderMergedSection(heading, canonicalLines, bodyLines, isManaged, eol, atEndOfFile) {
+  const cr = eol === '\r\n' ? '\r' : '';
+  const preserved = [];
+  for (const line of bodyLines) {
+    if (isManaged(line)) continue;
+    if (!line.trim()) {
+      if (preserved.length > 0 && preserved[preserved.length - 1].trim() !== '') preserved.push(cr);
+      continue;
+    }
+    preserved.push(line);
+  }
+  while (preserved.length > 0 && preserved[preserved.length - 1].trim() === '') preserved.pop();
+
+  const lines = [heading + cr, cr, ...canonicalLines.map(line => line + cr), ...preserved];
+  if (atEndOfFile) return lines.concat(trailingBlankLines(bodyLines)).join('\n');
+  return lines.join('\n') + '\n';
+}
+
 /**
  * Deterministically inject/replace the `## Behavior` section in a root instructions
  * file so the same coding guardrails ship with every generated CLAUDE.md/AGENTS.md.
  */
 export function syncBehaviorSection(content) {
   if (!content) return content;
-  const section = ['## Behavior', '', ...BEHAVIOR_RULES].join('\n');
+  const eol = detectEol(content);
   if (/## Behavior\s*\n/i.test(content)) {
-    return content.replace(/## Behavior\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/, section + '\n');
+    return content.replace(
+      /## Behavior\s*\n[\s\S]*?(?=\r?\n## |\r?\n\*\*Last Updated|$)/,
+      (match, offset, whole) => renderMergedSection(
+        '## Behavior',
+        BEHAVIOR_RULES,
+        sectionBodyLines(match),
+        line => BEHAVIOR_RULE_LABELS.has(ruleLabel(line)),
+        eol,
+        offset + match.length === whole.length
+      )
+    );
   }
 
+  const section = ['## Behavior', '', ...BEHAVIOR_RULES].join(eol);
   const lastUpdatedMatch = content.match(/\n\*\*Last Updated[^\n]*/);
   if (lastUpdatedMatch) {
     const idx = lastUpdatedMatch.index;
-    return content.slice(0, idx).trimEnd() + '\n\n' + section + '\n' + content.slice(idx);
+    return content.slice(0, idx).trimEnd() + eol + eol + section + eol + content.slice(idx);
   }
 
-  return content.trimEnd() + '\n\n' + section + '\n';
+  return content.trimEnd() + eol + eol + section + eol;
 }
 
 /**
@@ -310,16 +365,28 @@ export function syncSkillsSection(content, baseSkill, domainSkills, destTarget, 
   const skillRefs = buildSkillRefs(baseSkill, domainSkills, destTarget, hasArchitectureSkill);
   if (skillRefs.length === 0) return content;
 
+  const eol = detectEol(content);
+
   // Strip Skill-variant headings the LLM may emit as a workaround for the
   // "do not emit ## Skills" rule (e.g., ## Skills Reference, ## Skills Overview).
   // The canonical `## Skills` (no trailing words) is preserved and handled below.
   let working = content
     .replace(/\n## Skills [^\n]+\r?\n[\s\S]*?(?=\r?\n## |\r?\n\*\*Last Updated|$)/gi, '\n')
-    .replace(/(\r?\n){3,}/g, '\n\n');
+    .replace(/(?:\r?\n){3,}/g, eol + eol);
 
-  const section = ['## Skills', '', ...skillRefs].join('\n');
+  const section = ['## Skills', '', ...skillRefs].join(eol);
   if (/## Skills\s*\n/i.test(working)) {
-    return working.replace(/## Skills\s*\n[\s\S]*?(?=\n## |\n\*\*Last Updated|$)/, section + '\n');
+    return working.replace(
+      /## Skills\s*\n[\s\S]*?(?=\r?\n## |\r?\n\*\*Last Updated|$)/,
+      (match, offset, whole) => renderMergedSection(
+        '## Skills',
+        skillRefs,
+        sectionBodyLines(match),
+        isGeneratedSkillRef,
+        eol,
+        offset + match.length === whole.length
+      )
+    );
   }
 
   // Fresh insert: place the Skills section just BEFORE the first existing
@@ -331,18 +398,34 @@ export function syncSkillsSection(content, baseSkill, domainSkills, destTarget, 
     const idx = nextSectionMatch.index; // index of the '\n' before the heading
     const head = working.slice(0, idx).replace(/\s+$/, '');
     const tail = working.slice(idx).replace(/^\s+/, '');
-    return head + '\n\n' + section + '\n\n' + tail + (working.endsWith('\n') ? '' : '');
+    return head + eol + eol + section + eol + eol + tail + (working.endsWith('\n') ? '' : '');
   }
 
   // No other `## ` heading: append at the end so we don't trap any prose.
-  return working.replace(/\s+$/, '') + '\n\n' + section + '\n';
+  return working.replace(/\s+$/, '') + eol + eol + section + eol;
+}
+
+const SKILLS_DIR_PREFIXES = Array.from(
+  new Set(
+    Object.values(TARGETS)
+      .map(t => t.skillsDir)
+      .filter(Boolean)
+      .map(dir => dir.replace(/\\/g, '/').replace(/\/$/, '') + '/')
+  )
+);
+
+function isGeneratedSkillRef(line) {
+  const match = line.match(/^\s*-\s+`([^`]+)`/);
+  if (!match) return false;
+  const path = match[1].replace(/\\/g, '/');
+  return SKILLS_DIR_PREFIXES.some(prefix => path.startsWith(prefix));
 }
 
 function buildSkillRefs(baseSkill, domainSkills, destTarget, hasArchitectureSkill = false) {
   const refs = [];
 
   if (baseSkill) {
-    refs.push('- `' + join(destTarget.skillsDir, 'base', destTarget.skillFilename) + '` — Base repo skill; load whenever working in this repo.');
+    refs.push('- `' + toPosix(join(destTarget.skillsDir, 'base', destTarget.skillFilename)) + '` — Base repo skill; load whenever working in this repo.');
   }
 
   for (const skill of domainSkills) {
@@ -350,11 +433,11 @@ function buildSkillRefs(baseSkill, domainSkills, destTarget, hasArchitectureSkil
     if (!domainName) continue;
     const description = extractFrontmatterField(skill.content, 'description');
     const suffix = description ? ' — ' + description : '';
-    refs.push('- `' + join(destTarget.skillsDir, domainName, destTarget.skillFilename) + '`' + suffix);
+    refs.push('- `' + toPosix(join(destTarget.skillsDir, domainName, destTarget.skillFilename)) + '`' + suffix);
   }
 
   if (hasArchitectureSkill) {
-    refs.push('- `' + join(destTarget.skillsDir, 'architecture', destTarget.skillFilename) + '` — Import graph and code-map reference for structural changes.');
+    refs.push('- `' + toPosix(join(destTarget.skillsDir, 'architecture', destTarget.skillFilename)) + '` — Import graph and code-map reference for structural changes.');
   }
   return refs;
 }
@@ -469,7 +552,7 @@ export function projectCodexDomainDocs(files, target, scanResult) {
     if (!targetDir) continue;
 
     projected.push({
-      path: join(targetDir, target.directoryDocFile),
+      path: toPosix(join(targetDir, target.directoryDocFile)),
       content: transformDomainSkill(file.content, target, target),
     });
   }
@@ -653,7 +736,7 @@ function extractDomainName(skillPath, target) {
 // second-to-last path segment regardless of whether the source is
 // Claude (`.claude/skills/...`) or Codex (`.agents/skills/...`).
 function extractDomainFromAnyPath(skillPath) {
-  const parts = skillPath.split('/').filter(Boolean);
+  const parts = toPosix(skillPath).split('/').filter(Boolean);
   return parts.length >= 2 ? parts[parts.length - 2] : null;
 }
 
@@ -703,7 +786,7 @@ export function transformPathForTarget(targetId, claudePath) {
     const parts = rest.split('/');
     if (parts.length >= 2) {
       const domain = parts[0];
-      return join(dest.skillsDir, domain, dest.skillFilename);
+      return toPosix(join(dest.skillsDir, domain, dest.skillFilename));
     }
   }
 
