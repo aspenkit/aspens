@@ -182,7 +182,6 @@ function flattenPublishedMap(perTarget) {
 export async function docSyncCommand(path, options) {
   const repoPath = resolve(path);
   const gitRoot = getGitRoot(repoPath);
-  const projectPrefix = toPosixRelative(gitRoot, repoPath);
   const verbose = !!options.verbose;
   const commits = typeof options.commits === 'number' ? options.commits : 1;
 
@@ -217,6 +216,9 @@ export async function docSyncCommand(path, options) {
   if (!gitRoot || !isGitRepo(repoPath)) {
     throw new CliError('Not a git repository. doc sync requires git history.');
   }
+
+  // Safe only past the gitRoot guard above: relative() throws on a null root.
+  const projectPrefix = toPosixRelative(gitRoot, repoPath);
 
   if (!existsSync(skillsDir)) {
     throw new CliError(`No ${sourceTarget.skillsDir || '.claude/skills'}/ found. Run aspens doc init first.`);

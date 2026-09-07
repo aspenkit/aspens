@@ -414,11 +414,27 @@ const SKILLS_DIR_PREFIXES = Array.from(
   )
 );
 
+const SKILL_FILENAMES = new Set(
+  Object.values(TARGETS)
+    .map(t => t.skillFilename)
+    .filter(Boolean)
+);
+
+/**
+ * True only for a bullet that points at a generated skill entry point
+ * (`<skillsDir>/<name>/<skillFilename>`). Deeper or differently named paths
+ * under a skills dir are hand-written references (e.g.
+ * `.claude/skills/base/reference/api.md`), so they are preserved instead of
+ * being dropped as stale generated output.
+ */
 function isGeneratedSkillRef(line) {
   const match = line.match(/^\s*-\s+`([^`]+)`/);
   if (!match) return false;
-  const path = match[1].replace(/\\/g, '/');
-  return SKILLS_DIR_PREFIXES.some(prefix => path.startsWith(prefix));
+  const path = toPosix(match[1]);
+  const prefix = SKILLS_DIR_PREFIXES.find(dir => path.startsWith(dir));
+  if (!prefix) return false;
+  const segments = path.slice(prefix.length).split('/');
+  return segments.length === 2 && SKILL_FILENAMES.has(segments[1]);
 }
 
 function buildSkillRefs(baseSkill, domainSkills, destTarget, hasArchitectureSkill = false) {

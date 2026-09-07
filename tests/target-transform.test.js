@@ -355,6 +355,32 @@ describe('syncSkillsSection', () => {
     expect(out).toContain('.claude/skills/billing/skill.md');
   });
 
+  it('preserves hand-written links to files under a skill directory (CodeRabbit PR #54)', () => {
+    const claudeMd = [
+      '# Project',
+      '',
+      '## Skills',
+      '',
+      '- `.claude/skills/removed/skill.md` — Deleted domain',
+      '- `.claude/skills/base/reference/api.md` — API notes',
+      '- `.claude/skills/auth/CHECKLIST.md` — Review checklist',
+      '',
+      '## Conventions',
+      '',
+      'stuff',
+      '',
+    ].join('\n');
+    const out = syncSkillsSection(claudeMd, baseSkill, domainSkills, TARGETS.claude, false).replace(/\\/g, '/');
+    // Deeper and differently named paths are hand-written references, not
+    // generated entry points, so they survive the sync.
+    expect(out).toContain('`.claude/skills/base/reference/api.md`');
+    expect(out).toContain('`.claude/skills/auth/CHECKLIST.md`');
+    // A stale generated entry point is still replaced.
+    expect(out).not.toContain('.claude/skills/removed/skill.md');
+    expect(out).toContain('.claude/skills/auth/skill.md');
+    expect(out.match(/## Skills/g)).toHaveLength(1);
+  });
+
   it('uses Codex paths and casing when destTarget is codex', () => {
     const agentsMd = '# Project\n';
     const out = syncSkillsSection(agentsMd, baseSkill, domainSkills, TARGETS.codex, true);
