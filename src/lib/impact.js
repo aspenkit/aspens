@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
-import { join, extname, relative } from 'path';
+import { join, extname } from 'path';
+import { relativePosix, toPosixRelative } from './posix-path.js';
 import { scanRepo } from './scanner.js';
 import { buildRepoGraph } from './graph-builder.js';
 import { loadConfig, TARGETS } from './target.js';
@@ -769,12 +770,6 @@ function commandToHookPath(command, repoPath) {
   return join(repoPath, ...match[1].split('/'));
 }
 
-function toPosixRelative(from, to) {
-  const rel = relative(from, to);
-  if (!rel || rel === '.') return '';
-  return rel.split('\\').join('/');
-}
-
 function inferTargetsFromScan(scan) {
   const targets = [];
   if (scan.hasClaudeConfig || scan.hasClaudeMd) targets.push('claude');
@@ -907,7 +902,7 @@ function collectSourceState(repoPath) {
 
       if (!SOURCE_EXTS.has(extname(entry))) continue;
 
-      const relPath = relative(repoPath, full);
+      const relPath = relativePosix(repoPath, full);
       files.push({ path: relPath, mtimeMs: stat.mtimeMs });
       if (stat.mtimeMs > newestSourceMtime) {
         newestSourceMtime = stat.mtimeMs;

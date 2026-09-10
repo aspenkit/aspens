@@ -136,7 +136,7 @@ describe('save-tokens hook telemetry', () => {
     writeFileSync(join(sessionsDir, '2026-01-01T00-00-00-000Z-claude-handoff.md'), 'old\n', 'utf8');
     writeFileSync(join(sessionsDir, '2026-02-01T00-00-00-000Z-claude-handoff.md'), 'new\n', 'utf8');
 
-    expect(latestHandoff(TEST_DIR)).toBe(join('.aspens', 'sessions', '2026-02-01T00-00-00-000Z-claude-handoff.md'));
+    expect(latestHandoff(TEST_DIR)).toBe('.aspens/sessions/2026-02-01T00-00-00-000Z-claude-handoff.md');
   });
 
   it('prunes old handoffs without removing session support files', () => {

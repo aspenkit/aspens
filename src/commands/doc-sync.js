@@ -1,4 +1,4 @@
-import { resolve, join, relative, dirname } from 'path';
+import { resolve, join, dirname } from 'path';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import pc from 'picocolors';
 import * as p from '@clack/prompts';
@@ -10,6 +10,7 @@ import { persistGraphArtifacts, loadGraph, extractSubgraph, formatNavigationCont
 import { findSkillFiles, parseActivationPatterns, getActivationBlock, fileMatchesActivation } from '../lib/skill-reader.js';
 import { buildDomainContext, buildBaseContext } from '../lib/context-builder.js';
 import { CliError } from '../lib/errors.js';
+import { relativePosix, toPosixRelative } from '../lib/posix-path.js';
 import { resolveTimeout } from '../lib/timeout.js';
 import { installGitHook, removeGitHook } from '../lib/git-hook.js';
 import { isGitRepo, getGitRoot, getGitDiff, getGitLog, getChangedFiles } from '../lib/git-helpers.js';
@@ -181,7 +182,6 @@ function flattenPublishedMap(perTarget) {
 export async function docSyncCommand(path, options) {
   const repoPath = resolve(path);
   const gitRoot = getGitRoot(repoPath);
-  const projectPrefix = toGitRelative(gitRoot, repoPath);
   const verbose = !!options.verbose;
   const commits = typeof options.commits === 'number' ? options.commits : 1;
 
@@ -216,6 +216,9 @@ export async function docSyncCommand(path, options) {
   if (!gitRoot || !isGitRepo(repoPath)) {
     throw new CliError('Not a git repository. doc sync requires git history.');
   }
+
+  // Safe only past the gitRoot guard above: relative() throws on a null root.
+  const projectPrefix = toPosixRelative(gitRoot, repoPath);
 
   if (!existsSync(skillsDir)) {
     throw new CliError(`No ${sourceTarget.skillsDir || '.claude/skills'}/ found. Run aspens doc init first.`);
@@ -531,13 +534,6 @@ ${truncate(instructionsContent, 5000)}
   p.outro(`${results.length} file(s) updated`);
 }
 
-function toGitRelative(gitRoot, repoPath) {
-  if (!gitRoot) return '';
-  const rel = relative(gitRoot, repoPath);
-  if (!rel || rel === '.') return '';
-  return rel.split('\\').join('/');
-}
-
 function withProjectPrefix(file, projectPrefix) {
   return projectPrefix ? `${projectPrefix}/${file}` : file;
 }
@@ -558,7 +554,7 @@ function findExistingSkills(repoPath, target) {
   const fullDir = join(repoPath, sd);
   return findSkillFiles(fullDir, { skillFilename: sf }).map(s => ({
     name: s.name,
-    path: relative(repoPath, s.path),
+    path: relativePosix(repoPath, s.path),
     content: s.content,
   }));
 }

@@ -13,7 +13,8 @@
  */
 
 import { existsSync, readdirSync, statSync } from 'fs';
-import { join, basename, extname, relative } from 'path';
+import { join, basename, extname } from 'path';
+import { relativePosix } from '../posix-path.js';
 
 const APP_ROUTER_FILE_NAMES = new Set([
   'page', 'layout', 'route', 'loading', 'error',
@@ -80,7 +81,7 @@ export function detectNextjsEntryPoints(repoPath) {
         const full = dir ? join(repoPath, dir, name + ext) : join(repoPath, name + ext);
         if (existsSync(full) && safeIsFile(full)) {
           found.push({
-            path: relative(repoPath, full),
+            path: relativePosix(repoPath, full),
             kind: 'nextjs-middleware',
           });
         }
@@ -112,7 +113,7 @@ function walkAppDir(repoPath, dir, out, depth = 0) {
 
     const stem = basename(entry, ext);
     if (APP_ROUTER_FILE_NAMES.has(stem) || METADATA_ROUTE_NAMES.has(stem)) {
-      out.push({ path: relative(repoPath, full), kind: 'nextjs-app' });
+      out.push({ path: relativePosix(repoPath, full), kind: 'nextjs-app' });
     }
   }
 }
@@ -137,7 +138,7 @@ function walkPagesDir(repoPath, dir, out, depth = 0) {
     const ext = extname(entry);
     if (!CODE_EXTS.has(ext)) continue;
 
-    out.push({ path: relative(repoPath, full), kind: 'nextjs-pages' });
+    out.push({ path: relativePosix(repoPath, full), kind: 'nextjs-pages' });
   }
 }
 

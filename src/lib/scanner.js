@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
-import { join, basename, extname, relative } from 'path';
+import { join, basename, extname } from 'path';
 import { SOURCE_EXTS } from './source-exts.js';
+import { relativePosix, toPosix } from './posix-path.js';
 
 /**
  * Scan a repository and return its tech stack, structure, and domains.
@@ -51,7 +52,7 @@ function mergeExtraDomains(result, repoPath, extraDomains) {
       const modules = collectModules(matchedDir, 3);
       result.domains.push({
         name,
-        directories: [relative(repoPath, matchedDir)],
+        directories: [relativePosix(repoPath, matchedDir)],
         modules,
         files: [],
         userSpecified: true,
@@ -308,7 +309,7 @@ function detectStructure(repoPath) {
 
     for (const [key, patterns] of Object.entries(keyPatterns)) {
       const match = srcDirs.find(d => patterns.includes(d.toLowerCase()));
-      if (match) structure.keyDirs[key] = join(structure.srcDir || '.', match);
+      if (match) structure.keyDirs[key] = toPosix(join(structure.srcDir || '.', match));
     }
   }
 
@@ -354,7 +355,7 @@ function detectDomains(repoPath) {
       if (root === repoPath && entry === nestedChild) continue;
 
       const full = join(root, entry);
-      const relDir = relative(repoPath, full);
+      const relDir = relativePosix(repoPath, full);
       if (seen.has(relDir)) continue;
       seen.add(relDir);
 

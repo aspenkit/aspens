@@ -323,13 +323,62 @@ describe('syncSkillsSection', () => {
     expect(out).toContain('Billing flows');
   });
 
-  it('overwrites an existing Skills section rather than duplicating it', () => {
-    const claudeMd = '# Project\n\n## Skills\n\n- only-one-stale-entry\n\n## Conventions\n\nstuff\n';
-    const out = syncSkillsSection(claudeMd, baseSkill, domainSkills, TARGETS.claude, false);
+  it('refreshes generated skill refs rather than duplicating the section', () => {
+    const claudeMd = '# Project\n\n## Skills\n\n- `.claude/skills/removed/skill.md` — Deleted domain\n\n## Conventions\n\nstuff\n';
+    const out = syncSkillsSection(claudeMd, baseSkill, domainSkills, TARGETS.claude, false).replace(/\\/g, '/');
     expect(out.match(/## Skills/g)).toHaveLength(1);
-    expect(out).not.toContain('only-one-stale-entry');
+    expect(out).not.toContain('.claude/skills/removed/skill.md');
     expect(out).toContain('.claude/skills/auth/skill.md');
     expect(out).toContain('## Conventions');
+  });
+
+  it('preserves hand-written lines inside the Skills section (issue #52)', () => {
+    const claudeMd = [
+      '# Project',
+      '',
+      '## Skills',
+      '',
+      '- `.claude/skills/removed/skill.md` — Deleted domain',
+      '- **Claude Skills** - Ignore .claude/skills/* when editing.',
+      '',
+      'Load the auth skill before touching tokens.',
+      '',
+      '## Conventions',
+      '',
+      'stuff',
+      '',
+    ].join('\n');
+    const out = syncSkillsSection(claudeMd, baseSkill, domainSkills, TARGETS.claude, false).replace(/\\/g, '/');
+    expect(out).toContain('- **Claude Skills** - Ignore .claude/skills/* when editing.');
+    expect(out).toContain('Load the auth skill before touching tokens.');
+    expect(out).not.toContain('.claude/skills/removed/skill.md');
+    expect(out).toContain('.claude/skills/billing/skill.md');
+  });
+
+  it('preserves hand-written links to files under a skill directory (CodeRabbit PR #54)', () => {
+    const claudeMd = [
+      '# Project',
+      '',
+      '## Skills',
+      '',
+      '- `.claude/skills/removed/skill.md` — Deleted domain',
+      '- `.claude/skills/base/reference/api.md` — API notes',
+      '- `.claude/skills/auth/CHECKLIST.md` — Review checklist',
+      '',
+      '## Conventions',
+      '',
+      'stuff',
+      '',
+    ].join('\n');
+    const out = syncSkillsSection(claudeMd, baseSkill, domainSkills, TARGETS.claude, false).replace(/\\/g, '/');
+    // Deeper and differently named paths are hand-written references, not
+    // generated entry points, so they survive the sync.
+    expect(out).toContain('`.claude/skills/base/reference/api.md`');
+    expect(out).toContain('`.claude/skills/auth/CHECKLIST.md`');
+    // A stale generated entry point is still replaced.
+    expect(out).not.toContain('.claude/skills/removed/skill.md');
+    expect(out).toContain('.claude/skills/auth/skill.md');
+    expect(out.match(/## Skills/g)).toHaveLength(1);
   });
 
   it('uses Codex paths and casing when destTarget is codex', () => {
@@ -380,13 +429,74 @@ describe('syncBehaviorSection', () => {
     expect(out).toContain('Surgical changes');
   });
 
-  it('overwrites an existing Behavior section, never duplicating it', () => {
-    const input = '# Project\n\n## Behavior\n\n- stale rule\n\n## Conventions\n\nstuff\n';
+  it('refreshes an outdated canonical rule in place, never duplicating the section', () => {
+    const input = '# Project\n\n## Behavior\n\n- **Surgical changes** — outdated wording from an older aspens\n\n## Conventions\n\nstuff\n';
     const out = syncBehaviorSection(input);
     expect(out.match(/## Behavior/g)).toHaveLength(1);
-    expect(out).not.toContain('stale rule');
-    expect(out).toContain('Surgical changes');
+    expect(out.match(/\*\*Surgical changes\*\*/g)).toHaveLength(1);
+    expect(out).not.toContain('outdated wording from an older aspens');
+    expect(out).toContain('Touch only what the task requires.');
     expect(out).toContain('## Conventions');
+  });
+
+  it('preserves hand-written rules alongside the canonical ones (issue #52)', () => {
+    const input = [
+      '# Project',
+      '',
+      '## Behavior',
+      '',
+      '- **Verify before claiming** — old text',
+      '- **Tools** - Prefer native tools like sed or grep. Use CRLF line endings.',
+      '- **Claude Skills** - Ignore .claude/skills/* when editing.',
+      '',
+      '## Conventions',
+      '',
+      'stuff',
+      '',
+    ].join('\n');
+    const out = syncBehaviorSection(input);
+    expect(out).toContain('- **Tools** - Prefer native tools like sed or grep. Use CRLF line endings.');
+    expect(out).toContain('- **Claude Skills** - Ignore .claude/skills/* when editing.');
+    expect(out).not.toContain('old text');
+    expect(out.match(/\*\*Verify before claiming\*\*/g)).toHaveLength(1);
+    expect(out).toContain('## Conventions');
+  });
+
+  it('is idempotent across repeated syncs', () => {
+    const input = '# Project\n\n## Behavior\n\n- **Tools** - mine\n\n## Conventions\n\nstuff\n';
+    const once = syncBehaviorSection(input);
+    expect(syncBehaviorSection(once)).toBe(once);
+  });
+
+  it('keeps CRLF line endings on Windows files', () => {
+    const input = '# Project\r\n\r\n## Behavior\r\n\r\n- **Tools** - mine\r\n\r\n## Conventions\r\n\r\nstuff\r\n';
+    const out = syncBehaviorSection(input);
+    expect(out).toContain('- **Tools** - mine');
+    expect(out.split('\n').filter(l => l.length > 0 && !l.endsWith('\r'))).toHaveLength(0);
+  });
+
+  it('leaves the end of the file exactly as it found it', () => {
+    const withNewline = '# Project\n\n## Behavior\n\n- **Tools** - mine\n';
+    const withoutNewline = '# Project\n\n## Behavior\n\n- **Tools** - mine';
+
+    expect(syncBehaviorSection(withNewline).endsWith('- **Tools** - mine\n')).toBe(true);
+    expect(syncBehaviorSection(withoutNewline).endsWith('- **Tools** - mine')).toBe(true);
+  });
+
+  it('does not insert a blank line between canonical and hand-written rules', () => {
+    const input = '# Project\n\n## Behavior\n\n- **Tools** - mine\n\n## Conventions\n\nstuff\n';
+    const out = syncBehaviorSection(input);
+    expect(out).toMatch(/- \*\*Surgical changes\*\*[^\n]*\n- \*\*Tools\*\* - mine\n/);
+  });
+
+  it('returns hand-written lines with their own line endings on a mixed file', () => {
+    const input = '# Project\n\n## Behavior\n\n- **Tools** - mine\r\n\n## Conventions\n\nstuff\n';
+    const out = syncBehaviorSection(input);
+    expect(out).toContain('- **Tools** - mine\r\n');
+    expect(out).toContain('- **Verify before claiming**');
+    const canonical = out.split('\n').filter(l => l.startsWith('- **Verify before claiming**'));
+    expect(canonical).toHaveLength(1);
+    expect(canonical[0].endsWith('\r')).toBe(false);
   });
 });
 

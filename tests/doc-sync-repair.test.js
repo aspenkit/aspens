@@ -15,7 +15,11 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-import { repairDeterministicSections } from '../src/commands/doc-sync.js';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+
+import { repairDeterministicSections, docSyncCommand } from '../src/commands/doc-sync.js';
+import { CliError } from '../src/lib/errors.js';
 import { TARGETS } from '../src/lib/target.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -93,7 +97,7 @@ describe('repairDeterministicSections', () => {
         '',
         '## Skills',
         '',
-        '- old stale entry',
+        '- `.claude/skills/deleted/skill.md` — Removed domain',
         '',
         '## Behavior',
         '',
@@ -109,10 +113,81 @@ describe('repairDeterministicSections', () => {
     );
 
     expect(result.length).toBeGreaterThan(0);
-    const claudeMd = readFileSync(join(fixtureRoot, 'CLAUDE.md'), 'utf8');
+    const claudeMd = readFileSync(join(fixtureRoot, 'CLAUDE.md'), 'utf8').replace(/\\/g, '/');
     expect(claudeMd).toContain('.claude/skills/base/skill.md');
     expect(claudeMd).toContain('.claude/skills/billing/skill.md');
     expect(claudeMd).toContain('.claude/skills/auth/skill.md');
-    expect(claudeMd).not.toContain('old stale entry');
+    expect(claudeMd).not.toContain('.claude/skills/deleted/skill.md');
+  });
+
+  it('writes skill refs with forward slashes on every platform (issue #53)', () => {
+    seedSkillsAndInstructions();
+
+    repairDeterministicSections(
+      fixtureRoot,
+      TARGETS.claude,
+      [TARGETS.claude],
+      { domains: [] },
+    );
+
+    const claudeMd = readFileSync(join(fixtureRoot, 'CLAUDE.md'), 'utf8');
+    expect(claudeMd).not.toContain('\\');
+    expect(claudeMd).toContain('.claude/skills/base/skill.md');
+    expect(claudeMd).toContain('.claude/skills/billing/skill.md');
+    expect(claudeMd).toContain('.claude/skills/auth/skill.md');
+  });
+
+  it('keeps hand-written lines in the Skills and Behavior sections (issue #52)', () => {
+    seedSkillsAndInstructions({
+      instructionsContent: [
+        '# Test',
+        '',
+        '## Skills',
+        '',
+        '- `.claude/skills/deleted/skill.md` — Removed domain',
+        '- **Claude Skills** - Ignore .claude/skills/* when editing.',
+        '',
+        '## Behavior',
+        '',
+        '- **Tools** - Prefer native tools like sed or grep. Use CRLF line endings.',
+        '',
+      ].join('\n'),
+    });
+
+    repairDeterministicSections(
+      fixtureRoot,
+      TARGETS.claude,
+      [TARGETS.claude],
+      { domains: [] },
+    );
+
+    const claudeMd = readFileSync(join(fixtureRoot, 'CLAUDE.md'), 'utf8');
+    expect(claudeMd).toContain('- **Claude Skills** - Ignore .claude/skills/* when editing.');
+    expect(claudeMd).toContain('- **Tools** - Prefer native tools like sed or grep. Use CRLF line endings.');
+    expect(claudeMd).toContain('Verify before claiming');
+    expect(claudeMd.replace(/\\/g, '/')).not.toContain('.claude/skills/deleted/skill.md');
+  });
+});
+
+/**
+ * Regression: `projectPrefix` used to be computed from `getGitRoot()` before the
+ * "Not a git repository" guard ran, so a non-Git directory failed with a raw
+ * `TypeError` from `path.relative(null, ...)` instead of the CliError
+ * remediation message.
+ */
+describe('docSyncCommand outside a Git repository', () => {
+  let nonGitDir;
+
+  beforeAll(() => {
+    nonGitDir = mkdtempSync(join(tmpdir(), 'aspens-nongit-'));
+  });
+
+  afterAll(() => {
+    rmSync(nonGitDir, { recursive: true, force: true });
+  });
+
+  it('throws CliError with the git remediation message, not a TypeError', async () => {
+    await expect(docSyncCommand(nonGitDir, {})).rejects.toThrow(CliError);
+    await expect(docSyncCommand(nonGitDir, {})).rejects.toThrow(/Not a git repository/);
   });
 });

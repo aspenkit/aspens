@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join, dirname, extname, resolve, relative } from 'path';
+import { relativePosix } from './posix-path.js';
 
 const ALIAS_RESOLUTION_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
 const ALIAS_INDEX_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'];
@@ -155,7 +156,7 @@ export function resolveAliasImport(repoPath, specifier, aliases) {
 
     if (extname(rest)) {
       if (existsSync(targetBase) && isInsideRepo(repoPath, targetBase)) {
-        return relative(repoPath, targetBase);
+        return relativePosix(repoPath, targetBase);
       }
       continue;
     }
@@ -163,14 +164,14 @@ export function resolveAliasImport(repoPath, specifier, aliases) {
     for (const ext of ALIAS_RESOLUTION_EXTS) {
       const candidate = targetBase + ext;
       if (existsSync(candidate) && isInsideRepo(repoPath, candidate)) {
-        return relative(repoPath, candidate);
+        return relativePosix(repoPath, candidate);
       }
     }
 
     for (const ext of ALIAS_INDEX_EXTS) {
       const candidate = join(targetBase, 'index' + ext);
       if (existsSync(candidate) && isInsideRepo(repoPath, candidate)) {
-        return relative(repoPath, candidate);
+        return relativePosix(repoPath, candidate);
       }
     }
   }

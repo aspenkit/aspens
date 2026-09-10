@@ -1,4 +1,4 @@
-import { resolve, join, dirname, relative } from 'path';
+import { resolve, join, dirname } from 'path';
 import { existsSync, readFileSync, writeFileSync, copyFileSync, mkdirSync, chmodSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
@@ -10,6 +10,7 @@ import { writeSkillFiles, writeTransformedFiles, extractRulesFromSkills, generat
 import { persistGraphArtifacts } from '../lib/graph-persistence.js';
 import { installGitHook } from '../lib/git-hook.js';
 import { CliError } from '../lib/errors.js';
+import { toPosixRelative } from '../lib/posix-path.js';
 import { resolveTimeout } from '../lib/timeout.js';
 import { TARGETS, resolveTarget, getAllowedPaths, writeConfig, loadConfig, mergeConfiguredTargets } from '../lib/target.js';
 import { detectAvailableBackends, resolveBackend } from '../lib/backend.js';
@@ -924,12 +925,6 @@ function ensureRecommendedAgentGitignore(repoPath, summaryLines) {
     writeFileSync(gitignorePath, `${entry}\n`, 'utf8');
   }
   summaryLines.push(`${pc.green('+')} .gitignore (dev/)`);
-}
-
-function toPosixRelative(from, to) {
-  const rel = relative(from, to);
-  if (!rel || rel === '.') return '';
-  return rel.split('\\').join('/');
 }
 
 function showTokenSummary(startTime) {
