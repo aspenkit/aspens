@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="aspens-logo.png" alt="aspens" width="120" />
+<img src="https://raw.githubusercontent.com/aspenkit/aspens/main/aspens-logo.png" alt="aspens" width="120" />
 
 # aspens
 
