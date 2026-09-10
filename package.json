@@ -1,6 +1,6 @@
 {
   "name": "aspens",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Keep coding-agent context accurate as your codebase changes",
   "type": "module",
   "bin": {
@@ -23,7 +23,7 @@
     "test": "vitest run",
     "start": "node bin/cli.js",
     "lint": "echo 'No linter configured yet' && exit 0",
-    "postinstall": "echo '\n  📌 aspens v0.8.0: Skill triggers moved from `## Activation` to YAML frontmatter `triggers:` (back-compat preserved). Domain clusters restored to `code-map.md` (language-agnostic). AGENTS.md no longer drops unchanged skills on partial `doc sync`. Code-map.md is now churn-stable across syncs.\n     Re-run `aspens doc sync` to regenerate skills with the new triggers format.\n\n  🌲 aspens is in active development — please keep it up to date.\n     Run into issues? Let us know: https://github.com/aspenkit/aspens/issues\n'"
+    "postinstall": "echo '\n  📌 aspens v0.9.1: `doc sync` no longer deletes hand-written lines from CLAUDE.md/AGENTS.md, and skill paths are normalized on Windows.\n     Re-run `aspens doc sync` to pick up the fixes.\n\n  🌲 aspens is in active development — please keep it up to date.\n     Run into issues? Let us know: https://github.com/aspenkit/aspens/issues\n'"
   },
   "engines": {
     "node": ">=20"
