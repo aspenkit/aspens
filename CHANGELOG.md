@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.1] - 2026-09-10
+
+### Fixed
+- **`doc sync` deleting hand-written CLAUDE.md/AGENTS.md lines** — the deterministic repair of the `## Skills` and `## Behavior` sections rewrote each section wholesale, so any rule a user added by hand disappeared on the next sync (including the silent post-commit hook sync). Both sections now merge: canonical generated entries are refreshed in place while every other line is preserved in order, with its own line ending. The generated block follows the file's dominant line ending, and repeated syncs are byte-stable on LF, CRLF, and mixed-ending files. (#52, #54)
+- **Windows skill paths written with backslashes** — `path.join()` / `path.relative()` produced `\`-separated logical paths on Windows, so skill references, import-graph nodes, and `index.json` entries broke (`extractDomainFromAnyPath` returned `null`, silently dropping every domain skill from the Skills section). New `src/lib/posix-path.js` normalizes at the boundary where a filesystem path becomes a logical path, replacing the duplicated per-module helpers. (#53, #54)
+- **`doc sync` raw `TypeError` outside a Git repository** — the project prefix was computed from `getGitRoot()` before the "Not a git repository" guard ran, so a non-Git directory failed with a raw `TypeError` from `path.relative(null, ...)` instead of the `CliError` remediation message. (#54)
+
+### Changed
+- **README logo renders on npmjs.com** — the logo now uses an absolute `raw.githubusercontent.com` URL; relative image paths don't resolve on the npm package page.
+
+### Security
+- **Dev-dependency advisory resolved** — bumped `vitest` 4.1.3 → 4.1.11 (lockfile only) to clear the moderate `@vitest/mocker` path-traversal advisory (GHSA-82fw-gwwq-j7x9; dev-only, not shipped in the published package). `npm audit` now reports 0 vulnerabilities.
+
+### Internal
+- Test suite grew to 453 tests (+ Windows-only executable-bit coverage skipped on non-Windows), covering additive Skills/Behavior merging, line-ending and end-of-file preservation, idempotent repeated syncs, POSIX path normalization, and the non-Git `doc sync` guard.
+
 ## [0.9.0] - 2026-08-15
 
 ### Added
