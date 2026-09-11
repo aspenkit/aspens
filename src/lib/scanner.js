@@ -3,21 +3,25 @@ import { join, basename, extname } from 'path';
 import { SOURCE_EXTS } from './source-exts.js';
 import { relativePosix, toPosix } from './posix-path.js';
 import { detectCICD } from './cicd.js';
+import { probeNextjsArchitecture } from './frameworks/nextjs.js';
 
 /**
  * Scan a repository and return its tech stack, structure, and domains.
  * Fully deterministic — no LLM calls.
  */
 export function scanRepo(repoPath, { extraDomains } = {}) {
+  const frameworks = detectFrameworks(repoPath);
+
   const result = {
     path: repoPath,
     name: basename(repoPath),
     languages: detectLanguages(repoPath),
-    frameworks: detectFrameworks(repoPath),
+    frameworks,
     structure: detectStructure(repoPath),
     domains: detectDomains(repoPath),
     entryPoints: detectEntryPoints(repoPath),
     cicd: detectCICD(repoPath),
+    nextjs: probeNextjsArchitecture(repoPath, frameworks),
     hasClaudeConfig: existsSync(join(repoPath, '.claude')),
     hasClaudeMd: existsSync(join(repoPath, 'CLAUDE.md')),
     hasCodexConfig: existsSync(join(repoPath, '.codex')),

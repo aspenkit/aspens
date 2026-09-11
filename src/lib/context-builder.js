@@ -208,7 +208,11 @@ export function buildDomainContext(repoPath, scanResult, domain, options = {}) {
 
   // 1. Brief repo summary (not full scan — just enough for orientation)
   const cicdLine = scanResult.cicd?.length ? `\nCI/CD: ${scanResult.cicd.join(', ')}` : '';
-  sections.push(`## Repository: ${scanResult.name} (${scanResult.repoType})\nTech: ${scanResult.frameworks.join(', ')}${cicdLine}`);
+  const nextjs = scanResult.nextjs;
+  const nextjsLine = nextjs
+    ? `\nNext.js: ${nextjs.router || 'no router directory'} router, ${nextjs.routes} routes, ${nextjs.apiRoutes} API routes, ${nextjs.clientComponents} client / ${nextjs.serverComponents} server components${nextjs.middleware ? ', middleware' : ''}`
+    : '';
+  sections.push(`## Repository: ${scanResult.name} (${scanResult.repoType})\nTech: ${scanResult.frameworks.join(', ')}${cicdLine}${nextjsLine}`);
 
   // 2. All files from this domain — more generous than full-repo mode
   const filesToRead = [];

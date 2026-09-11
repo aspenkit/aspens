@@ -49,6 +49,10 @@ export async function scanCommand(path, options) {
     console.log(pc.cyan('  CI/CD: ') + result.cicd.join(', '));
   }
 
+  if (result.nextjs) {
+    console.log(pc.cyan('  Next.js: ') + describeNextjs(result.nextjs));
+  }
+
   if (result.entryPoints.length > 0) {
     console.log(pc.cyan('  Entry points: ') + result.entryPoints.join(', '));
   }
@@ -300,4 +304,27 @@ function formatGraphForDisplay(graph) {
     coupling,
     hotspots: (hotspots || []).slice(0, 5),
   };
+}
+
+/**
+ * One-line summary of the Next.js architecture probe.
+ */
+function describeNextjs(nextjs) {
+  const parts = [];
+
+  if (nextjs.router === 'migrating') parts.push('App + Pages Router (migrating)');
+  else if (nextjs.router === 'app') parts.push('App Router');
+  else if (nextjs.router === 'pages') parts.push('Pages Router');
+  else parts.push('no router directory');
+
+  parts.push(`${nextjs.routes} ${nextjs.routes === 1 ? 'route' : 'routes'}`);
+  if (nextjs.dynamicRoutes > 0) parts.push(`${nextjs.dynamicRoutes} dynamic`);
+  if (nextjs.apiRoutes > 0) {
+    parts.push(`${nextjs.apiRoutes} API ${nextjs.apiRoutes === 1 ? 'route' : 'routes'}`);
+  }
+  if (nextjs.routeGroups.length > 0) parts.push(`groups: ${nextjs.routeGroups.join(' ')}`);
+  parts.push(`${nextjs.clientComponents} client / ${nextjs.serverComponents} server components`);
+  if (nextjs.middleware) parts.push('middleware');
+
+  return parts.join(', ');
 }
