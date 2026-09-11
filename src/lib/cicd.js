@@ -15,8 +15,8 @@
  * Results follow PLATFORMS order, so they are stable across runs.
  */
 
-import { existsSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { readdirSync, statSync } from 'fs';
+import { join, resolve } from 'path';
 
 const CICD_EXTS = ['.yml', '.yaml'];
 
@@ -36,10 +36,11 @@ const PLATFORMS = [
 /**
  * Detect CI/CD platforms configured in a repo.
  *
- * @param {string} repoPath
+ * @param {string} dirPath Repo root; normalised with resolve().
  * @returns {string[]} platform ids, empty when none are configured
  */
-export function detectCICD(repoPath) {
+export function detectCICD(dirPath) {
+  const repoPath = resolve(dirPath);
   const found = [];
 
   for (const platform of PLATFORMS) {
@@ -50,8 +51,10 @@ export function detectCICD(repoPath) {
 }
 
 function matchesPlatform(repoPath, { files = [], stems = [], dirs = [] }) {
-  if (files.some(file => existsSync(join(repoPath, file)))) return true;
-  if (stems.some(stem => CICD_EXTS.some(ext => existsSync(join(repoPath, stem + ext))))) return true;
+  // A marker only counts as config when it is a regular file — a directory
+  // named `Jenkinsfile` or `.travis.yml` configures nothing.
+  if (files.some(file => isFile(join(repoPath, file)))) return true;
+  if (stems.some(stem => CICD_EXTS.some(ext => isFile(join(repoPath, stem + ext))))) return true;
   return dirs.some(dir => hasConfigFile(join(repoPath, dir), NESTED_SCAN_DEPTH));
 }
 
@@ -59,8 +62,8 @@ function hasConfigFile(dirPath, depth) {
   if (depth <= 0) return false;
 
   for (const entry of listDir(dirPath)) {
-    if (CICD_EXTS.some(ext => entry.endsWith(ext))) return true;
     const full = join(dirPath, entry);
+    if (CICD_EXTS.some(ext => entry.endsWith(ext)) && isFile(full)) return true;
     if (isDir(full) && hasConfigFile(full, depth - 1)) return true;
   }
 
@@ -78,6 +81,14 @@ function listDir(dirPath) {
 function isDir(filePath) {
   try {
     return statSync(filePath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isFile(filePath) {
+  try {
+    return statSync(filePath).isFile();
   } catch {
     return false;
   }

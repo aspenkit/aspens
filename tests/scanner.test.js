@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, sep } from 'path';
 import { scanRepo } from '../src/lib/scanner.js';
+import { detectCICD } from '../src/lib/cicd.js';
 
 const FIXTURES_DIR = join(import.meta.dirname, 'fixtures', 'scanner');
 
@@ -446,11 +447,29 @@ describe('scanRepo', () => {
         files: { 'package.json': '{}' },
         expected: [],
       },
+      {
+        name: 'nothing from a directory named like a root config file',
+        files: { 'Jenkinsfile/notes.md': 'not a pipeline', '.travis.yml/notes.md': 'nor this' },
+        expected: [],
+      },
+      {
+        name: 'nothing from a directory named like a pipeline file',
+        files: { '.github/workflows/ci.yml/notes.md': 'not a workflow' },
+        expected: [],
+      },
     ];
 
     it.each(cases)('detects $name', ({ name, files, expected }) => {
       const dir = createFixture(`cicd-${name.replace(/[^a-z0-9]+/gi, '-')}`, files);
       expect(scanRepo(dir).cicd).toEqual(expected);
+    });
+
+    it('normalises the repo path before checking markers', () => {
+      const dir = createFixture('cicd-trailing-sep', {
+        'package.json': '{}',
+        '.circleci/config.yml': 'version: 2.1',
+      });
+      expect(detectCICD(dir + sep)).toEqual(['circleci']);
     });
   });
 
