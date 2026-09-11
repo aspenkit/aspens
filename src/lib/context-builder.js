@@ -207,7 +207,8 @@ export function buildDomainContext(repoPath, scanResult, domain, options = {}) {
   const readFiles = new Set();
 
   // 1. Brief repo summary (not full scan — just enough for orientation)
-  sections.push(`## Repository: ${scanResult.name} (${scanResult.repoType})\nTech: ${scanResult.frameworks.join(', ')}`);
+  const cicdLine = scanResult.cicd?.length ? `\nCI/CD: ${scanResult.cicd.join(', ')}` : '';
+  sections.push(`## Repository: ${scanResult.name} (${scanResult.repoType})\nTech: ${scanResult.frameworks.join(', ')}${cicdLine}`);
 
   // 2. All files from this domain — more generous than full-repo mode
   const filesToRead = [];

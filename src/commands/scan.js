@@ -45,6 +45,10 @@ export async function scanCommand(path, options) {
     console.log(pc.cyan('  Frameworks: ') + result.frameworks.join(', '));
   }
 
+  if (result.cicd.length > 0) {
+    console.log(pc.cyan('  CI/CD: ') + result.cicd.join(', '));
+  }
+
   if (result.entryPoints.length > 0) {
     console.log(pc.cyan('  Entry points: ') + result.entryPoints.join(', '));
   }
