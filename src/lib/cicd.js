@@ -50,6 +50,15 @@ export function detectCICD(dirPath) {
   return found;
 }
 
+/**
+ * Test one platform's markers against a repo.
+ *
+ * Any single marker is enough — a platform is configured, not scored.
+ *
+ * @param {string} repoPath Absolute repo root.
+ * @param {{files?: string[], stems?: string[], dirs?: string[]}} platform Marker sets.
+ * @returns {boolean}
+ */
 function matchesPlatform(repoPath, { files = [], stems = [], dirs = [] }) {
   // A marker only counts as config when it is a regular file — a directory
   // named `Jenkinsfile` or `.travis.yml` configures nothing.
@@ -58,6 +67,16 @@ function matchesPlatform(repoPath, { files = [], stems = [], dirs = [] }) {
   return dirs.some(dir => hasConfigFile(join(repoPath, dir), NESTED_SCAN_DEPTH));
 }
 
+/**
+ * Look for a CI config file in a directory, descending `depth` levels.
+ *
+ * A missing or unreadable directory reads as no config rather than an error:
+ * the scan describes what it can see and never fails a repo over permissions.
+ *
+ * @param {string} dirPath Directory to search.
+ * @param {number} depth Levels left to descend; 0 stops the search.
+ * @returns {boolean}
+ */
 function hasConfigFile(dirPath, depth) {
   if (depth <= 0) return false;
 
