@@ -64,36 +64,58 @@ function matchesPlatform(repoPath, { files = [], stems = [], dirs = [] }) {
   // named `Jenkinsfile` or `.travis.yml` configures nothing.
   if (files.some(file => isFile(join(repoPath, file)))) return true;
   if (stems.some(stem => CICD_EXTS.some(ext => isFile(join(repoPath, stem + ext))))) return true;
-  return dirs.some(dir => hasConfigFile(join(repoPath, dir), NESTED_SCAN_DEPTH));
+  // An unreadable directory is unknown, not empty — credit the platform
+  // rather than silently dropping it.
+  return dirs.some(dir => hasConfigFile(join(repoPath, dir), NESTED_SCAN_DEPTH) ?? true);
 }
 
 /**
  * Look for a CI config file in a directory, descending `depth` levels.
  *
- * A missing or unreadable directory reads as no config rather than an error:
- * the scan describes what it can see and never fails a repo over permissions.
+ * Three outcomes, because "no config" and "could not look" are different
+ * facts: true for a config file found, false for a directory searched with
+ * nothing in it, null when a directory could not be read at all. A missing
+ * directory is a clean false — there is nothing there to hide. Exhausting
+ * `depth` is also false: a deliberate bound, not a failure.
  *
  * @param {string} dirPath Directory to search.
  * @param {number} depth Levels left to descend; 0 stops the search.
- * @returns {boolean}
+ * @returns {boolean|null} null when the search was blocked by the filesystem.
  */
 function hasConfigFile(dirPath, depth) {
   if (depth <= 0) return false;
 
-  for (const entry of listDir(dirPath)) {
+  const entries = listDir(dirPath);
+  if (entries === null) return isDir(dirPath) ? null : false;
+
+  let blocked = false;
+
+  for (const entry of entries) {
     const full = join(dirPath, entry);
     if (CICD_EXTS.some(ext => entry.endsWith(ext)) && isFile(full)) return true;
-    if (isDir(full) && hasConfigFile(full, depth - 1)) return true;
+    if (!isDir(full)) continue;
+
+    const nested = hasConfigFile(full, depth - 1);
+    if (nested) return true;
+    if (nested === null) blocked = true;
   }
 
-  return false;
+  // A subdirectory we could not read may hold the config, so the answer for
+  // this directory is unknown rather than no.
+  return blocked ? null : false;
 }
 
+/**
+ * Read a directory's entries, or null when the filesystem refuses.
+ *
+ * @param {string} dirPath
+ * @returns {string[]|null}
+ */
 function listDir(dirPath) {
   try {
     return readdirSync(dirPath);
   } catch {
-    return [];
+    return null;
   }
 }
 
