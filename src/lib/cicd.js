@@ -1,0 +1,136 @@
+/**
+ * CI/CD platform detector — deterministic, filesystem only.
+ *
+ * A platform is matched by any of three marker kinds:
+ *   - `files` — exact filename, no extension (Jenkinsfile)
+ *   - `stems` — filename without extension, combined with every CICD_EXT
+ *   - `dirs`  — directory holding one or more CI config files
+ *
+ * Directory markers exist because a pipeline is rarely a single file: the
+ * entry config usually sits alongside imported/included job files, and some
+ * platforms name the entry file freely (`.github/workflows/*.yml`). Scanning
+ * the directory catches those, including one level of nesting such as
+ * `.buildkite/pipelines/deploy.yml`.
+ *
+ * Results follow PLATFORMS order, so they are stable across runs.
+ */
+
+import { readdirSync, statSync } from 'fs';
+import { join, resolve } from 'path';
+
+const CICD_EXTS = ['.yml', '.yaml'];
+
+const NESTED_SCAN_DEPTH = 2;
+
+const PLATFORMS = [
+  { id: 'github-actions', dirs: ['.github/workflows'] },
+  { id: 'gitlab-ci', stems: ['.gitlab-ci'], dirs: ['.gitlab/ci'] },
+  { id: 'circleci', dirs: ['.circleci'] },
+  { id: 'jenkins', files: ['Jenkinsfile'] },
+  { id: 'travis-ci', stems: ['.travis'] },
+  { id: 'azure-pipelines', stems: ['azure-pipelines', '.azure-pipelines'] },
+  { id: 'bitbucket-pipelines', stems: ['bitbucket-pipelines'] },
+  { id: 'buildkite', dirs: ['.buildkite'] },
+];
+
+/**
+ * Detect CI/CD platforms configured in a repo.
+ *
+ * @param {string} dirPath Repo root; normalised with resolve().
+ * @returns {string[]} platform ids, empty when none are configured
+ */
+export function detectCICD(dirPath) {
+  const repoPath = resolve(dirPath);
+  const found = [];
+
+  for (const platform of PLATFORMS) {
+    if (matchesPlatform(repoPath, platform)) found.push(platform.id);
+  }
+
+  return found;
+}
+
+/**
+ * Test one platform's markers against a repo.
+ *
+ * Any single marker is enough — a platform is configured, not scored.
+ *
+ * @param {string} repoPath Absolute repo root.
+ * @param {{files?: string[], stems?: string[], dirs?: string[]}} platform Marker sets.
+ * @returns {boolean}
+ */
+function matchesPlatform(repoPath, { files = [], stems = [], dirs = [] }) {
+  // A marker only counts as config when it is a regular file — a directory
+  // named `Jenkinsfile` or `.travis.yml` configures nothing.
+  if (files.some(file => isFile(join(repoPath, file)))) return true;
+  if (stems.some(stem => CICD_EXTS.some(ext => isFile(join(repoPath, stem + ext))))) return true;
+  // An unreadable directory is unknown, not empty — credit the platform
+  // rather than silently dropping it.
+  return dirs.some(dir => hasConfigFile(join(repoPath, dir), NESTED_SCAN_DEPTH) ?? true);
+}
+
+/**
+ * Look for a CI config file in a directory, descending `depth` levels.
+ *
+ * Three outcomes, because "no config" and "could not look" are different
+ * facts: true for a config file found, false for a directory searched with
+ * nothing in it, null when a directory could not be read at all. A missing
+ * directory is a clean false — there is nothing there to hide. Exhausting
+ * `depth` is also false: a deliberate bound, not a failure.
+ *
+ * @param {string} dirPath Directory to search.
+ * @param {number} depth Levels left to descend; 0 stops the search.
+ * @returns {boolean|null} null when the search was blocked by the filesystem.
+ */
+function hasConfigFile(dirPath, depth) {
+  if (depth <= 0) return false;
+
+  const entries = listDir(dirPath);
+  if (entries === null) return isDir(dirPath) ? null : false;
+
+  let blocked = false;
+
+  for (const entry of entries) {
+    const full = join(dirPath, entry);
+    if (CICD_EXTS.some(ext => entry.endsWith(ext)) && isFile(full)) return true;
+    if (!isDir(full)) continue;
+
+    const nested = hasConfigFile(full, depth - 1);
+    if (nested) return true;
+    if (nested === null) blocked = true;
+  }
+
+  // A subdirectory we could not read may hold the config, so the answer for
+  // this directory is unknown rather than no.
+  return blocked ? null : false;
+}
+
+/**
+ * Read a directory's entries, or null when the filesystem refuses.
+ *
+ * @param {string} dirPath
+ * @returns {string[]|null}
+ */
+function listDir(dirPath) {
+  try {
+    return readdirSync(dirPath);
+  } catch {
+    return null;
+  }
+}
+
+function isDir(filePath) {
+  try {
+    return statSync(filePath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isFile(filePath) {
+  try {
+    return statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}

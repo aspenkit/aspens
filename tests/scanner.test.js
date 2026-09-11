@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdirSync, writeFileSync, rmSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, sep } from 'path';
 import { scanRepo } from '../src/lib/scanner.js';
+import { detectCICD } from '../src/lib/cicd.js';
 
 const FIXTURES_DIR = join(import.meta.dirname, 'fixtures', 'scanner');
 
@@ -381,6 +382,94 @@ describe('scanRepo', () => {
       });
       const scan = scanRepo(dir);
       expect(scan.size.estimatedLines).toBe(10);
+    });
+  });
+
+  describe('CI/CD detection', () => {
+    const cases = [
+      {
+        name: 'GitHub Actions from a workflow file',
+        files: { '.github/workflows/ci.yml': 'name: CI' },
+        expected: ['github-actions'],
+      },
+      {
+        name: 'GitLab CI from the root config',
+        files: { '.gitlab-ci.yml': 'stages: [test]' },
+        expected: ['gitlab-ci'],
+      },
+      {
+        name: 'GitLab CI from included job files alone',
+        files: { '.gitlab/ci/test.yml': 'test: {}' },
+        expected: ['gitlab-ci'],
+      },
+      {
+        name: 'CircleCI from a nested config',
+        files: { '.circleci/config.yml': 'version: 2.1' },
+        expected: ['circleci'],
+      },
+      {
+        name: 'Jenkins from an extensionless Jenkinsfile',
+        files: { 'Jenkinsfile': 'pipeline {}' },
+        expected: ['jenkins'],
+      },
+      {
+        name: 'a .yaml variant of a root config file',
+        files: { 'azure-pipelines.yaml': 'trigger: [main]' },
+        expected: ['azure-pipelines'],
+      },
+      {
+        name: 'a dot-prefixed variant of a root config file',
+        files: { '.azure-pipelines.yml': 'trigger: [main]' },
+        expected: ['azure-pipelines'],
+      },
+      {
+        name: 'Bitbucket Pipelines from the root config',
+        files: { 'bitbucket-pipelines.yml': 'pipelines: {}' },
+        expected: ['bitbucket-pipelines'],
+      },
+      {
+        name: 'a platform from pipeline files nested in its config directory',
+        files: { '.buildkite/pipelines/deploy.yaml': 'steps: []' },
+        expected: ['buildkite'],
+      },
+      {
+        name: 'multiple platforms, in table order',
+        files: { '.github/workflows/ci.yaml': 'name: CI', '.travis.yml': 'language: node_js' },
+        expected: ['github-actions', 'travis-ci'],
+      },
+      {
+        name: 'nothing from a config directory with no CI config files',
+        files: { '.github/workflows/README.md': 'no workflows yet' },
+        expected: [],
+      },
+      {
+        name: 'nothing from a repo with no CI/CD config',
+        files: { 'package.json': '{}' },
+        expected: [],
+      },
+      {
+        name: 'nothing from a directory named like a root config file',
+        files: { 'Jenkinsfile/notes.md': 'not a pipeline', '.travis.yml/notes.md': 'nor this' },
+        expected: [],
+      },
+      {
+        name: 'nothing from a directory named like a pipeline file',
+        files: { '.github/workflows/ci.yml/notes.md': 'not a workflow' },
+        expected: [],
+      },
+    ];
+
+    it.each(cases)('detects $name', ({ name, files, expected }) => {
+      const dir = createFixture(`cicd-${name.replace(/[^a-z0-9]+/gi, '-')}`, files);
+      expect(scanRepo(dir).cicd).toEqual(expected);
+    });
+
+    it('normalises the repo path before checking markers', () => {
+      const dir = createFixture('cicd-trailing-sep', {
+        'package.json': '{}',
+        '.circleci/config.yml': 'version: 2.1',
+      });
+      expect(detectCICD(dir + sep)).toEqual(['circleci']);
     });
   });
 

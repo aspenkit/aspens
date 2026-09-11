@@ -2,6 +2,7 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, basename, extname } from 'path';
 import { SOURCE_EXTS } from './source-exts.js';
 import { relativePosix, toPosix } from './posix-path.js';
+import { detectCICD } from './cicd.js';
 
 /**
  * Scan a repository and return its tech stack, structure, and domains.
@@ -16,6 +17,7 @@ export function scanRepo(repoPath, { extraDomains } = {}) {
     structure: detectStructure(repoPath),
     domains: detectDomains(repoPath),
     entryPoints: detectEntryPoints(repoPath),
+    cicd: detectCICD(repoPath),
     hasClaudeConfig: existsSync(join(repoPath, '.claude')),
     hasClaudeMd: existsSync(join(repoPath, 'CLAUDE.md')),
     hasCodexConfig: existsSync(join(repoPath, '.codex')),
