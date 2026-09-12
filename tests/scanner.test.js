@@ -490,4 +490,242 @@ describe('scanRepo', () => {
       expect(scanRepo(dir).hasClaudeMd).toBe(true);
     });
   });
+
+  describe('Next.js architecture probe', () => {
+    const NEXT_PKG = '{"name":"web","dependencies":{"next":"15.0.0","react":"19.0.0"}}';
+
+    it('detects App Router with route, API, and component counts', () => {
+      const dir = createFixture('next-app-router', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L({ children }) { return children; }',
+        'app/page.tsx': 'export default function P() { return null; }',
+        'app/about/page.tsx': 'export default function A() { return null; }',
+        'app/api/health/route.ts': 'export function GET() {}',
+        'app/ui/button.tsx': "'use client'\nexport function Button() { return null; }",
+      });
+      const scan = scanRepo(dir);
+      expect(scan.nextjs).toMatchObject({
+        router: 'app',
+        appDir: 'app',
+        pagesDir: null,
+        routes: 2,
+        apiRoutes: 1,
+        dynamicRoutes: 0,
+        routeGroups: [],
+        clientComponents: 1,
+        middleware: false,
+      });
+      // layout, page, about/page, api/health/route — button.tsx is a client component
+      expect(scan.nextjs.serverComponents).toBe(4);
+    });
+
+    it('counts dynamic routes and route groups', () => {
+      const dir = createFixture('next-dynamic', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L() {}',
+        'app/(marketing)/pricing/page.tsx': 'export default function P() {}',
+        'app/blog/[slug]/page.tsx': 'export default function P() {}',
+        'app/docs/[...path]/page.tsx': 'export default function P() {}',
+        'app/shop/[[...filters]]/page.tsx': 'export default function P() {}',
+      });
+      const scan = scanRepo(dir);
+      expect(scan.nextjs.routes).toBe(4);
+      expect(scan.nextjs.dynamicRoutes).toBe(3);
+      expect(scan.nextjs.routeGroups).toEqual(['(marketing)']);
+    });
+
+    it('detects Pages Router and excludes special files', () => {
+      const dir = createFixture('next-pages-router', {
+        'package.json': NEXT_PKG,
+        'pages/_app.tsx': 'export default function App() {}',
+        'pages/_document.tsx': 'export default function Doc() {}',
+        'pages/_error.tsx': 'export default function Err() {}',
+        'pages/index.tsx': 'export default function Home() {}',
+        'pages/about.tsx': 'export default function About() {}',
+        'pages/posts/[id].tsx': 'export default function Post() {}',
+        'pages/api/users.ts': 'export default function handler() {}',
+      });
+      const scan = scanRepo(dir);
+      expect(scan.nextjs).toMatchObject({
+        router: 'pages',
+        appDir: null,
+        pagesDir: 'pages',
+        routes: 3,
+        apiRoutes: 1,
+        dynamicRoutes: 1,
+        serverComponents: 0,
+      });
+    });
+
+    it('reports migration when both routers are present', () => {
+      const dir = createFixture('next-migrating', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L() {}',
+        'app/page.tsx': 'export default function P() {}',
+        'pages/legacy.tsx': 'export default function Legacy() {}',
+        'pages/api/ping.ts': 'export default function h() {}',
+      });
+      const scan = scanRepo(dir);
+      expect(scan.nextjs).toMatchObject({
+        router: 'migrating',
+        appDir: 'app',
+        pagesDir: 'pages',
+        routes: 2,
+        apiRoutes: 1,
+      });
+    });
+
+    it('handles a src/ directory structure and middleware', () => {
+      const dir = createFixture('next-src-dir', {
+        'package.json': NEXT_PKG,
+        'src/app/layout.tsx': 'export default function L() {}',
+        'src/app/page.tsx': 'export default function P() {}',
+        'src/middleware.ts': 'export function middleware() {}',
+        'src/components/modal.tsx': '"use client";\nexport function Modal() {}',
+      });
+      const scan = scanRepo(dir);
+      expect(scan.nextjs).toMatchObject({
+        router: 'app',
+        appDir: 'src/app',
+        middleware: true,
+        clientComponents: 1,
+        serverComponents: 2,
+      });
+    });
+
+    it('recognises a use client directive behind leading comments', () => {
+      const dir = createFixture('next-directive-comments', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L() {}',
+        'app/page.tsx': 'export default function P() {}',
+        'components/a.tsx': "// license header\n/* block */\n'use client'\nexport const A = 1;",
+        'components/b.tsx': "export const B = 1; // 'use client' mentioned in a comment\n",
+      });
+      const scan = scanRepo(dir);
+      expect(scan.nextjs.clientComponents).toBe(1);
+    });
+
+    it('normalises the repo path before comparing directories', () => {
+      const dir = createFixture('next-trailing-sep', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L() {}',
+        'app/page.tsx': 'export default function P() {}',
+      });
+      // A trailing separator must not make the app directory look external to
+      // the source root — that walks it twice and doubles the counts.
+      const scan = scanRepo(dir + sep);
+      expect(scan.nextjs.serverComponents).toBe(2);
+      expect(scan.nextjs.routes).toBe(1);
+    });
+
+    it('excludes private app folders from routing', () => {
+      const dir = createFixture('next-private-folder', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L() {}',
+        'app/page.tsx': 'export default function P() {}',
+        'app/_dev/page.tsx': 'export default function Scratch() {}',
+        'app/_dev/api/route.ts': 'export function GET() {}',
+      });
+      const scan = scanRepo(dir);
+      // `_dev` opts itself and its children out of routing.
+      expect(scan.nextjs.routes).toBe(1);
+      expect(scan.nextjs.apiRoutes).toBe(0);
+    });
+
+    it('treats Pages Router special stems as special only at the root', () => {
+      const dir = createFixture('next-nested-special', {
+        'package.json': NEXT_PKG,
+        'pages/_app.tsx': 'export default function App() {}',
+        'pages/index.tsx': 'export default function Home() {}',
+        'pages/docs/_error.tsx': 'export default function DocsError() {}',
+      });
+      const scan = scanRepo(dir);
+      // Only `pages/_app` is plumbing; `pages/docs/_error` is a real route.
+      expect(scan.nextjs.routes).toBe(2);
+    });
+
+    it('counts app routes whose segment matches a build-output name', () => {
+      const dir = createFixture('next-build-segment', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L() {}',
+        'app/page.tsx': 'export default function P() {}',
+        'app/build/page.tsx': 'export default function BuildYours() {}',
+        'dist/app/page.js': 'module.exports = {}',
+      });
+      const scan = scanRepo(dir);
+      // `build` is a legitimate URL segment; only root-level build output is
+      // skipped, so the route counts as a server component too.
+      expect(scan.nextjs.routes).toBe(2);
+      expect(scan.nextjs.serverComponents).toBe(3);
+    });
+
+    it('counts build-named app routes when app sits beside src', () => {
+      const dir = createFixture('next-build-segment-src', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L() {}',
+        'app/build/page.tsx': 'export default function BuildYours() {}',
+        'src/lib/util.ts': 'export const x = 1;',
+      });
+      const scan = scanRepo(dir);
+      // `app/` is its own walk root here, so `build` must not be taken for
+      // build output.
+      expect(scan.nextjs.routes).toBe(1);
+      expect(scan.nextjs.serverComponents).toBe(2);
+    });
+
+    it('counts a parallel route slot and its base page as one route', () => {
+      const dir = createFixture('next-parallel-slots', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L({ children, modal }) {}',
+        'app/page.tsx': 'export default function P() {}',
+        'app/photo/page.tsx': 'export default function Photo() {}',
+        'app/@modal/photo/page.tsx': 'export default function Modal() {}',
+        'app/@modal/default.tsx': 'export default function D() {}',
+      });
+      const scan = scanRepo(dir);
+      // `@modal` never reaches the URL, so both photo pages serve `/photo`.
+      expect(scan.nextjs.routes).toBe(2);
+      // Every file under app/ is still a server component.
+      expect(scan.nextjs.serverComponents).toBe(5);
+    });
+
+    it('detects the app directory when the only root layout is in a route group', () => {
+      const dir = createFixture('next-group-root-layout', {
+        'package.json': NEXT_PKG,
+        'app/(marketing)/layout.tsx': 'export default function L({ children }) { return children; }',
+        'app/(marketing)/page.tsx': 'export default function P() {}',
+        'app/(shop)/layout.tsx': 'export default function L({ children }) { return children; }',
+        'app/(shop)/cart/page.tsx': 'export default function C() {}',
+      });
+      const scan = scanRepo(dir);
+      // Multiple root layouts: nothing sits directly under `app/`.
+      expect(scan.nextjs).toMatchObject({
+        router: 'app',
+        appDir: 'app',
+        routes: 2,
+        routeGroups: ['(marketing)', '(shop)'],
+      });
+    });
+
+    it('counts a slot-only route once', () => {
+      const dir = createFixture('next-slot-only', {
+        'package.json': NEXT_PKG,
+        'app/layout.tsx': 'export default function L() {}',
+        'app/@team/settings/[id]/page.tsx': 'export default function S() {}',
+        'app/@team/api/hook/route.ts': 'export function GET() {}',
+      });
+      const scan = scanRepo(dir);
+      expect(scan.nextjs.routes).toBe(1);
+      expect(scan.nextjs.dynamicRoutes).toBe(1);
+      expect(scan.nextjs.apiRoutes).toBe(1);
+    });
+
+    it('returns null for repos that are not Next.js', () => {
+      const dir = createFixture('next-absent', {
+        'package.json': '{"name":"api","dependencies":{"express":"4.19.0"}}',
+        'app/page.tsx': 'export default function P() {}',
+      });
+      expect(scanRepo(dir).nextjs).toBeNull();
+    });
+  });
 });
