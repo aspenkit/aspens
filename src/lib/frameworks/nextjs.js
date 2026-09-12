@@ -321,12 +321,21 @@ function routerType(appDir, pagesDir) {
   return null;
 }
 
-function hasAppLayout(dir) {
+/**
+ * A root layout is mandatory, but it need not sit directly under `app/`.
+ * Multiple root layouts live one per route group (`app/(shop)/layout.tsx`),
+ * with nothing at the app root, so route groups are searched recursively.
+ */
+function hasAppLayout(dir, depth = 0) {
   if (!safeIsDir(dir)) return false;
   for (const ext of CODE_EXTS) {
     if (safeIsFile(join(dir, `layout${ext}`))) return true;
   }
-  return false;
+  if (depth >= 4) return false;
+
+  let entries;
+  try { entries = readdirSync(dir); } catch { return false; }
+  return entries.some(entry => ROUTE_GROUP.test(entry) && hasAppLayout(join(dir, entry), depth + 1));
 }
 
 function hasMiddleware(repoPath) {

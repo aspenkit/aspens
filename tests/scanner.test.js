@@ -689,6 +689,24 @@ describe('scanRepo', () => {
       expect(scan.nextjs.serverComponents).toBe(5);
     });
 
+    it('detects the app directory when the only root layout is in a route group', () => {
+      const dir = createFixture('next-group-root-layout', {
+        'package.json': NEXT_PKG,
+        'app/(marketing)/layout.tsx': 'export default function L({ children }) { return children; }',
+        'app/(marketing)/page.tsx': 'export default function P() {}',
+        'app/(shop)/layout.tsx': 'export default function L({ children }) { return children; }',
+        'app/(shop)/cart/page.tsx': 'export default function C() {}',
+      });
+      const scan = scanRepo(dir);
+      // Multiple root layouts: nothing sits directly under `app/`.
+      expect(scan.nextjs).toMatchObject({
+        router: 'app',
+        appDir: 'app',
+        routes: 2,
+        routeGroups: ['(marketing)', '(shop)'],
+      });
+    });
+
     it('counts a slot-only route once', () => {
       const dir = createFixture('next-slot-only', {
         'package.json': NEXT_PKG,
