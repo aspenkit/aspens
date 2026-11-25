@@ -4,6 +4,10 @@
 
 # aspens
 
+<!-- yarkr:badges:start -->
+[![Indexed on Yarkr](https://api.yarkr.com/functions/v1/api/api/v1/badges/repos/aspenkit/aspens/version.svg)](https://yarkr.com/arks/aspenkit/aspens)
+<!-- yarkr:badges:end -->
+
 **Your CLAUDE.md stopped working. Here's why.**
 
 [![npm version](https://img.shields.io/npm/v/aspens.svg)](https://www.npmjs.com/package/aspens)
@@ -44,6 +48,40 @@ npx aspens doc init --recommended
 ```
 
 ![aspens demo](demo/demo-full.gif)
+
+<!-- yarkr:install:start -->
+## Install with Yarkr
+
+This repo is indexed on [Yarkr](https://yarkr.com/arks/aspenkit/aspens) as the ark [aspenkit/aspens](https://yarkr.com/arks/aspenkit/aspens), so its skills install into Claude Code, Codex, Cursor and other agent harnesses with one command.
+
+### CLI
+
+Install the whole ark, which Yarkr keeps equal to this repo:
+
+```bash
+npx yarkr-cli sync aspenkit/aspens
+```
+
+Or add individual skills:
+
+```bash
+npx yarkr-cli add skill:aspenkit/aspens/agent-customization
+npx yarkr-cli add skill:aspenkit/aspens/architecture
+npx yarkr-cli add skill:aspenkit/aspens/base
+```
+
+No Node.js? `curl -fsSL https://yarkr.com/install.sh | sh` (macOS, Linux) or `irm https://yarkr.com/install.ps1 | iex` (Windows PowerShell) installs `yarkr` as a standalone binary; then type `yarkr` in place of `npx yarkr-cli`.
+
+### MCP
+
+Connect your agent to the ark over MCP:
+
+```bash
+npx yarkr-cli mcp add aspenkit/aspens
+```
+
+Or point any MCP client at `https://api.yarkr.com/functions/v1/api/mcp/o/aspenkit/aspens`.
+<!-- yarkr:install:end -->
 
 ## Before / After
 
